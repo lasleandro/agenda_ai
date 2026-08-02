@@ -1,0 +1,196 @@
+[
+  {
+    "id": "create_001",
+    "category": "positive_create",
+    "professional": {"timezone": "America/Sao_Paulo", "default_duration_minutes": 60, "service": "tennis_lesson"},
+    "contact": {"display_name": "Mariana"},
+    "current_time": "2026-08-01T15:20:00-03:00",
+    "upcoming_appointments": [],
+    "messages": [
+      {"id": "msg_101", "direction": "inbound", "sent_at": "2026-08-01T15:18:00-03:00", "text": "Da pra fazer aula amanha?"},
+      {"id": "msg_102", "direction": "outbound", "sent_at": "2026-08-01T15:19:00-03:00", "text": "Consigo as 17h."},
+      {"id": "msg_103", "direction": "inbound", "sent_at": "2026-08-01T15:20:00-03:00", "text": "Perfeito, confirmado."}
+    ],
+    "expected_action": "create",
+    "expected_start_at": "2026-08-02T17:00:00-03:00",
+    "expected_existing_appointment": null,
+    "expected_evidence_message_ids": ["msg_101", "msg_102", "msg_103"],
+    "notes": "Basic creation with explicit confirmation (brief Section 25)."
+  },
+  {
+    "id": "create_002",
+    "category": "positive_create",
+    "professional": {"timezone": "America/Sao_Paulo", "default_duration_minutes": 60, "service": "tennis_lesson"},
+    "contact": {"display_name": "Carlos"},
+    "current_time": "2026-08-03T10:00:00-03:00",
+    "upcoming_appointments": [],
+    "messages": [
+      {"id": "msg_201", "direction": "outbound", "sent_at": "2026-08-03T09:58:00-03:00", "text": "Consigo terca as 18h."},
+      {"id": "msg_202", "direction": "inbound", "sent_at": "2026-08-03T10:00:00-03:00", "text": "Otimo."}
+    ],
+    "expected_action": "create",
+    "expected_start_at": "2026-08-04T18:00:00-03:00",
+    "expected_existing_appointment": null,
+    "expected_evidence_message_ids": ["msg_201", "msg_202"],
+    "notes": "Implicit confirmation (brief Section 25)."
+  },
+  {
+    "id": "proposal_001",
+    "category": "proposal_no_confirmation",
+    "professional": {"timezone": "America/Sao_Paulo", "default_duration_minutes": 60, "service": "tennis_lesson"},
+    "contact": {"display_name": "Ana"},
+    "current_time": "2026-08-01T12:00:00-03:00",
+    "upcoming_appointments": [],
+    "messages": [
+      {"id": "msg_301", "direction": "inbound", "sent_at": "2026-08-01T11:58:00-03:00", "text": "Talvez sexta as 4?"},
+      {"id": "msg_302", "direction": "outbound", "sent_at": "2026-08-01T12:00:00-03:00", "text": "Vou verificar."}
+    ],
+    "expected_action": "none",
+    "expected_start_at": null,
+    "expected_existing_appointment": null,
+    "expected_evidence_message_ids": [],
+    "notes": "Proposal without confirmation - no confirmed appointment expected (brief Section 25)."
+  },
+  {
+    "id": "reschedule_001",
+    "category": "reschedule",
+    "professional": {"timezone": "America/Sao_Paulo", "default_duration_minutes": 60, "service": "tennis_lesson"},
+    "contact": {"display_name": "Renata"},
+    "current_time": "2026-08-05T09:00:00-03:00",
+    "upcoming_appointments": [
+      {"id": "appt_500", "start_at": "2026-08-06T17:00:00-03:00", "end_at": "2026-08-06T18:00:00-03:00", "service": "tennis_lesson"}
+    ],
+    "messages": [
+      {"id": "msg_401", "direction": "inbound", "sent_at": "2026-08-05T08:58:00-03:00", "text": "Da pra mover a aula de amanha pra sexta?"},
+      {"id": "msg_402", "direction": "outbound", "sent_at": "2026-08-05T09:00:00-03:00", "text": "Sexta as 17h serve."}
+    ],
+    "expected_action": "reschedule",
+    "expected_start_at": "2026-08-07T17:00:00-03:00",
+    "expected_existing_appointment": "appt_500",
+    "expected_evidence_message_ids": ["msg_401", "msg_402"],
+    "notes": "Rescheduling referencing an existing appointment (brief Section 25)."
+  },
+  {
+    "id": "cancel_001",
+    "category": "cancellation",
+    "professional": {"timezone": "America/Sao_Paulo", "default_duration_minutes": 60, "service": "tennis_lesson"},
+    "contact": {"display_name": "Pedro"},
+    "current_time": "2026-08-01T18:00:00-03:00",
+    "upcoming_appointments": [
+      {"id": "appt_600", "start_at": "2026-08-01T19:00:00-03:00", "end_at": "2026-08-01T20:00:00-03:00", "service": "tennis_lesson"}
+    ],
+    "messages": [
+      {"id": "msg_501", "direction": "inbound", "sent_at": "2026-08-01T18:00:00-03:00", "text": "Nao vou conseguir ir hoje. Vamos cancelar."}
+    ],
+    "expected_action": "cancel",
+    "expected_start_at": null,
+    "expected_existing_appointment": "appt_600",
+    "expected_evidence_message_ids": ["msg_501"],
+    "notes": "Cancellation of unique upcoming appointment (brief Section 25)."
+  },
+  {
+    "id": "ambiguous_time_001",
+    "category": "ambiguous_temporal",
+    "professional": {"timezone": "America/Sao_Paulo", "default_duration_minutes": 60, "service": "tennis_lesson"},
+    "contact": {"display_name": "Julia"},
+    "current_time": "2026-08-01T09:00:00-03:00",
+    "upcoming_appointments": [],
+    "messages": [
+      {"id": "msg_601", "direction": "inbound", "sent_at": "2026-08-01T09:00:00-03:00", "text": "Consegue as cinco?"}
+    ],
+    "expected_action": "create",
+    "expected_start_at": null,
+    "expected_existing_appointment": null,
+    "expected_evidence_message_ids": ["msg_601"],
+    "notes": "Ambiguous time (5h vs 17h) with no confirming context (brief Section 25). Expect ambiguity flagged for 'time'."
+  },
+  {
+    "id": "usual_time_001",
+    "category": "usual_time_reference",
+    "professional": {"timezone": "America/Sao_Paulo", "default_duration_minutes": 60, "service": "tennis_lesson"},
+    "contact": {"display_name": "Fernanda"},
+    "current_time": "2026-08-01T10:00:00-03:00",
+    "upcoming_appointments": [
+      {"id": "appt_700", "start_at": "2026-07-25T17:00:00-03:00", "end_at": "2026-07-25T18:00:00-03:00", "service": "tennis_lesson"}
+    ],
+    "messages": [
+      {"id": "msg_701", "direction": "inbound", "sent_at": "2026-08-01T09:58:00-03:00", "text": "Mesmo horario semana que vem?"},
+      {"id": "msg_702", "direction": "outbound", "sent_at": "2026-08-01T10:00:00-03:00", "text": "Sim."}
+    ],
+    "expected_action": "create",
+    "expected_start_at": "2026-08-08T17:00:00-03:00",
+    "expected_existing_appointment": null,
+    "expected_evidence_message_ids": ["msg_701", "msg_702"],
+    "notes": "Requires historical appointment context to resolve 'mesmo horario' (brief Section 25)."
+  },
+  {
+    "id": "recurrence_001",
+    "category": "recurrence",
+    "professional": {"timezone": "America/Sao_Paulo", "default_duration_minutes": 60, "service": "tennis_lesson"},
+    "contact": {"display_name": "Bruno"},
+    "current_time": "2026-08-01T11:00:00-03:00",
+    "upcoming_appointments": [],
+    "messages": [
+      {"id": "msg_801", "direction": "inbound", "sent_at": "2026-08-01T10:58:00-03:00", "text": "Bora manter toda terca as 18h."},
+      {"id": "msg_802", "direction": "outbound", "sent_at": "2026-08-01T11:00:00-03:00", "text": "Fechado."}
+    ],
+    "expected_action": "recurrence",
+    "expected_start_at": "2026-08-04T18:00:00-03:00",
+    "expected_existing_appointment": null,
+    "expected_evidence_message_ids": ["msg_801", "msg_802"],
+    "notes": "Explicit recurrence - should always request confirmation before creating (brief Section 25)."
+  },
+  {
+    "id": "no_appointment_001",
+    "category": "non_scheduling",
+    "professional": {"timezone": "America/Sao_Paulo", "default_duration_minutes": 60, "service": "tennis_lesson"},
+    "contact": {"display_name": "Camila"},
+    "current_time": "2026-08-01T14:00:00-03:00",
+    "upcoming_appointments": [],
+    "messages": [
+      {"id": "msg_901", "direction": "inbound", "sent_at": "2026-08-01T13:58:00-03:00", "text": "A raquete chegou. Obrigada."},
+      {"id": "msg_902", "direction": "outbound", "sent_at": "2026-08-01T14:00:00-03:00", "text": "Show."}
+    ],
+    "expected_action": "none",
+    "expected_start_at": null,
+    "expected_existing_appointment": null,
+    "expected_evidence_message_ids": [],
+    "notes": "No scheduling content (brief Section 25)."
+  },
+  {
+    "id": "colloquialism_001",
+    "category": "positive_create",
+    "professional": {"timezone": "America/Sao_Paulo", "default_duration_minutes": 60, "service": "tennis_lesson"},
+    "contact": {"display_name": "Thiago"},
+    "current_time": "2026-08-01T20:00:00-03:00",
+    "upcoming_appointments": [],
+    "messages": [
+      {"id": "msg_1001", "direction": "inbound", "sent_at": "2026-08-01T19:58:00-03:00", "text": "Pdo amanha as 5? Blz pra vc?"},
+      {"id": "msg_1002", "direction": "outbound", "sent_at": "2026-08-01T20:00:00-03:00", "text": "Blz, confirmado as 17h."}
+    ],
+    "expected_action": "create",
+    "expected_start_at": "2026-08-02T17:00:00-03:00",
+    "expected_existing_appointment": null,
+    "expected_evidence_message_ids": ["msg_1001", "msg_1002"],
+    "notes": "Brazilian Portuguese colloquialisms/abbreviations (brief Section 24)."
+  },
+  {
+    "id": "multiple_appointments_001",
+    "category": "multiple_appointments",
+    "professional": {"timezone": "America/Sao_Paulo", "default_duration_minutes": 60, "service": "tennis_lesson"},
+    "contact": {"display_name": "Larissa"},
+    "current_time": "2026-08-01T08:00:00-03:00",
+    "upcoming_appointments": [
+      {"id": "appt_800", "start_at": "2026-08-04T17:00:00-03:00", "end_at": "2026-08-04T18:00:00-03:00", "service": "tennis_lesson"},
+      {"id": "appt_801", "start_at": "2026-08-06T17:00:00-03:00", "end_at": "2026-08-06T18:00:00-03:00", "service": "tennis_lesson"}
+    ],
+    "messages": [
+      {"id": "msg_1101", "direction": "inbound", "sent_at": "2026-08-01T08:00:00-03:00", "text": "Manter terca, mas cancelar quinta."}
+    ],
+    "expected_action": "cancel",
+    "expected_start_at": null,
+    "expected_existing_appointment": "appt_801",
+    "expected_evidence_message_ids": ["msg_1101"],
+    "notes": "Multiple existing appointments - only Thursday should be cancelled (brief Section 25)."
+  }
+]
