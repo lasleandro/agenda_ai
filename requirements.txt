@@ -9,6 +9,9 @@ sqlalchemy==2.0.41
 alembic==1.16.2
 psycopg2-binary==2.9.10
 
+# ── Auth ───────────────────────────────────────────────────────────────────
+PyJWT==2.10.1
+
 # ── LLM structured output ─────────────────────────────────────────────────
 instructor==1.10.0
 
@@ -16,7 +19,8 @@ instructor==1.10.0
 dateparser==1.2.1
 
 # ── LLM provider ──────────────────────────────────────────────────────────
-anthropic==0.57.1
+# Azure OpenAI — client comes from the openai package (deps of instructor)
+openai==1.109.1
 
 # ── Observability ──────────────────────────────────────────────────────────
 langfuse==3.1.3

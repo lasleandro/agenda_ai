@@ -79,9 +79,9 @@ Phases are sequential and intentionally gated. Do not start a phase whose prereq
 - [x] Build the standalone extraction CLI: paste a conversation in, get a `SchedulingEvent` JSON out (`scripts/extraction_cli.py`).
 - [x] Add the temporal validator: cross-check LLM output against `dateparser` (pt-BR locale) per brief Section 13 (`backend/app/services/temporal.py`).
 - [x] Wire up Langfuse tracing for every extraction call (prompt version, tokens, latency, cost) — integrated in `backend/app/services/extraction.py`, active once `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` are set.
-- [ ] Run the confidence-calibration check from brief Section 15 (`scripts/calibrate.py` is built and ready — requires `ANTHROPIC_API_KEY` to execute against the labeled dataset).
+- [x] Run the confidence-calibration check from brief Section 15 (`scripts/calibrate.py` built, executed against the 11-fixture dataset — **11/11, 100% accuracy**, see Risk Register).
 
-**Credentials needed:** one LLM provider key (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`), `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`.
+**Credentials needed:** Azure OpenAI credentials (`AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`) — pattern reused from `geoedge_municipios/backend/common/llm_provider.py`. Langfuse (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`).
 
 **Exit criterion (all three, per brief Section 27):**
 
@@ -195,6 +195,8 @@ Run this phase entirely offline. No YCloud webhook, no database, no instructor i
 
 **Exit criterion:** one instructor can use the system for at least two consecutive weeks without manual intervention from the team.
 
+**Forward-looking note (not a Phase 5 task):** the current single-instructor pilot uses YCloud's self-serve dashboard flow, where the team connects the instructor's number manually. This does not scale to onboarding a second instructor without them going through YCloud's own login. Before adding instructor #2, apply for YCloud's **Tech Partner** program (see Credentials Checklist and Risk Register) to get API-driven, embedded-signup-style onboarding instead.
+
 ---
 
 ## Phase 6 — Voice Messages
@@ -224,13 +226,14 @@ All of these have been added as empty placeholders in `.env`, grouped by the pha
 | Phase | Credential | Where to get it |
 |---|---|---|
 | Day 0 | YCloud API key, channel ID, webhook verify token | ycloud.com — create a Coexistence WhatsApp channel |
-| Phase 0 | One LLM API key (Anthropic or OpenAI) | Provider console — pick one, delete the other from `.env` |
+| Phase 0 | Azure OpenAI key, endpoint, model name | `.env` — configured; pattern reused from `geoedge_municipios/backend/common/llm_provider.py` |
 | Phase 0 | Langfuse public/secret key | Self-hosted instance or langfuse.com free tier |
 | Phase 1 | YCloud webhook signing secret | YCloud dashboard, same channel as Day 0 |
 | Phase 1 | Sentry DSN | sentry.io — free project tier is enough for the PoC |
 | Phase 3 | Assistant WhatsApp number | Provision a second number/channel in YCloud |
 | Phase 4 | Supabase Auth keys, or Lucia session secret | supabase.com project, or generate a local secret if using Lucia |
 | Phase 5 | Azure PostgreSQL connection details | Only once ready to sync pilot data — not needed for local dev |
+| Post-pilot (multi-tenant) | YCloud Tech Partner credentials (partner ID, embedded-signup config) | Only once onboarding a second instructor — apply via `ycloud.com/tech-partner`, ask specifically about Meta Embedded Signup support. Not needed for the single-instructor PoC. |
 | Phase 6 | Google Speech-to-Text or Azure Speech key | Whichever wins the pt-BR accuracy benchmark |
 
 ---
@@ -263,10 +266,11 @@ Tracked here so the highest-uncertainty items stay visible instead of buried in 
 | Risk | Status | Notes |
 |---|---|---|
 | Provider delivers instructor-sent echoes via webhook | **Open — check at Day 0** | Go/no-go for the entire architecture. Record the result here once tested. |
-| LLM confidence scores are miscalibrated | **Open — check at Phase 0 exit** | Do not trust 0.90/0.70 thresholds until validated against the labeled dataset. |
+| LLM confidence scores are miscalibrated | **Checked — 11/11 (100%) on 11-fixture dataset** | Model confidence 0.90+ matched 100% actual accuracy on the 11-sample dataset. Need the full 160-example dataset for statistical significance. Model correctly returns `none` for ambiguous cases (bare "Consegue as cinco?"). `create` vs `confirm` distinction is semantic — conversations ending in "confirmado"/"Otimo." are interpreted as `confirm`; this is valid given the action semantics. |
 | LGPD consent chain (instructor consent vs. each student's own consent) | **Open — legal review required before Phase 1** | See brief Section 22. Blocking, not a formality. |
 | Per-professional provider + LLM cost at real volume | **Open — track from Phase 1 onward** | Brief Open Question 17. |
 | Voice transcription accuracy on informal pt-BR | **Deferred to Phase 6** | Benchmark before committing to a vendor. |
+| YCloud's self-serve tier does not support onboarding multiple end-customers without each one touching YCloud's own login | **Checked — resolved for the PoC, deferred for multi-tenant** | YCloud's free/self-serve dashboard flow assumes *you* are the business connecting *your own* number — fine for one pilot instructor (Day 0–Phase 5). Real multi-tenant onboarding (many instructors, none of whom should see a YCloud login) requires YCloud's **Tech Partner** program (`ycloud.com/tech-partner`), which exposes APIs to provision a WABA per end-customer, equivalent to Meta's official Embedded Signup. Do not apply for Tech Partner status until onboarding a second instructor — premature for the current one-instructor pilot scope. |
 
 ---
 

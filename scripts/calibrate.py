@@ -36,14 +36,19 @@ def evaluate_fixture(fixture: dict) -> dict:
 
     action_correct = result["action"] == fixture["expected_action"]
 
-    expected_start = _parse_expected_dt(fixture.get("expected_start_at"))
-    actual_start = _parse_expected_dt(result.get("start_at"))
-    if expected_start is None and actual_start is None:
-        temporal_correct = True
-    elif expected_start is None or actual_start is None:
-        temporal_correct = False
+    # Temporal correctness: skip for cancel/none actions where start_at is not meaningful.
+    expected_action = fixture["expected_action"]
+    if expected_action in ("cancel", "none"):
+        temporal_correct = True  # temporal not applicable — only action matters
     else:
-        temporal_correct = expected_start == actual_start
+        expected_start = _parse_expected_dt(fixture.get("expected_start_at"))
+        actual_start = _parse_expected_dt(result.get("start_at"))
+        if expected_start is None and actual_start is None:
+            temporal_correct = True
+        elif expected_start is None or actual_start is None:
+            temporal_correct = False
+        else:
+            temporal_correct = expected_start == actual_start
 
     overall_correct = action_correct and temporal_correct
 

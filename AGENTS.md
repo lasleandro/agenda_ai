@@ -10,7 +10,7 @@
 8. Always externalize server parametrization in .env. Also, always check .env for server and DB parameters.
 9. Do not use emojis. Prefer professional icons / .svg, like we have in other projects.
 10. Always get inspiration and reuse code/modules/functions of other projects pointed in this workspace (without modifying those other projects).
-11. We are building cutting-edge platforms, inspired by leading platforms like Palantir and Hexagon.
+11. We are building modern and simple platforms, inspired by leading platforms like Monday.com.
 12. Favor **optimistic UI** patterns: show the expected result to the user immediately, then reconcile on server response. Roll back gracefully on failure. Avoid unnecessary spinners and loading states for user-initiated actions — users should feel the system is instantaneous whenever it is possible. This applies to builds, deletes, moves, and any CRUD operation where the happy path is the norm.
 
 

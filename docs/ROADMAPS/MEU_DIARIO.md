@@ -1,0 +1,5 @@
+- Features para o futuro:
+-- Associar clientes a endereços (de quadras, salão etc)
+-- Para tênis, mostrar as quadras
+-- Módulo financeiro
+-- Pensando em nichar para tênis primeiro, chamaria "meucoach"

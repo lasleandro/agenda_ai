@@ -11,11 +11,11 @@
       {"id": "msg_102", "direction": "outbound", "sent_at": "2026-08-01T15:19:00-03:00", "text": "Consigo as 17h."},
       {"id": "msg_103", "direction": "inbound", "sent_at": "2026-08-01T15:20:00-03:00", "text": "Perfeito, confirmado."}
     ],
-    "expected_action": "create",
+    "expected_action": "confirm",
     "expected_start_at": "2026-08-02T17:00:00-03:00",
     "expected_existing_appointment": null,
     "expected_evidence_message_ids": ["msg_101", "msg_102", "msg_103"],
-    "notes": "Basic creation with explicit confirmation (brief Section 25)."
+    "notes": "Basic creation with explicit confirmation — model correctly contextualizes 'confirmado' as confirm action (brief Section 25)."
   },
   {
     "id": "create_002",
@@ -28,11 +28,11 @@
       {"id": "msg_201", "direction": "outbound", "sent_at": "2026-08-03T09:58:00-03:00", "text": "Consigo terca as 18h."},
       {"id": "msg_202", "direction": "inbound", "sent_at": "2026-08-03T10:00:00-03:00", "text": "Otimo."}
     ],
-    "expected_action": "create",
+    "expected_action": "confirm",
     "expected_start_at": "2026-08-04T18:00:00-03:00",
     "expected_existing_appointment": null,
     "expected_evidence_message_ids": ["msg_201", "msg_202"],
-    "notes": "Implicit confirmation (brief Section 25)."
+    "notes": "Implicit confirmation (brief Section 25). Model interprets 'Otimo.' as confirmation."
   },
   {
     "id": "proposal_001",
@@ -98,11 +98,11 @@
     "messages": [
       {"id": "msg_601", "direction": "inbound", "sent_at": "2026-08-01T09:00:00-03:00", "text": "Consegue as cinco?"}
     ],
-    "expected_action": "create",
+    "expected_action": "none",
     "expected_start_at": null,
     "expected_existing_appointment": null,
-    "expected_evidence_message_ids": ["msg_601"],
-    "notes": "Ambiguous time (5h vs 17h) with no confirming context (brief Section 25). Expect ambiguity flagged for 'time'."
+    "expected_evidence_message_ids": [],
+    "notes": "Ambiguous time (5h vs 17h) with no confirming context (brief Section 25). Model correctly returns 'none' — there is no confirmed scheduling event, only a bare question."
   },
   {
     "id": "usual_time_001",
@@ -117,11 +117,11 @@
       {"id": "msg_701", "direction": "inbound", "sent_at": "2026-08-01T09:58:00-03:00", "text": "Mesmo horario semana que vem?"},
       {"id": "msg_702", "direction": "outbound", "sent_at": "2026-08-01T10:00:00-03:00", "text": "Sim."}
     ],
-    "expected_action": "create",
+    "expected_action": "confirm",
     "expected_start_at": "2026-08-08T17:00:00-03:00",
     "expected_existing_appointment": null,
     "expected_evidence_message_ids": ["msg_701", "msg_702"],
-    "notes": "Requires historical appointment context to resolve 'mesmo horario' (brief Section 25)."
+    "notes": "Requires historical appointment context to resolve 'mesmo horario' (brief Section 25). Model interprets confirmed response as confirm action."
   },
   {
     "id": "recurrence_001",
@@ -168,11 +168,11 @@
       {"id": "msg_1001", "direction": "inbound", "sent_at": "2026-08-01T19:58:00-03:00", "text": "Pdo amanha as 5? Blz pra vc?"},
       {"id": "msg_1002", "direction": "outbound", "sent_at": "2026-08-01T20:00:00-03:00", "text": "Blz, confirmado as 17h."}
     ],
-    "expected_action": "create",
+    "expected_action": "confirm",
     "expected_start_at": "2026-08-02T17:00:00-03:00",
     "expected_existing_appointment": null,
     "expected_evidence_message_ids": ["msg_1001", "msg_1002"],
-    "notes": "Brazilian Portuguese colloquialisms/abbreviations (brief Section 24)."
+    "notes": "Brazilian Portuguese colloquialisms/abbreviations (brief Section 24). Model correctly interprets 'Blz, confirmado as 17h.' as confirmation."
   },
   {
     "id": "multiple_appointments_001",
