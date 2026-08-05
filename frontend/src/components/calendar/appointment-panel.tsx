@@ -13,7 +13,7 @@ import { StatusBadge } from "./status-badge";
 import { fetchAppointment } from "@/lib/api";
 import { formatFullDate, formatTimeRange } from "@/lib/calendar-utils";
 import type { AppointmentDetail } from "@/lib/types";
-import { Calendar, Clock, User, Tag, Link2 } from "lucide-react";
+import { Calendar, Clock, User, Tag, Link2, MapPin } from "lucide-react";
 
 function initials(name: string) {
   return name
@@ -33,19 +33,29 @@ export function AppointmentPanel({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [detail, setDetail] = useState<AppointmentDetail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{
+    appointmentId: string;
+    detail: AppointmentDetail | null;
+    error: string | null;
+  } | null>(null);
 
   useEffect(() => {
     if (!appointmentId || !open) return;
-    setLoading(true);
-    setError(null);
     fetchAppointment(appointmentId)
-      .then(setDetail)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .then((detail) => setResult({ appointmentId, detail, error: null }))
+      .catch((error) =>
+        setResult({
+          appointmentId,
+          detail: null,
+          error: error instanceof Error ? error.message : "Falha ao carregar",
+        })
+      );
   }, [appointmentId, open]);
+
+  const currentResult = result?.appointmentId === appointmentId ? result : null;
+  const detail = currentResult?.detail ?? null;
+  const error = currentResult?.error ?? null;
+  const loading = Boolean(open && appointmentId && !currentResult);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -104,6 +114,12 @@ export function AppointmentPanel({
                 <Tag className="h-4 w-4 text-muted-foreground shrink-0" />
                 <span className="capitalize">{detail.service}</span>
               </div>
+              {detail.place_name && (
+                <div className="flex items-center gap-3">
+                  <MapPin className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span>{detail.place_name}</span>
+                </div>
+              )}
               <div className="flex items-center gap-3">
                 <User className="h-4 w-4 text-muted-foreground shrink-0" />
                 <span>Origem: {detail.source}</span>

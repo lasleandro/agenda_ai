@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Calendar, Lock, User } from "lucide-react";
+import { Calendar, Lock, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,7 +10,7 @@ import { login } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -20,10 +20,10 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await login(username, password);
+      await login(email, password);
       router.replace("/");
     } catch {
-      setError("Usuário ou senha inválidos");
+      setError("Email ou senha inválidos");
     } finally {
       setSubmitting(false);
     }
@@ -47,16 +47,16 @@ export default function LoginPage() {
 
         <div className="relative flex items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500 text-sm font-bold text-white">
-            A
+            T
           </div>
           <span className="text-[15px] font-semibold tracking-tight text-white">
-            Agenda AI
+            Tennis OS
           </span>
         </div>
 
         <div className="relative max-w-md space-y-4">
           <h1 className="text-3xl font-semibold leading-tight text-white">
-            Sua agenda, organizada pelo WhatsApp.
+            Sua operação, organizada pelo WhatsApp.
           </h1>
           <p className="text-[15px] leading-relaxed text-[var(--sidebar-text)]">
             Confirmações, remarcações e cancelamentos processados
@@ -74,10 +74,10 @@ export default function LoginPage() {
         <div className="w-full max-w-sm">
           <div className="mb-8 flex flex-col items-center gap-3 lg:hidden">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500 text-base font-bold text-white">
-              A
+              T
             </div>
             <span className="text-lg font-semibold tracking-tight text-foreground">
-              Agenda AI
+              Tennis OS
             </span>
           </div>
 
@@ -91,13 +91,14 @@ export default function LoginPage() {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
-                <Label htmlFor="username">Usuário</Label>
+                <Label htmlFor="email">Email</Label>
                 <div className="relative">
-                  <User className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Mail className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    id="username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                     autoFocus
                     required
                     className="h-10 pl-9"

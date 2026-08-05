@@ -1,6 +1,49 @@
-import type { AppointmentDetail, CalendarResponse } from "./types";
+import type {
+  AppointmentDetail,
+  AppointmentCreateInput,
+  CalendarResponse,
+  CandidateDetail,
+  ContactDetailData,
+  CommercialOverrideInput,
+  CustomerFinancialDetail,
+  FinancialConfigurationDetail,
+  FinancialDashboardDetail,
+  FinancialScenarioDetail,
+  FinancialScenarioInput,
+  FinancialScenarioList,
+  FinancialScenarioResult,
+  FinancialSettingsDetail,
+  ContactListResponse,
+  ContactUpdateInput,
+  ConversationDetail,
+  ConversationListResponse,
+  MockConversationInfo,
+  GroupFinancialDetail,
+  PlaceRateInput,
+  PlaceRateMatrixDetail,
+  Place,
+  PlaceInput,
+  PlaceListResponse,
+  RecurringSlot,
+  RecurringSlotBulkInput,
+  RecurringGroupInput,
+  RecurringGroupDetail,
+  RecurringSlotInput,
+  RecurringSlotListResponse,
+  RecurringSlotParticipant,
+  RevenueCandidateList,
+  RevenueOccurrenceCreateInput,
+  RevenueOccurrenceDetail,
+  RevenueSummaryDetail,
+  PrimeTimeWindowDetail,
+  PrimeTimeWindowInput,
+  TenantListResponse,
+  TenantFeatureState,
+  WorkJourneyIntervalDetail,
+  WorkJourneyIntervalInput,
+} from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8005";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 export async function fetchCalendar(
   startDate: string,
@@ -24,3 +67,284 @@ export async function fetchAppointment(
   }
   return res.json();
 }
+
+export const createAppointment = (body: AppointmentCreateInput) =>
+  apiRequest<AppointmentDetail>("/api/appointments", { method: "POST", body });
+
+// ---------------------------------------------------------------------------
+// Dev-only mock WhatsApp chat (DEBUG=true backend only, see app/api/dev_mock.py)
+// ---------------------------------------------------------------------------
+
+export async function fetchMockConversation(): Promise<MockConversationInfo> {
+  const res = await fetch(`${API_BASE}/api/dev/mock-conversation`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch mock conversation: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchConversation(id: string): Promise<ConversationDetail> {
+  const res = await fetch(`${API_BASE}/api/conversations/${id}`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch conversation: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchConversations(): Promise<ConversationListResponse> {
+  const res = await fetch(`${API_BASE}/api/conversations`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch conversations: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function sendMockMessage(
+  sender: "instructor" | "customer",
+  text: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/dev/mock-messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ sender, text }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to send mock message: ${res.statusText}`);
+  }
+}
+
+export async function resetMockConversation(): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/dev/mock-conversation/reset`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to reset mock conversation: ${res.statusText}`);
+  }
+}
+
+export async function processConversationNow(
+  conversationId: string
+): Promise<CandidateDetail[]> {
+  const res = await fetch(
+    `${API_BASE}/api/dev/conversations/${conversationId}/process-now`,
+    { method: "POST", credentials: "include" }
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to process conversation: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Platform admin — tenant tile grid (multi-tenancy roadmap Phase D)
+// ---------------------------------------------------------------------------
+
+export async function fetchTenants(): Promise<TenantListResponse> {
+  const res = await fetch(`${API_BASE}/api/admin/tenants`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch tenants: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export const updateCommercialFinancials = (tenantId: string, enabled: boolean) =>
+  apiRequest<TenantFeatureState>(
+    `/api/admin/tenants/${tenantId}/features/commercial-financials`,
+    { method: "PATCH", body: { enabled } }
+  );
+
+// ---------------------------------------------------------------------------
+// Customer ontology — Places, RecurringSlots, Contacts
+// ---------------------------------------------------------------------------
+
+async function apiRequest<T>(
+  path: string,
+  options: { method?: string; body?: unknown } = {}
+): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: options.method ?? "GET",
+    credentials: "include",
+    headers: options.body ? { "Content-Type": "application/json" } : undefined,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? `Request failed: ${res.statusText}`);
+  }
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
+export const fetchPlaces = () => apiRequest<PlaceListResponse>("/api/places");
+export const fetchPlace = (id: string) => apiRequest<Place>(`/api/places/${id}`);
+export const createPlace = (body: PlaceInput) =>
+  apiRequest<Place>("/api/places", { method: "POST", body });
+export const updatePlace = (id: string, body: Partial<PlaceInput>) =>
+  apiRequest<Place>(`/api/places/${id}`, { method: "PATCH", body });
+export const deletePlace = (id: string) =>
+  apiRequest<void>(`/api/places/${id}`, { method: "DELETE" });
+
+export const fetchRecurringSlots = (placeId?: string) =>
+  apiRequest<RecurringSlotListResponse>(
+    placeId ? `/api/recurring-slots?place_id=${placeId}` : "/api/recurring-slots"
+  );
+export const fetchRecurringGroup = (id: string) =>
+  apiRequest<RecurringGroupDetail>(`/api/recurring-slots/${id}`);
+export const createRecurringSlot = (body: RecurringSlotInput) =>
+  apiRequest<RecurringSlot>("/api/recurring-slots", { method: "POST", body });
+export const createRecurringSlots = (body: RecurringSlotBulkInput) =>
+  apiRequest<RecurringSlot[]>("/api/recurring-slots/bulk", { method: "POST", body });
+export const createRecurringGroup = (body: RecurringGroupInput) =>
+  apiRequest<RecurringSlot>("/api/recurring-slots/groups", { method: "POST", body });
+export const updateRecurringSlot = (id: string, body: Partial<RecurringSlotInput>) =>
+  apiRequest<RecurringSlot>(`/api/recurring-slots/${id}`, { method: "PATCH", body });
+export const deleteRecurringSlot = (id: string) =>
+  apiRequest<void>(`/api/recurring-slots/${id}`, { method: "DELETE" });
+export const addSlotParticipant = (slotId: string, contactId: string) =>
+  apiRequest<RecurringSlotParticipant>(`/api/recurring-slots/${slotId}/participants`, {
+    method: "POST",
+    body: { contact_id: contactId },
+  });
+export const removeSlotParticipant = (slotId: string, contactId: string) =>
+  apiRequest<void>(`/api/recurring-slots/${slotId}/participants/${contactId}`, {
+    method: "DELETE",
+  });
+
+export const fetchContacts = () => apiRequest<ContactListResponse>("/api/contacts");
+export const fetchContact = (id: string) => apiRequest<ContactDetailData>(`/api/contacts/${id}`);
+export const updateContact = (id: string, body: ContactUpdateInput) =>
+  apiRequest<ContactDetailData>(`/api/contacts/${id}`, { method: "PATCH", body });
+
+export const fetchCustomerFinancials = (id: string) =>
+  apiRequest<CustomerFinancialDetail>(`/api/financial/customers/${id}`);
+export const updateCustomerFinancials = (
+  id: string,
+  body: CommercialOverrideInput
+) =>
+  apiRequest<CustomerFinancialDetail>(`/api/financial/customers/${id}`, {
+    method: "PATCH",
+    body,
+  });
+export const fetchGroupFinancials = (id: string) =>
+  apiRequest<GroupFinancialDetail>(`/api/financial/groups/${id}`);
+export const updateGroupFinancials = (
+  id: string,
+  body: CommercialOverrideInput
+) =>
+  apiRequest<GroupFinancialDetail>(`/api/financial/groups/${id}`, {
+    method: "PATCH",
+    body,
+  });
+
+export const fetchFinancialSettings = () =>
+  apiRequest<FinancialSettingsDetail>("/api/financial/settings");
+export const updateFinancialSettings = (body: {
+  default_commercial_status?: string;
+  rates?: { participant_count: number; hourly_rate_cents: number | null }[];
+}) =>
+  apiRequest<FinancialSettingsDetail>("/api/financial/settings", {
+    method: "PATCH",
+    body,
+  });
+export const fetchFinancialConfiguration = () =>
+  apiRequest<FinancialConfigurationDetail>("/api/financial/configuration");
+export const replacePrimeTimeWindows = (windows: PrimeTimeWindowInput[]) =>
+  apiRequest<PrimeTimeWindowDetail[]>("/api/financial/prime-time-windows", {
+    method: "PUT",
+    body: { windows },
+  });
+export const replacePlaceRates = (placeId: string, rates: PlaceRateInput[]) =>
+  apiRequest<PlaceRateMatrixDetail>(`/api/financial/places/${placeId}/rates`, {
+    method: "PUT",
+    body: { rates },
+  });
+export const replaceWorkJourney = (intervals: WorkJourneyIntervalInput[]) =>
+  apiRequest<WorkJourneyIntervalDetail[]>("/api/financial/work-journey", {
+    method: "PUT",
+    body: { intervals },
+  });
+
+export const fetchFinancialDashboard = (
+  dateFrom: string,
+  dateTo: string,
+  placeIds: string[] = []
+) => {
+  const params = new URLSearchParams({
+    date_from: dateFrom,
+    date_to: dateTo,
+  });
+  placeIds.forEach((placeId) => params.append("place_id", placeId));
+  return apiRequest<FinancialDashboardDetail>(
+    `/api/financial/dashboard?${params.toString()}`
+  );
+};
+
+export const evaluateFinancialScenario = (body: FinancialScenarioInput) =>
+  apiRequest<FinancialScenarioResult>("/api/financial/scenarios/evaluate", {
+    method: "POST",
+    body,
+  });
+
+export const saveFinancialScenario = (body: FinancialScenarioInput) =>
+  apiRequest<FinancialScenarioDetail>("/api/financial/scenarios", {
+    method: "POST",
+    body,
+  });
+
+export const fetchFinancialScenarios = () =>
+  apiRequest<FinancialScenarioList>("/api/financial/scenarios");
+
+export const fetchRevenueCandidates = (
+  dateFrom: string,
+  dateTo: string,
+  limit = 100,
+  offset = 0
+) => {
+  const params = new URLSearchParams({
+    date_from: dateFrom,
+    date_to: dateTo,
+    limit: String(limit),
+    offset: String(offset),
+  });
+  return apiRequest<RevenueCandidateList>(
+    `/api/financial/revenue/candidates?${params.toString()}`
+  );
+};
+
+export const confirmRevenueOccurrence = (
+  body: RevenueOccurrenceCreateInput
+) =>
+  apiRequest<RevenueOccurrenceDetail>(
+    "/api/financial/revenue/occurrences",
+    { method: "POST", body }
+  );
+
+export const fetchRevenueSummary = (
+  dateFrom: string,
+  dateTo: string,
+  occurrenceLimit = 100
+) => {
+  const params = new URLSearchParams({
+    date_from: dateFrom,
+    date_to: dateTo,
+    occurrence_limit: String(occurrenceLimit),
+  });
+  return apiRequest<RevenueSummaryDetail>(
+    `/api/financial/revenue/summary?${params.toString()}`
+  );
+};
+
+export const fetchRevenueOccurrence = (id: string) =>
+  apiRequest<RevenueOccurrenceDetail>(
+    `/api/financial/revenue/occurrences/${id}`
+  );
