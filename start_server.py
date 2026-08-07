@@ -1,20 +1,32 @@
 #!/usr/bin/env python3
 """
-Agenda AI - Server Launcher
+Tennis OS - Server Launcher
 ============================
 
 Starts both the FastAPI backend (port 8005) and the Next.js frontend
-dev server (port 3000).
+dev server (port 3010 — pinned, not 3000, since other local projects
+commonly occupy 3000).
 
 Usage:
-    python start_server.py
+    python start_server.py            # backend + frontend
+    python start_server.py --tunnel   # also expose the backend via a
+                                       # cloudflared quick tunnel, for
+                                       # registering the YCloud webhook
+                                       # (see docs/local_dev_webhook_tunnel.md)
+    python start_server.py --worker   # also run the appointment candidate
+                                       # worker (Phase 2 debounce/extraction
+                                       # pipeline, polls pending_processing)
 
 Access:
-    Frontend  → http://localhost:3000
+    Frontend  → http://localhost:3010
     Backend   → http://localhost:8005/docs (Swagger UI)
 """
 
+import argparse
+import glob
 import os
+import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -24,8 +36,54 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent
 BACKEND_DIR = PROJECT_ROOT / "backend"
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
+TUNNEL_DOC = PROJECT_ROOT / "docs" / "local_dev_webhook_tunnel.md"
 
 PYTHON_BIN = os.path.expanduser("~/anaconda3/envs/agenda/bin/python3.11")
+
+# Pinned rather than left to Next's auto-fallback, since 3000 is commonly
+# occupied by other projects on this machine and an unpredictable port
+# breaks anything that links to the frontend (docs, bookmarks, etc.).
+FRONTEND_PORT = 3010
+
+TRYCLOUDFLARE_URL_RE = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
+
+
+def _find_npm() -> str | None:
+    """Resolve npm even when nvm hasn't exported it onto PATH in this shell."""
+    npm = shutil.which("npm")
+    if npm:
+        return npm
+    nvm_npms = sorted(glob.glob(os.path.expanduser("~/.nvm/versions/node/*/bin/npm")))
+    return nvm_npms[-1] if nvm_npms else None
+
+
+def _npm_env(npm_bin: str) -> dict:
+    """npm's shebang is `#!/usr/bin/env node` — make sure node's directory
+    (e.g. nvm's) is on PATH for the child process, since conda activation
+    can knock it off PATH in the parent shell."""
+    env = os.environ.copy()
+    node_dir = str(Path(npm_bin).parent)
+    if node_dir not in env.get("PATH", ""):
+        env["PATH"] = f"{node_dir}:{env.get('PATH', '')}"
+    return env
+
+
+def _find_cloudflared() -> str | None:
+    cloudflared = shutil.which("cloudflared")
+    if cloudflared:
+        return cloudflared
+    local_bin = os.path.expanduser("~/.local/bin/cloudflared")
+    return local_bin if Path(local_bin).exists() else None
+
+
+def _update_tunnel_doc(url: str):
+    """Keep docs/local_dev_webhook_tunnel.md's recorded URL in sync."""
+    if not TUNNEL_DOC.exists():
+        return
+    text = TUNNEL_DOC.read_text()
+    text = re.sub(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", url, text)
+    text = re.sub(r"(\| Started \| ).*( \|)", rf"\g<1>{time.strftime('%Y-%m-%d')}\g<2>", text)
+    TUNNEL_DOC.write_text(text)
 
 # ---------------------------------------------------------------------------
 # Banner
@@ -33,7 +91,7 @@ PYTHON_BIN = os.path.expanduser("~/anaconda3/envs/agenda/bin/python3.11")
 
 def _banner():
     print("=" * 80)
-    print("  Agenda AI - WhatsApp Schedule Copilot")
+    print("  Tennis OS - WhatsApp Schedule Copilot")
     print("=" * 80)
     print(f"  Python:   {PYTHON_BIN}")
     print(f"  Backend:  {BACKEND_DIR}")
@@ -84,10 +142,44 @@ def _start_frontend() -> subprocess.Popen | None:
     if not package_json.exists():
         print("  Frontend not yet scaffolded (no package.json). Skipping.")
         return None
-    print("  Starting Next.js dev server on port 3000 ...")
+    npm_bin = _find_npm()
+    if not npm_bin:
+        print("  ERROR: npm not found (checked PATH and ~/.nvm/versions/node/*/bin). Skipping frontend.")
+        return None
+    print(f"  Starting Next.js dev server on port {FRONTEND_PORT} ...")
     proc = subprocess.Popen(
-        ["npm", "run", "dev"],
+        [npm_bin, "run", "dev", "--", "--port", str(FRONTEND_PORT)],
         cwd=str(FRONTEND_DIR),
+        env=_npm_env(npm_bin),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    _processes.append(proc)
+    return proc
+
+
+def _start_tunnel() -> subprocess.Popen | None:
+    cloudflared_bin = _find_cloudflared()
+    if not cloudflared_bin:
+        print("  ERROR: cloudflared not found (checked PATH and ~/.local/bin). Skipping tunnel.")
+        return None
+    print("  Starting cloudflared tunnel -> http://localhost:8005 ...")
+    proc = subprocess.Popen(
+        [cloudflared_bin, "tunnel", "--url", "http://localhost:8005"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    _processes.append(proc)
+    return proc
+
+
+def _start_worker() -> subprocess.Popen:
+    print("  Starting appointment candidate worker ...")
+    proc = subprocess.Popen(
+        [PYTHON_BIN, "-m", "app.chat.candidate_worker"],
+        cwd=str(BACKEND_DIR),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -114,6 +206,17 @@ def _cleanup(*_):
 # ---------------------------------------------------------------------------
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--tunnel", action="store_true",
+        help="also start a cloudflared quick tunnel exposing the backend, for the YCloud webhook",
+    )
+    parser.add_argument(
+        "--worker", action="store_true",
+        help="also run the appointment candidate worker (Phase 2 pipeline)",
+    )
+    args = parser.parse_args()
+
     _banner()
     _check_prereqs()
 
@@ -122,6 +225,8 @@ def main():
 
     backend = _start_backend()
     frontend = _start_frontend()
+    tunnel = _start_tunnel() if args.tunnel else None
+    worker = _start_worker() if args.worker else None
 
     # Give servers a moment to start
     time.sleep(2)
@@ -129,9 +234,13 @@ def main():
     print()
     print("=" * 80)
     if frontend is not None:
-        print("  Frontend  -> http://localhost:3000")
+        print(f"  Frontend  -> http://localhost:{FRONTEND_PORT}")
     print("  Backend   -> http://localhost:8005 (API)")
     print("  Swagger   -> http://localhost:8005/docs")
+    if tunnel is not None:
+        print("  Webhook tunnel -> starting, URL will appear below once ready ...")
+    if worker is not None:
+        print("  Candidate worker -> polling pending_processing")
     print()
     print("  Press Ctrl+C to stop all servers.")
     print("=" * 80)
@@ -141,6 +250,12 @@ def main():
     active = [("backend", backend)]
     if frontend is not None:
         active.append(("frontend", frontend))
+    if tunnel is not None:
+        active.append(("tunnel", tunnel))
+    if worker is not None:
+        active.append(("worker", worker))
+
+    tunnel_url_announced = False
 
     try:
         while True:
@@ -148,6 +263,18 @@ def main():
                 line = proc.stdout.readline()
                 if line:
                     print(f"  [{label}] {line.rstrip()}")
+                    if label == "tunnel" and not tunnel_url_announced:
+                        match = TRYCLOUDFLARE_URL_RE.search(line)
+                        if match:
+                            url = match.group(0)
+                            tunnel_url_announced = True
+                            _update_tunnel_doc(url)
+                            print()
+                            print("=" * 80)
+                            print(f"  Webhook URL (register in YCloud): {url}/webhooks/ycloud")
+                            print(f"  Recorded in {TUNNEL_DOC.relative_to(PROJECT_ROOT)}")
+                            print("=" * 80)
+                            print()
                 if proc.poll() is not None:
                     print(f"  [{label}] process exited with code {proc.returncode}")
                     _cleanup()

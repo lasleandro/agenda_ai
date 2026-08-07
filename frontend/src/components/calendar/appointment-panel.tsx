@@ -26,10 +26,12 @@ function initials(name: string) {
 
 export function AppointmentPanel({
   appointmentId,
+  occurrenceDate,
   open,
   onOpenChange,
 }: {
   appointmentId: string | null;
+  occurrenceDate?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -41,7 +43,7 @@ export function AppointmentPanel({
 
   useEffect(() => {
     if (!appointmentId || !open) return;
-    fetchAppointment(appointmentId)
+    fetchAppointment(appointmentId, occurrenceDate)
       .then((detail) => setResult({ appointmentId, detail, error: null }))
       .catch((error) =>
         setResult({
@@ -50,7 +52,7 @@ export function AppointmentPanel({
           error: error instanceof Error ? error.message : "Falha ao carregar",
         })
       );
-  }, [appointmentId, open]);
+  }, [appointmentId, occurrenceDate, open]);
 
   const currentResult = result?.appointmentId === appointmentId ? result : null;
   const detail = currentResult?.detail ?? null;
@@ -87,7 +89,9 @@ export function AppointmentPanel({
                 </Avatar>
                 <div>
                   <p className="font-semibold text-base leading-tight">
-                    {detail.contact_name}
+                    {detail.participants && detail.participants.length > 1
+                      ? detail.participants.map((p) => p.display_name).join(" + ")
+                      : detail.contact_name}
                   </p>
                   <p className="text-sm text-muted-foreground capitalize">
                     {detail.service}
@@ -105,6 +109,11 @@ export function AppointmentPanel({
                 <span className="capitalize">
                   {formatFullDate(detail.start_at)}
                 </span>
+                {detail.is_exception && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                    Reagendado
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-3">
                 <Clock className="h-4 w-4 text-muted-foreground shrink-0" />

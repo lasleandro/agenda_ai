@@ -52,11 +52,11 @@ Phases are sequential and intentionally gated. Do not start a phase whose prereq
 
 **Tasks:**
 
-- [ ] Create a YCloud sandbox/pilot account and a WhatsApp channel in Coexistence mode (see brief Section 9 and "Provider cost economics").
-- [ ] Connect a real WhatsApp Business number (a throwaway test number is fine at this stage — it does not need to be the pilot instructor's number).
-- [ ] Send a message from that number's WhatsApp Business App to a test contact, and confirm the **outbound echo arrives via webhook** — this is the assumption everything else depends on (Open Question 16 in the brief).
-- [ ] Confirm inbound messages from the test contact also arrive via webhook.
-- [ ] Record the result (pass/fail, plus any YCloud plan tier requirement) directly in this roadmap's Risk Register at the end.
+- [x] Create a YCloud sandbox/pilot account and a WhatsApp channel in Coexistence mode (see brief Section 9 and "Provider cost economics"). Channel "Meu Coach", WABA ID `106700875646601`.
+- [x] Connect a real WhatsApp Business number (a throwaway test number is fine at this stage — it does not need to be the pilot instructor's number). `+5511949408816`, status Connected.
+- [x] Send a message from that number's WhatsApp Business App to a test contact, and confirm the **outbound echo arrives via webhook** — this is the assumption everything else depends on (Open Question 16 in the brief). Confirmed via `whatsapp.smb.message.echoes` event.
+- [x] Confirm inbound messages from the test contact also arrive via webhook. Confirmed via `whatsapp.inbound_message.received` event.
+- [x] Record the result (pass/fail, plus any YCloud plan tier requirement) directly in this roadmap's Risk Register at the end.
 
 **Credentials needed:** `YCLOUD_API_KEY`, `YCLOUD_WHATSAPP_CHANNEL_ID`, `YCLOUD_WEBHOOK_VERIFY_TOKEN` (see Credentials Checklist).
 
@@ -101,13 +101,13 @@ Run this phase entirely offline. No YCloud webhook, no database, no instructor i
 
 **Tasks:**
 
-- [ ] Create the local `agenda_db` database in the running Postgres container (this is the point where it becomes necessary — let me know and I'll create it, or run it yourself: `CREATE DATABASE agenda_db;`).
-- [ ] Write the first Alembic migration: `professional`, `contact`, `conversation`, `message` tables (brief Section 10.1–10.4).
-- [ ] Implement the `MessagingProvider` protocol (brief Section 9, "Architecture guidance") and a YCloud implementation behind it.
-- [ ] Build the webhook endpoint: verify signature → persist raw event → normalize → enforce idempotency on `provider_message_id` → acknowledge quickly → schedule async processing (brief Section 12.1). No synchronous LLM calls in the webhook handler.
-- [ ] Handle both inbound customer messages and instructor outbound-echoes.
-- [ ] Build a bare developer-only conversation view (no UI polish needed) to visually confirm reconstruction.
-- [ ] Draft the LGPD consent flow and instructor-facing privacy policy (brief Section 22) — this can run in parallel with the technical tasks above, but must complete before connecting the real pilot number.
+- [x] Create the local `agenda_db` database in the running Postgres container. Confirmed live in `cityfoundry_local_pg` (port 5433), owner `cityfoundry`.
+- [x] Write the first Alembic migration: `professional`, `contact`, `conversation`, `message` tables (brief Section 10.1–10.4). `e257381e7350_initial_domain_models` covers the full schema (all 8 domain tables incl. `appointment_candidate`/`appointment_evidence`/`appointment`/`appointment_transition`) and is applied — `alembic current` shows `agenda_db` at head.
+- [x] Implement the `MessagingProvider` protocol (brief Section 9, "Architecture guidance") and a YCloud implementation behind it. `backend/app/services/ycloud_provider.py` — signature verification (`YCloud-Signature: t=...,s=...`, HMAC-SHA256) and event normalization for both inbound and echo events.
+- [x] Build the webhook endpoint: verify signature → persist raw event → normalize → enforce idempotency on `provider_message_id` → acknowledge quickly (brief Section 12.1). `backend/app/api/whatsapp.py` (`POST /webhooks/ycloud`). No synchronous LLM calls. Idempotency confirmed by replaying a duplicate `provider_message_id` — no second row created. **Async processing scheduling (`pending_processing`) is not wired yet — that's Phase 2's debounce work, not required for Phase 1's ingestion goal.**
+- [~] Handle both inbound customer messages and instructor outbound-echoes. Inbound confirmed end-to-end with a real WhatsApp message (persisted correctly, contact auto-created with WhatsApp profile name from `customerProfile.name`). Outbound-echo normalization is implemented (`whatsapp.smb.message.echoes`) but not yet exercised with a real echo since the live-code changes — still needs one real test send from the instructor's own WhatsApp Business App to confirm end-to-end.
+- [x] Build a bare developer-only conversation view (no UI polish needed) to visually confirm reconstruction. Implemented as backend-only endpoints (Swagger at `/docs`) rather than a frontend page, since the frontend's routing is mid-refactor — `GET /api/conversations` (list) and `GET /api/conversations/{id}` (messages in order), both auth-gated like the calendar API. Verified against the real test message.
+- [ ] Draft the LGPD consent flow and instructor-facing privacy policy (brief Section 22) — **deferred for now**, per explicit call — must still complete before connecting the real pilot number / any non-test student conversation.
 
 **Credentials needed:** `YCLOUD_API_KEY`, `YCLOUD_WHATSAPP_CHANNEL_ID`, `YCLOUD_WEBHOOK_VERIFY_TOKEN`, `YCLOUD_WEBHOOK_SIGNING_SECRET`, local Postgres (already in `.env`), `SENTRY_DSN`.
 
@@ -123,11 +123,12 @@ Run this phase entirely offline. No YCloud webhook, no database, no instructor i
 
 **Tasks:**
 
-- [ ] Implement conversation buffering / debounce (brief Section 12.2): `pending_processing` table with `process_after`, worker polls with `FOR UPDATE SKIP LOCKED`, debounce reset on new messages.
-- [ ] Wire the Phase 0 extraction logic into the live pipeline (`build_conversation_window` → `extract_scheduling_event` → `validate_scheduling_event`).
-- [ ] Implement `appointment_candidate` and `appointment_evidence` tables (brief Section 10.5, 10.7) and persist every extraction result, including `none` results.
-- [ ] Build a manual inspection page (internal/developer-only) to review candidates against evidence.
-- [ ] Run in shadow mode: let it detect candidates for at least a few days of real conversation without notifying anyone, and manually compare against the instructor's actual schedule.
+- [x] Implement conversation buffering / debounce (brief Section 12.2): `pending_processing` table with `process_after`, worker polls with `FOR UPDATE SKIP LOCKED`, debounce reset on new messages. `backend/app/models/pending_processing.py`, `backend/app/services/pipeline.py::schedule_processing`, `backend/app/workers/candidate_worker.py`. Debounce configurable via `PIPELINE_DEBOUNCE_SECONDS` (default 30s). Wired into the webhook handler, but only on a genuinely new message — not on a deduped retry.
+- [x] Wire the Phase 0 extraction logic into the live pipeline (`build_conversation_window` → `extract_scheduling_event` → `validate_temporal`). `backend/app/services/pipeline.py::build_conversation_window` / `process_conversation`. Required fixing a pre-existing import inconsistency: `extraction.py`/`temporal.py` used `backend.app.X` imports (only worked from the Phase 0 CLI's run context) — changed to `app.X` to match how the FastAPI app itself resolves imports, and added a `sys.path` shim to `scripts/extraction_cli.py` so the CLI still works unchanged. Re-verified `python -m scripts.extraction_cli --fixture create_001` still passes after the change.
+- [x] Implement `appointment_candidate` and `appointment_evidence` tables (brief Section 10.5, 10.7) and persist every extraction result, including `none` results. Tables already existed from the Phase 1 migration; `process_conversation` persists unconditionally regardless of `action`. Verified end-to-end with a real test message: correctly extracted `action=create`, proposed time, service, confidence 0.9, with evidence correctly linked to the source message.
+- [x] Support multiple distinct scheduling events from one conversation window and deduplicate repeated extraction runs by a stable event fingerprint. One conversation can now yield multiple candidates (for example, separate confirmed 10h and 12h lessons) without creating duplicate candidates on subsequent runs.
+- [x] Build a manual inspection page (internal/developer-only) to review candidates against evidence. Extended `GET /api/conversations/{id}` to include `candidates`, each with its linked evidence messages (`backend/app/api/conversations.py::_candidate_with_evidence`). Verified against the real test candidate — correctly shows the `action=create` candidate linked back to its source message.
+- [ ] Run in shadow mode: let it detect candidates for at least a few days of real conversation without notifying anyone, and manually compare against the instructor's actual schedule. Not started — needs the worker running continuously against real (or realistic) conversation traffic first.
 
 **Credentials needed:** none new — reuses Phase 0/1 credentials.
 
@@ -197,6 +198,8 @@ Run this phase entirely offline. No YCloud webhook, no database, no instructor i
 
 **Forward-looking note (not a Phase 5 task):** the current single-instructor pilot uses YCloud's self-serve dashboard flow, where the team connects the instructor's number manually. This does not scale to onboarding a second instructor without them going through YCloud's own login. Before adding instructor #2, apply for YCloud's **Tech Partner** program (see Credentials Checklist and Risk Register) to get API-driven, embedded-signup-style onboarding instead.
 
+**Admin/impersonation note (also not a Phase 5 task, deferred until multi-tenant):** once there's more than one professional, revisit `geoedge_municipios`'s admin-impersonation pattern (`backend/api/routes/auth.py:197-246`) as the reference: a `kognita_admin`-equivalent role calls `POST /impersonate` with a `tenant_id`/`professional_id`, gets a new JWT scoped to that tenant, and every subsequent query derives its scope from the token, never the request body. Not built now — the current PoC has exactly one professional and one hardcoded admin login, so there's no tenant to impersonate into yet, and the calendar API doesn't scope by `professional_id` at all (fine for one tenant, would need to change first).
+
 ---
 
 ## Phase 6 — Voice Messages
@@ -265,7 +268,7 @@ Tracked here so the highest-uncertainty items stay visible instead of buried in 
 
 | Risk | Status | Notes |
 |---|---|---|
-| Provider delivers instructor-sent echoes via webhook | **Open — check at Day 0** | Go/no-go for the entire architecture. Record the result here once tested. |
+| Provider delivers instructor-sent echoes via webhook | **Passed — 2026-08-04** | Tested via webhook.site against channel "Meu Coach" (WABA ID `106700875646601`, number `+5511949408816`, free/self-serve tier). Outbound echo confirmed as event type `whatsapp.smb.message.echoes`; inbound confirmed as `whatsapp.inbound_message.received`. Both include `wabaId`, `from`/`to`, message body, and (inbound) `customerProfile.name`. Go/no-go passed — proceed to Phase 0 exit / Phase 1. |
 | LLM confidence scores are miscalibrated | **Checked — 11/11 (100%) on 11-fixture dataset** | Model confidence 0.90+ matched 100% actual accuracy on the 11-sample dataset. Need the full 160-example dataset for statistical significance. Model correctly returns `none` for ambiguous cases (bare "Consegue as cinco?"). `create` vs `confirm` distinction is semantic — conversations ending in "confirmado"/"Otimo." are interpreted as `confirm`; this is valid given the action semantics. |
 | LGPD consent chain (instructor consent vs. each student's own consent) | **Open — legal review required before Phase 1** | See brief Section 22. Blocking, not a formality. |
 | Per-professional provider + LLM cost at real volume | **Open — track from Phase 1 onward** | Brief Open Question 17. |
@@ -273,4 +276,3 @@ Tracked here so the highest-uncertainty items stay visible instead of buried in 
 | YCloud's self-serve tier does not support onboarding multiple end-customers without each one touching YCloud's own login | **Checked — resolved for the PoC, deferred for multi-tenant** | YCloud's free/self-serve dashboard flow assumes *you* are the business connecting *your own* number — fine for one pilot instructor (Day 0–Phase 5). Real multi-tenant onboarding (many instructors, none of whom should see a YCloud login) requires YCloud's **Tech Partner** program (`ycloud.com/tech-partner`), which exposes APIs to provision a WABA per end-customer, equivalent to Meta's official Embedded Signup. Do not apply for Tech Partner status until onboarding a second instructor — premature for the current one-instructor pilot scope. |
 
 ---
-

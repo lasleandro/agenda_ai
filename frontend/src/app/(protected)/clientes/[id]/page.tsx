@@ -1,18 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { AddressAutocomplete } from "@/components/ontology/address-autocomplete";
+import { AssignSlotDialog } from "@/components/ontology/assign-slot-dialog";
 import { CommercialFieldsCard } from "@/components/financial/commercial-fields-card";
 import {
-  addSlotParticipant,
   fetchContact,
   fetchCustomerFinancials,
   fetchPlaces,
-  fetchRecurringSlots,
   removeSlotParticipant,
   updateContact,
   updateCustomerFinancials,
@@ -43,7 +42,7 @@ export default function ContactDetailPage() {
 
   const [contact, setContact] = useState<ContactDetailData | null>(null);
   const [places, setPlaces] = useState<Place[]>([]);
-  const [availableSlots, setAvailableSlots] = useState<RecurringSlot[]>([]);
+  const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [financialEnabled, setFinancialEnabled] = useState(false);
   const [financial, setFinancial] = useState<CustomerFinancialDetail | null>(null);
   const [saving, setSaving] = useState(false);
@@ -52,7 +51,6 @@ export default function ContactDetailPage() {
   function reload() {
     fetchContact(contactId).then(setContact);
     fetchPlaces().then((res) => setPlaces(res.places));
-    fetchRecurringSlots().then((res) => setAvailableSlots(res.slots));
   }
 
   useEffect(() => {
@@ -129,19 +127,18 @@ export default function ContactDetailPage() {
     }
   }
 
-  async function handleAssignSlot(slotId: string) {
-    if (!slotId) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await addSlotParticipant(slotId, contactId);
-      reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao atribuir horário");
-    } finally {
-      setSaving(false);
-    }
-  }
+  const handleSlotAssigned = useCallback(
+    (slot: RecurringSlot) => {
+      // Optimistic: add the slot to the contact's fixed_slots immediately
+      setContact((prev) => {
+        if (!prev) return prev;
+        const alreadyThere = prev.fixed_slots.some((s) => s.id === slot.id);
+        if (alreadyThere) return prev;
+        return { ...prev, fixed_slots: [...prev.fixed_slots, slot] };
+      });
+    },
+    []
+  );
 
   async function handleRemoveSlot(slotId: string) {
     setSaving(true);
@@ -158,9 +155,6 @@ export default function ContactDetailPage() {
   }
 
   const assignedSlotIds = new Set(contact.fixed_slots.map((s) => s.id));
-  const assignableSlots = availableSlots.filter(
-    (s) => !assignedSlotIds.has(s.id) && s.participant_count < s.max_participants
-  );
 
   return (
     <div className="flex-1 flex flex-col min-h-0 p-4 md:p-6 gap-5 overflow-auto max-w-2xl">
@@ -267,34 +261,30 @@ export default function ContactDetailPage() {
           ))}
         </div>
 
-        {assignableSlots.length > 0 && (
-          <div className="flex items-center gap-2 pt-1">
-            <select
-              defaultValue=""
-              onChange={(e) => {
-                handleAssignSlot(e.target.value);
-                e.target.value = "";
-              }}
-              disabled={saving}
-              className="h-9 flex-1 rounded-md border border-input bg-transparent px-3 text-sm"
-            >
-              <option value="" disabled>
-                Atribuir horário fixo...
-              </option>
-              {assignableSlots.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {formatSlotDay(s)} {formatTime(s.start_time)}–{formatTime(s.end_time)} ·{" "}
-                  {s.place_name} ({s.participant_count}/{s.max_participants})
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+        <div className="pt-1">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setAssignDialogOpen(true)}
+          >
+            Atribuir horário fixo...
+          </Button>
+        </div>
       </div>
 
       <Button variant="outline" onClick={() => router.push("/clientes")} className="w-fit">
         Concluído
       </Button>
+
+      {contact && (
+        <AssignSlotDialog
+          contact={contact}
+          assignedSlotIds={assignedSlotIds}
+          open={assignDialogOpen}
+          onOpenChange={setAssignDialogOpen}
+          onAssigned={handleSlotAssigned}
+        />
+      )}
     </div>
   );
 }

@@ -1,8 +1,9 @@
 """
 Centralized authentication configuration and password utilities.
 
-Single admin user, JWT cookie session — no user table (agenda_ai is a
-single-professional POC). Inspired by geoedge_municipios' auth_config.py.
+Real user table (multi-tenancy roadmap Phase B) — JWT carries the user's
+role and professional_id (tenant) so every request can be scoped without a
+second lookup. Inspired by geoedge_municipios' auth_config.py.
 """
 
 import os
@@ -10,6 +11,7 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
+import bcrypt
 import jwt
 from dotenv import load_dotenv
 
@@ -26,6 +28,15 @@ if not SECRET_KEY:
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+SESSION_COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "agenda_access_token")
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

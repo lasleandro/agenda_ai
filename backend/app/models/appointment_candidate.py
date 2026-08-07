@@ -37,6 +37,7 @@ class AppointmentCandidate(Base):
     confidence: Mapped[float | None] = mapped_column(Float)
     status: Mapped[str] = mapped_column(String(50), default="detected")
     ambiguities: Mapped[list | None] = mapped_column(JSONB)
+    event_fingerprint: Mapped[str | None] = mapped_column(String(64))
     extraction_version: Mapped[str | None] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

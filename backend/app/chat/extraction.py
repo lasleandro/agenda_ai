@@ -9,40 +9,14 @@ import os
 import instructor
 from dotenv import load_dotenv
 from langfuse import Langfuse
-from openai import AzureOpenAI
 
-from backend.app.schemas.conversation import ConversationWindow
-from backend.app.schemas.extraction import SchedulingEvent
-from backend.app.services.prompt import build_extraction_prompt
+from app.schemas.conversation import ConversationWindow
+from app.schemas.extraction import SchedulingEvent, SchedulingExtraction
+from app.chat.prompt import build_extraction_prompt
+from app.services.azure_openai import get_azure_client as _get_azure_client
+from app.services.azure_openai import get_model_name as _get_model_name
 
 load_dotenv()
-
-
-def _get_azure_client() -> AzureOpenAI:
-    """Create an Azure OpenAI client from .env credentials.
-
-    Pattern reused from geoedge_municipios/backend/common/llm_provider.py.
-    """
-    api_key = os.getenv("AZURE_OPENAI_API_KEY")
-    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
-
-    if not api_key or not endpoint:
-        raise ValueError(
-            "Azure OpenAI credentials not found. "
-            "Set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT in .env."
-        )
-
-    return AzureOpenAI(
-        api_key=api_key.strip('"'),
-        api_version=api_version,
-        azure_endpoint=endpoint,
-    )
-
-
-def _get_model_name() -> str:
-    """Read the Azure OpenAI model/deployment name from .env."""
-    return os.getenv("AZURE_OPENAI_MODEL", "geobot4")
 
 
 def get_langfuse_client() -> Langfuse | None:
@@ -56,13 +30,13 @@ def get_langfuse_client() -> Langfuse | None:
     return None
 
 
-def extract_scheduling_event(
+def extract_scheduling_events(
     conversation_window: ConversationWindow,
     *,
     model: str | None = None,
     prompt_version: str = "v0.1",
-) -> SchedulingEvent:
-    """Extract a structured scheduling event from a conversation window.
+) -> list[SchedulingEvent]:
+    """Extract structured scheduling events from a conversation window.
 
     Uses Instructor to enforce the SchedulingEvent Pydantic schema on the LLM output.
     Traces the call via Langfuse when credentials are available.
@@ -73,7 +47,7 @@ def extract_scheduling_event(
         prompt_version: version tag for tracing and regression tracking.
 
     Returns:
-        SchedulingEvent with the extracted scheduling action.
+        Scheduling events found in the conversation window.
     """
     if model is None:
         model = _get_model_name()
@@ -95,14 +69,14 @@ def extract_scheduling_event(
     generation = None
     if langfuse:
         generation = langfuse.generation(
-            name="extract_scheduling_event",
+            name="extract_scheduling_events",
             model=model,
             input={"system": system_prompt, "user": user_prompt},
             metadata={"prompt_version": prompt_version},
         )
 
     try:
-        event = client.chat.completions.create(
+        extraction = client.chat.completions.create(
             model=model,
             max_tokens=1024,
             temperature=0.1,
@@ -110,17 +84,17 @@ def extract_scheduling_event(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            response_model=SchedulingEvent,
+            response_model=SchedulingExtraction,
         )
 
         # Log success to Langfuse
         if generation:
             generation.end(
-                output=event.model_dump(),
+                output=extraction.model_dump(),
                 metadata={"status": "success"},
             )
 
-        return event
+        return extraction.events
 
     except Exception as e:
         if generation:
@@ -129,6 +103,18 @@ def extract_scheduling_event(
                 metadata={"status": "error"},
             )
         raise
+
+
+def extract_scheduling_event(
+    conversation_window: ConversationWindow,
+    *,
+    model: str | None = None,
+    prompt_version: str = "v0.1",
+) -> SchedulingEvent:
+    """Extract the first event for legacy single-event callers."""
+    return extract_scheduling_events(
+        conversation_window, model=model, prompt_version=prompt_version
+    )[0]
 
 
 def extract_scheduling_event_raw(

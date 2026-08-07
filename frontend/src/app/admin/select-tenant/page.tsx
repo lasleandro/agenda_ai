@@ -2,9 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, Calendar, CircleDollarSign, Users } from "lucide-react";
+import { Building2, Calendar, CircleDollarSign, Sparkles, Users } from "lucide-react";
 import { AuthRequestError, fetchSession, impersonate } from "@/lib/auth";
-import { fetchTenants, updateCommercialFinancials } from "@/lib/api";
+import {
+  fetchTenants,
+  updateAssistantSettings,
+  updateCommercialFinancials,
+} from "@/lib/api";
 import type { TenantSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -13,6 +17,7 @@ export default function SelectTenantPage() {
   const [tenants, setTenants] = useState<TenantSummary[] | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [pendingFeatureIds, setPendingFeatureIds] = useState<Set<string>>(new Set());
+  const [pendingAssistantIds, setPendingAssistantIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -83,6 +88,73 @@ export default function SelectTenantPage() {
       })
       .finally(() => {
         setPendingFeatureIds((current) => {
+          const next = new Set(current);
+          next.delete(tenant.id);
+          return next;
+        });
+      });
+  }
+
+  function handleAssistantSettingsSave(
+    tenant: TenantSummary,
+    temperature: number,
+    memoryWindowMessages: number
+  ) {
+    if (
+      !Number.isFinite(temperature) ||
+      temperature < 0 ||
+      temperature > 2 ||
+      !Number.isFinite(memoryWindowMessages) ||
+      memoryWindowMessages < 2 ||
+      memoryWindowMessages > 200
+    ) {
+      setError(
+        "Temperatura deve ser 0–2 e janela de memória 2–200 mensagens."
+      );
+      return;
+    }
+    if (
+      temperature === tenant.assistant_temperature &&
+      memoryWindowMessages === tenant.assistant_memory_window_messages
+    ) {
+      return;
+    }
+
+    const previous = {
+      temperature: tenant.assistant_temperature,
+      memoryWindow: tenant.assistant_memory_window_messages,
+    };
+    setError(null);
+    setTenants((current) =>
+      current?.map((item) =>
+        item.id === tenant.id
+          ? {
+              ...item,
+              assistant_temperature: temperature,
+              assistant_memory_window_messages: memoryWindowMessages,
+            }
+          : item
+      ) ?? null
+    );
+    setPendingAssistantIds((current) => new Set(current).add(tenant.id));
+
+    void updateAssistantSettings(tenant.id, temperature, memoryWindowMessages)
+      .catch(() => {
+        setTenants((current) =>
+          current?.map((item) =>
+            item.id === tenant.id
+              ? {
+                  ...item,
+                  assistant_temperature: previous.temperature,
+                  assistant_memory_window_messages: previous.memoryWindow,
+                }
+              : item
+          ) ?? null
+        );
+        setError(`Falha ao atualizar o assistente de ${tenant.name}`);
+      })
+      .finally(() => {
+        setPendingAssistantIds((current) => {
           const next = new Set(current);
           next.delete(tenant.id);
           return next;
@@ -206,9 +278,81 @@ export default function SelectTenantPage() {
                   />
                 </button>
               </div>
+
+              <AssistantSettingsRow
+                tenant={tenant}
+                saving={pendingAssistantIds.has(tenant.id)}
+                onSave={(temperature, memoryWindowMessages) =>
+                  handleAssistantSettingsSave(
+                    tenant,
+                    temperature,
+                    memoryWindowMessages
+                  )
+                }
+              />
             </article>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AssistantSettingsRow({
+  tenant,
+  saving,
+  onSave,
+}: {
+  tenant: TenantSummary;
+  saving: boolean;
+  onSave: (temperature: number, memoryWindowMessages: number) => void;
+}) {
+  const [temperature, setTemperature] = useState(
+    String(tenant.assistant_temperature)
+  );
+  const [memoryWindow, setMemoryWindow] = useState(
+    String(tenant.assistant_memory_window_messages)
+  );
+
+  function commit() {
+    onSave(Number(temperature), Number(memoryWindow));
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 border-t border-border bg-muted/30 px-5 py-3">
+      <span className="flex items-center gap-2 text-xs font-medium text-foreground">
+        <Sparkles className="h-4 w-4 text-muted-foreground" />
+        Assistente IA
+      </span>
+      <div className="flex items-center gap-3">
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          Temp.
+          <input
+            type="number"
+            min={0}
+            max={2}
+            step={0.1}
+            value={temperature}
+            disabled={saving}
+            onChange={(e) => setTemperature(e.target.value)}
+            onBlur={commit}
+            className="w-14 rounded-md border border-border bg-background px-1.5 py-0.5 text-xs text-foreground disabled:opacity-60"
+          />
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          Janela
+          <input
+            type="number"
+            min={2}
+            max={200}
+            step={1}
+            value={memoryWindow}
+            disabled={saving}
+            onChange={(e) => setMemoryWindow(e.target.value)}
+            onBlur={commit}
+            className="w-14 rounded-md border border-border bg-background px-1.5 py-0.5 text-xs text-foreground disabled:opacity-60"
+          />
+        </label>
       </div>
     </div>
   );

@@ -16,15 +16,20 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from backend.app.schemas.conversation import (
+# The app package under backend/ uses `app.X` imports (matches how uvicorn
+# runs it, cwd=backend/); add backend/ to sys.path so this CLI, run from the
+# project root, can import the same modules the FastAPI app uses.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+
+from app.schemas.conversation import (
     ConversationWindow,
     ContactContext,
     Message,
     ProfessionalContext,
     UpcomingAppointment,
 )
-from backend.app.services.extraction import extract_scheduling_event
-from backend.app.services.temporal import validate_temporal
+from app.chat.extraction import extract_scheduling_event
+from app.chat.temporal import validate_temporal
 
 FIXTURES_PATH = (
     Path(__file__).resolve().parents[1]

@@ -1,6 +1,10 @@
 import type {
+  ActionCandidateResultResponse,
   AppointmentDetail,
   AppointmentCreateInput,
+  AssistantChatResponse,
+  AssistantMessage,
+  AssistantSettingsState,
   CalendarResponse,
   CandidateDetail,
   ContactDetailData,
@@ -45,6 +49,24 @@ import type {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
+export const sendAssistantMessage = (messages: AssistantMessage[]) =>
+  apiRequest<AssistantChatResponse>("/api/assistant/messages", {
+    method: "POST",
+    body: { messages },
+  });
+
+export const confirmAssistantCandidate = (candidateId: string) =>
+  apiRequest<ActionCandidateResultResponse>(
+    `/api/assistant/candidates/${candidateId}/confirm`,
+    { method: "POST" }
+  );
+
+export const rejectAssistantCandidate = (candidateId: string) =>
+  apiRequest<ActionCandidateResultResponse>(
+    `/api/assistant/candidates/${candidateId}/reject`,
+    { method: "POST" }
+  );
+
 export async function fetchCalendar(
   startDate: string,
   endDate: string
@@ -58,9 +80,13 @@ export async function fetchCalendar(
 }
 
 export async function fetchAppointment(
-  id: string
+  id: string,
+  occurrenceDate?: string
 ): Promise<AppointmentDetail> {
-  const url = `${API_BASE}/api/appointments/${id}`;
+  const query = occurrenceDate
+    ? `?occurrence_date=${encodeURIComponent(occurrenceDate)}`
+    : "";
+  const url = `${API_BASE}/api/appointments/${id}${query}`;
   const res = await fetch(url, { credentials: "include" });
   if (!res.ok) {
     throw new Error(`Failed to fetch appointment: ${res.statusText}`);
@@ -161,6 +187,22 @@ export const updateCommercialFinancials = (tenantId: string, enabled: boolean) =
   apiRequest<TenantFeatureState>(
     `/api/admin/tenants/${tenantId}/features/commercial-financials`,
     { method: "PATCH", body: { enabled } }
+  );
+
+export const updateAssistantSettings = (
+  tenantId: string,
+  temperature: number,
+  memoryWindowMessages: number
+) =>
+  apiRequest<AssistantSettingsState>(
+    `/api/admin/tenants/${tenantId}/assistant-settings`,
+    {
+      method: "PUT",
+      body: {
+        temperature,
+        memory_window_messages: memoryWindowMessages,
+      },
+    }
   );
 
 // ---------------------------------------------------------------------------

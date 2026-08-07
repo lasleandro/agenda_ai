@@ -64,3 +64,9 @@ class SchedulingEvent(BaseModel):
     evidence_message_ids: list[str] = []
     ambiguities: list[Ambiguity] = []
     explanation: str
+
+
+class SchedulingExtraction(BaseModel):
+    """Structured extraction containing every scheduling event in a window."""
+
+    events: list[SchedulingEvent] = Field(min_length=1)

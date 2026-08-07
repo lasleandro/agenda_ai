@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import FullCalendar from "@fullcalendar/react";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -20,6 +21,8 @@ import {
   fetchPlaces,
   fetchRecurringSlots,
 } from "@/lib/api";
+import { AGENDA_REFRESH_EVENT } from "@/lib/agenda-events";
+import { Button } from "@/components/ui/button";
 import { STATUS_COLORS } from "@/lib/calendar-utils";
 import { CONTACT_LEVEL_LABELS } from "@/lib/ontology-utils";
 import type {
@@ -81,6 +84,9 @@ function slotToEvent(slot: RecurringSlot): EventInput {
 function appointmentToEvent(appointment: AppointmentSummary): EventInput {
   const colors = STATUS_COLORS[appointment.status] ?? STATUS_COLORS.tentative;
   const placeLabel = appointment.place_name ? ` · ${appointment.place_name}` : "";
+  const participantNames = appointment.participants?.length
+    ? appointment.participants.map((p) => p.display_name).join(" + ")
+    : appointment.contact_name;
   const schedule = appointment.recurrence_rule === "FREQ=WEEKLY"
     ? {
         daysOfWeek: [new Date(appointment.start_at).getDay()],
@@ -94,7 +100,7 @@ function appointmentToEvent(appointment: AppointmentSummary): EventInput {
       };
   return {
     id: appointment.id,
-    title: `${appointment.contact_name} · ${appointment.service}${placeLabel}`,
+    title: `${participantNames} · ${appointment.service}${placeLabel}`,
     ...schedule,
     backgroundColor: colors.bg,
     borderColor: colors.border,
@@ -105,6 +111,7 @@ function appointmentToEvent(appointment: AppointmentSummary): EventInput {
       placeName: appointment.place_name,
       status: appointment.status,
       source: appointment.source,
+      occurrenceDate: appointment.occurrence_date,
     },
   };
 }
@@ -146,13 +153,17 @@ export function WeekCalendar() {
   const [contacts, setContacts] = useState<ContactSummary[]>([]);
   const [bookingSelection, setBookingSelection] = useState<BookingSelection | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedOccurrenceDate, setSelectedOccurrenceDate] = useState<string | undefined>(
+    undefined
+  );
   const [panelOpen, setPanelOpen] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [groupPanelOpen, setGroupPanelOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const calendarRef = useRef<FullCalendar | null>(null);
 
   const reloadSlots = useCallback(() => {
-    fetchRecurringSlots().then((res) => setSlots(res.slots));
+    return fetchRecurringSlots().then((res) => setSlots(res.slots));
   }, []);
 
   useEffect(() => {
@@ -180,6 +191,24 @@ export function WeekCalendar() {
     [loadRange]
   );
 
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    const api = calendarRef.current?.getApi();
+    try {
+      await Promise.all([
+        reloadSlots(),
+        api ? loadRange(api.view.activeStart, api.view.activeEnd) : Promise.resolve(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [reloadSlots, loadRange]);
+
+  useEffect(() => {
+    window.addEventListener(AGENDA_REFRESH_EVENT, handleRefresh);
+    return () => window.removeEventListener(AGENDA_REFRESH_EVENT, handleRefresh);
+  }, [handleRefresh]);
+
   const handleEventClick = useCallback((arg: EventClickArg) => {
     if (arg.event.extendedProps.kind === "recurring_slot") {
       const slot = arg.event.extendedProps.slot as RecurringSlot;
@@ -189,6 +218,7 @@ export function WeekCalendar() {
       return;
     }
     setSelectedId(arg.event.id);
+    setSelectedOccurrenceDate(arg.event.extendedProps.occurrenceDate as string | undefined);
     setPanelOpen(true);
   }, []);
 
@@ -247,6 +277,7 @@ export function WeekCalendar() {
         status: "confirmed",
         source: "dashboard",
         recurrence_rule: input.is_recurring ? "FREQ=WEEKLY" : null,
+        occurrence_date: input.start_at.slice(0, 10),
       });
       setEvents((current) => [...current, optimistic]);
 
@@ -254,7 +285,12 @@ export function WeekCalendar() {
         const saved = await createAppointment(input);
         setEvents((current) =>
           current.map((event) =>
-            event.id === temporaryId ? appointmentToEvent(saved) : event
+            event.id === temporaryId
+              ? appointmentToEvent({
+                  ...saved,
+                  occurrence_date: saved.occurrence_date ?? saved.start_at.slice(0, 10),
+                })
+              : event
           )
         );
         calendarRef.current?.getApi().unselect();
@@ -284,7 +320,19 @@ export function WeekCalendar() {
     <div className="flex-1 flex flex-col min-h-0 p-4 md:p-6 gap-3">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold tracking-tight">Agenda</h1>
-        <span className="text-sm text-muted-foreground">{eventCountLabel}</span>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-muted-foreground">{eventCountLabel}</span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            title="Atualizar agenda"
+            aria-label="Atualizar agenda"
+          >
+            <RefreshCw className={refreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+          </Button>
+        </div>
       </div>
 
       <div className="flex-1 min-h-0 bg-[var(--bg-surface)] rounded-xl p-3 shadow-sm border border-[var(--border-subtle)]">
@@ -327,6 +375,7 @@ export function WeekCalendar() {
 
       <AppointmentPanel
         appointmentId={selectedId}
+        occurrenceDate={selectedOccurrenceDate}
         open={panelOpen}
         onOpenChange={setPanelOpen}
       />

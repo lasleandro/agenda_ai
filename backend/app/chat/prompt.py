@@ -4,6 +4,8 @@ All instructions are in pt-BR as per brief Section 9 (Localization).
 The model receives a conversation window and must return a structured SchedulingEvent.
 """
 
+from zoneinfo import ZoneInfo
+
 EXTRACTION_SYSTEM_PROMPT = """\
 Voce e um extrator estruturado de eventos de agendamento.
 
@@ -16,7 +18,9 @@ REGRAS:
 3. Distinga PROPOSTAS de CONFIRMACOES. Uma proposta sem confirmacao NAO e um agendamento confirmado.
 4. Resolva datas relativas usando o timestamp de cada mensagem e o fuso horario do profissional.
 5. NAO invente informacoes ausentes. Se um campo nao puder ser determinado, deixe como null.
-6. Retorne action="none" quando nao houver evento de agendamento na conversa.
+6. Extraia TODOS os eventos de agendamento distintos presentes na conversa.
+   Retorne um item por evento. Quando nao houver evento, retorne somente um
+   item com action="none".
 7. Cite APENAS IDs de mensagens presentes na entrada como evidencia.
 8. Identifique ambiguidades nao resolvidas (ex: "as 5" pode ser 5h ou 17h).
 9. NAO crie eventos recorrentes a menos que a recorrencia seja EXPLICITA na conversa.
@@ -32,7 +36,8 @@ CONVENCOES DE TEMPO pt-BR:
 - "hoje" = mesmo dia do timestamp
 - Formato de data BR: dd/mm/aa
 
-RESPONDA EXCLUSIVAMENTE com o schema JSON estruturado fornecido. Nao inclua texto fora do JSON.
+RESPONDA EXCLUSIVAMENTE com o schema JSON estruturado fornecido, no formato
+{"events": [...]}. Nao inclua texto fora do JSON.
 """
 
 EXTRACTION_USER_PROMPT_TEMPLATE = """\
@@ -48,16 +53,21 @@ HORARIO ATUAL: {current_time}
 
 {upcoming_appointments_section}
 
-Analise a conversa acima e extraia o evento de agendamento (ou action="none" se nao houver).
+Analise a conversa acima e extraia todos os eventos de agendamento distintos
+(ou um unico item action="none" se nao houver).
 """
 
 
-def build_conversation_text(messages: list) -> str:
+def build_conversation_text(messages: list, timezone: str) -> str:
     """Format messages into a readable conversation string for the prompt."""
+    local_timezone = ZoneInfo(timezone)
     lines = []
     for msg in messages:
         direction = "Cliente" if msg.direction == "inbound" else "Profissional"
-        lines.append(f"[{msg.id}] {direction} ({msg.sent_at.strftime('%H:%M')}): {msg.text}")
+        sent_at = msg.sent_at.astimezone(local_timezone)
+        lines.append(
+            f"[{msg.id}] {direction} ({sent_at.strftime('%d/%m/%Y %H:%M')}): {msg.text}"
+        )
     return "\n".join(lines)
 
 
@@ -80,7 +90,9 @@ def build_extraction_prompt(conversation_window) -> tuple[str, str]:
     Returns:
         (system_prompt, user_prompt) tuple.
     """
-    conversation_text = build_conversation_text(conversation_window.messages)
+    conversation_text = build_conversation_text(
+        conversation_window.messages, conversation_window.professional.timezone
+    )
     upcoming_section = build_upcoming_appointments_section(
         conversation_window.upcoming_appointments
     )
@@ -90,7 +102,9 @@ def build_extraction_prompt(conversation_window) -> tuple[str, str]:
         timezone=conversation_window.professional.timezone,
         default_duration_minutes=conversation_window.professional.default_duration_minutes,
         service=conversation_window.professional.service,
-        current_time=conversation_window.current_time.strftime("%Y-%m-%d %H:%M %Z"),
+        current_time=conversation_window.current_time.astimezone(
+            ZoneInfo(conversation_window.professional.timezone)
+        ).strftime("%Y-%m-%d %H:%M %Z"),
         upcoming_appointments_section=upcoming_section,
     )
 

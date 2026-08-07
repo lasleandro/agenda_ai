@@ -10,8 +10,8 @@ from datetime import datetime
 import dateparser
 from dateutil import parser as dateutil_parser
 
-from backend.app.schemas.conversation import ConversationWindow, Message
-from backend.app.schemas.extraction import Ambiguity, SchedulingEvent
+from app.schemas.conversation import ConversationWindow, Message
+from app.schemas.extraction import Ambiguity, SchedulingEvent
 
 # Threshold: if LLM and dateparser disagree by more than this (in hours),
 # flag the temporal interpretation as ambiguous.
@@ -81,8 +81,13 @@ def validate_temporal(
     if event.start_at is None:
         return event
 
-    # Extract temporal expressions from messages
-    expressions = _extract_temporal_expressions(conversation_window.messages)
+    # Cross-check only the messages the LLM cited. Older proposals elsewhere
+    # in the conversation must not make the final negotiated slot ambiguous.
+    evidence_ids = set(event.evidence_message_ids)
+    evidence_messages = [
+        message for message in conversation_window.messages if message.id in evidence_ids
+    ]
+    expressions = _extract_temporal_expressions(evidence_messages)
     if not expressions:
         return event
 

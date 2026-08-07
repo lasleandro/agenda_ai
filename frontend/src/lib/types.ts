@@ -1,3 +1,9 @@
+/** Mirror of the FastAPI AppointmentParticipantSummary schema. */
+export interface AppointmentParticipantSummary {
+  contact_id: string;
+  display_name: string;
+}
+
 /** Mirror of the FastAPI AppointmentSummary schema. */
 export interface AppointmentSummary {
   id: string;
@@ -11,6 +17,12 @@ export interface AppointmentSummary {
   status: "tentative" | "confirmed" | "cancelled" | "completed";
   source: string;
   recurrence_rule: string | null;
+  class_type?: "individual" | "group";
+  participants?: AppointmentParticipantSummary[];
+  // The specific dated occurrence this row represents — pass back to
+  // fetchAppointment so a rescheduled/recurring occurrence resolves to the
+  // right override instead of the appointment's original start_at/place.
+  occurrence_date: string;
 }
 
 /** Mirror of the FastAPI AppointmentDetail schema. */
@@ -28,6 +40,10 @@ export interface AppointmentDetail {
   status: "tentative" | "confirmed" | "cancelled" | "completed";
   source: string;
   recurrence_rule: string | null;
+  class_type?: "individual" | "group";
+  participants?: AppointmentParticipantSummary[];
+  occurrence_date?: string | null;
+  is_exception?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -120,6 +136,8 @@ export interface TenantSummary {
   contact_count: number;
   appointment_count: number;
   commercial_financials_enabled: boolean;
+  assistant_temperature: number;
+  assistant_memory_window_messages: number;
 }
 
 export interface TenantListResponse {
@@ -131,8 +149,14 @@ export interface TenantFeatureState {
   enabled: boolean;
 }
 
+/** Mirror of the FastAPI AssistantSettingsState schema. */
+export interface AssistantSettingsState {
+  temperature: number;
+  memory_window_messages: number;
+}
+
 export type CommercialStatus = "active" | "waiting" | "paused";
-export type FinancialValueSource = "customer" | "group" | "tenant" | "unset";
+export type FinancialValueSource = "customer" | "group" | "place" | "tenant" | "unset";
 
 export interface CommercialOverrideInput {
   commercial_status?: CommercialStatus | null;
@@ -632,4 +656,38 @@ export interface ContactUpdateInput {
   latitude?: number | null;
   longitude?: number | null;
   home_place_id?: string | null;
+}
+
+/** Mirror of the FastAPI AssistantMessage schema. */
+export interface AssistantMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** Mirror of the FastAPI ToolCallTraceDetail schema. */
+export interface AssistantToolCallTrace {
+  name: string;
+  arguments: Record<string, unknown>;
+  result_summary: string;
+}
+
+/** Mirror of the FastAPI PendingActionCandidate schema (Phase 3). */
+export interface PendingActionCandidate {
+  id: string;
+  preview_text: string;
+  affected_entities: { entity_type: string; entity_id: string; label: string }[];
+  expires_at: string;
+}
+
+/** Mirror of the FastAPI AssistantChatResponse schema. */
+export interface AssistantChatResponse {
+  reply: string;
+  tool_calls: AssistantToolCallTrace[];
+  pending_candidate: PendingActionCandidate | null;
+}
+
+/** Mirror of the FastAPI ActionCandidateResultResponse schema. */
+export interface ActionCandidateResultResponse {
+  status: string;
+  summary: string;
 }

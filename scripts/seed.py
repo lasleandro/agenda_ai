@@ -81,7 +81,7 @@ def seed():
                 timezone="America/Sao_Paulo",
                 default_service="tennis_lesson",
                 default_duration_minutes=60,
-                assistant_phone="+5511999999999",
+                assistant_phone="+5511949408816",
             )
             db.add(pro)
             db.flush()

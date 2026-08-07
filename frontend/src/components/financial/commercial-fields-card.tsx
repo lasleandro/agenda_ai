@@ -35,6 +35,7 @@ const STATUS_LABELS: Record<CommercialStatus, string> = {
 const SOURCE_LABELS: Record<FinancialValueSource, string> = {
   customer: "Próprio do cliente",
   group: "Definido no grupo",
+  place: "Definido no local",
   tenant: "Padrão da conta",
   unset: "Não definido",
 };

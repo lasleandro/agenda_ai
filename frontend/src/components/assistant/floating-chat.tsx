@@ -1,0 +1,123 @@
+"use client";
+
+import { useCallback, useRef, useState } from "react";
+import Image from "next/image";
+import { AssistantPanel } from "./assistant-panel";
+
+const DRAG_THRESHOLD = 5;
+const PANEL_GAP = 12;
+
+// Every Dialog/Popover/Select/DropdownMenu in this app renders at z-50 —
+// the assistant must always sit above any of them, on any screen.
+const FLOAT_Z = "z-[70]";
+
+type ButtonRect = { top: number; left: number; width: number; height: number };
+
+export function FloatingChat() {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const [buttonRect, setButtonRect] = useState<ButtonRect | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const offset = useRef({ x: 0, y: 0 });
+  const start = useRef({ x: 0, y: 0 });
+  const size = useRef({ width: 56, height: 56 });
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    start.current = { x: e.clientX, y: e.clientY };
+    const rect = buttonRef.current!.getBoundingClientRect();
+    offset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    size.current = { width: rect.width, height: rect.height };
+    buttonRef.current!.setPointerCapture(e.pointerId);
+  }, []);
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+      const nextPos = { x: e.clientX - offset.current.x, y: e.clientY - offset.current.y };
+      setPos(nextPos);
+      if (open) {
+        // Panel is open — keep it glued to the ball as it's dragged,
+        // flipping direction live if it crosses the screen's midpoint.
+        setButtonRect({
+          top: nextPos.y,
+          left: nextPos.x,
+          width: size.current.width,
+          height: size.current.height,
+        });
+      }
+    },
+    [open]
+  );
+
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    const dx = e.clientX - start.current.x;
+    const dy = e.clientY - start.current.y;
+    if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) {
+      setOpen((wasOpen) => {
+        if (!wasOpen) {
+          // Recompute placement every time it opens, from the button's
+          // actual current position (default or dragged) — never a fixed
+          // "always opens up-left" offset, so it can't render off-screen.
+          const rect = buttonRef.current!.getBoundingClientRect();
+          setButtonRect({
+            top: rect.top,
+            left: rect.left,
+            width: rect.width,
+            height: rect.height,
+          });
+        }
+        return !wasOpen;
+      });
+    }
+  }, []);
+
+  const isDragged = pos.x !== 0 || pos.y !== 0;
+  const buttonStyle: React.CSSProperties = isDragged
+    ? { left: pos.x, top: pos.y }
+    : {};
+
+  let panelStyle: React.CSSProperties | undefined;
+  if (buttonRect) {
+    const openUpward = buttonRect.top > window.innerHeight / 2;
+    const openLeftward = buttonRect.left > window.innerWidth / 2;
+    panelStyle = {
+      ...(openUpward
+        ? { bottom: window.innerHeight - buttonRect.top + PANEL_GAP }
+        : { top: buttonRect.top + buttonRect.height + PANEL_GAP }),
+      ...(openLeftward
+        ? { right: window.innerWidth - (buttonRect.left + buttonRect.width) }
+        : { left: buttonRect.left }),
+    };
+  }
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        className={`fixed bottom-6 right-6 ${FLOAT_Z} flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-transform hover:scale-110 cursor-grab active:cursor-grabbing touch-none select-none`}
+        style={buttonStyle}
+        title="Assistente"
+      >
+        <Image
+          src="/tennis.png"
+          alt="Assistente"
+          width={56}
+          height={56}
+          className="rounded-full pointer-events-none"
+        />
+      </button>
+
+      {open && (
+        <div
+          className={`fixed ${FLOAT_Z} flex h-[600px] max-h-[calc(100vh-8rem)] w-96 flex-col overflow-hidden rounded-lg border bg-background shadow-2xl`}
+          style={panelStyle}
+        >
+          <AssistantPanel open={open} onClose={() => setOpen(false)} />
+        </div>
+      )}
+    </>
+  );
+}
