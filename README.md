@@ -4,12 +4,30 @@ A passive WhatsApp Business copilot that converts conversations between independ
 
 ## Documentation
 
+### Platform Architecture
+
+- [Architecture overview](docs/architecture_overview.md) — high-level system design, technology stack, project structure, and core architectural patterns (propose-confirm-execute lifecycle, event ledger, tenant isolation).
+- [Data architecture](docs/data_architecture.md) — complete data model with Mermaid ERDs for all 33 database tables grouped by domain (identity, contacts, scheduling, financial, audit).
+- [Capacity evaluation & make-up slot recommender](docs/capacity_and_recommendations.md) — the financial dashboard's occupancy/what-if math and the make-up-credit slot recommender's scoring algorithm, verified against the shipped code (not the pre-implementation plan).
+- [Ontology & chat architecture](docs/ontology_chat_architecture.md) — how the AI agent reads and writes the instructor's ontology, the WhatsApp → extraction → agent pipeline, tool taxonomy (read + mutation tools), entity resolution, and temporal resolution.
+- [AI agent modes](docs/ai_agent_modes.md) — distinction between the active instructor agent (direct chat → propose → confirm → execute) and the passive observer (detects scheduling intent in instructor-customer WhatsApp conversations without being addressed).
+- [Business rules](docs/business_rules.md) — catalog of all encoded business rules: scheduling constraints, makeup credit lifecycle, revenue rules, multi-tenancy, agent guardrails, data integrity, and WhatsApp pipeline rules.
+
+### Page Documentation
+
+- [Agenda (Calendar)](docs/pages/agenda.md) — primary scheduling interface with FullCalendar week view, appointment creation, group management.
+- [Clientes (Contacts)](docs/pages/clientes.md) — customer list with search/groups, and detail page with level, address, courtesy appointments, fixed slots.
+- [Financeiro (Financial)](docs/pages/financeiro.md) — financial dashboard with revenue projections, rate configuration, what-if scenarios, and revenue occurrence confirmation.
+- [Chat / AI Assistant](docs/pages/chat.md) — floating chat panel accessible from every page, with tool call transparency and action confirmation.
+
+### Roadmaps & Guides
+
 - [Project brief](docs/whatsapp_schedule_copilot_poc_project_brief_v0.1.md) — product thesis, architecture, domain model, and design principles. Source of truth for *why* decisions were made.
 - [Implementation roadmap](docs/ROADMAPS/whatsapp_schedule_copilot_poc_roadmap_v0.1.md) — phased, actionable plan for *what to build next*. Start here.
 - [Multi-tenancy roadmap](docs/ROADMAPS/multi_tenancy_roadmap_v0.1_2026-08-04.md) — assessment and phased plan for onboarding a second instructor (tenant isolation, auth, admin impersonation).
 - [Operational ontology & AI agent roadmap](docs/ROADMAPS/operational_ontology_and_agent_roadmap_v0.2_2026-08-05.md) — canonical plan for explicit schedule semantics, occurrence history, availability, and safe instructor-operated tools across the platform and WhatsApp.
 - [Commercial & financial module roadmap](docs/ROADMAPS/commercial_financial_module_roadmap_v0.2_2026-08-05.md) — one-customer groups, inherited pricing, tenant feature controls, financial capacity scenarios, and the path to auditable revenue.
-- [Make-up class credits & courtesy classes roadmap](docs/ROADMAPS/makeup_class_credits_roadmap_v0.1_2026-08-07.md) — assessment and phased plan for detecting cancellations, tracking "aulas de reposição" credits for recurring customers, recommending make-up slots, and (independently) classifying no-charge "aula cortesia" bookings for financial reporting.
+- [Make-up class credits & courtesy classes roadmap](docs/ROADMAPS/makeup_class_credits_roadmap_v0.1_2026-08-07.md) — completed: credit ledger, recommender, redemption through chat, courtesy classification, and contact detail surface.
 - [Local dev webhook tunnel](docs/local_dev_webhook_tunnel.md) — current YCloud webhook tunnel URL and how to restart it during Phase 1 development.
 
 ## Running the platform
@@ -30,7 +48,11 @@ Both are additive and commonly used together: `python start_server.py --tunnel -
 
 ## Status
 
-Phase 0 (offline extraction prototype) complete. Day 0 provider spike passed — inbound and outbound-echo messages confirmed via webhook. Phase 1 (message ingestion) and Phase 2 (candidate pipeline) are largely built: `agenda_db` schema is live, the YCloud webhook (`backend/app/api/whatsapp.py`) persists messages idempotently, and the debounce → extraction → candidate pipeline (`backend/app/chat/pipeline.py`, `backend/app/chat/candidate_worker.py`) is wired and verified end-to-end. See the roadmap for what's still open (LGPD consent gate, outbound-echo live test, shadow mode).
+The platform is in active development. All modules (calendar/agenda, contacts/places ontology, recurring groups, financial configuration & revenue, makeup class credits, courtesy appointments) are implemented end-to-end across the FastAPI backend and Next.js frontend. 91 backend tests pass consistently (run `pytest backend/tests -q --ignore=backend/tests/test_extraction.py` for the current count — this number drifts as features land).
+
+The AI agent supports both read tools (search, schedule lookup, availability) and mutation tools (create/cancel/reschedule appointments, manage participants, redeem makeup credits) with a propose-confirm-execute lifecycle. The passive WhatsApp extraction pipeline detects scheduling intent from instructor-customer conversations.
+
+See individual roadmaps for module-specific implementation status.
 
 ## Dev tool — mock WhatsApp chat
 

@@ -292,6 +292,7 @@ export const fetchFinancialSettings = () =>
   apiRequest<FinancialSettingsDetail>("/api/financial/settings");
 export const updateFinancialSettings = (body: {
   default_commercial_status?: string;
+  cancellation_notice_hours?: number;
   rates?: { participant_count: number; hourly_rate_cents: number | null }[];
 }) =>
   apiRequest<FinancialSettingsDetail>("/api/financial/settings", {

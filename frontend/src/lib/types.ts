@@ -19,6 +19,7 @@ export interface AppointmentSummary {
   recurrence_rule: string | null;
   class_type?: "individual" | "group";
   participants?: AppointmentParticipantSummary[];
+  billing_type?: "billable" | "courtesy";
   // The specific dated occurrence this row represents — pass back to
   // fetchAppointment so a rescheduled/recurring occurrence resolves to the
   // right override instead of the appointment's original start_at/place.
@@ -59,6 +60,7 @@ export interface AppointmentCreateInput {
   start_at: string;
   end_at: string;
   is_recurring: boolean;
+  billing_type?: "billable" | "courtesy";
 }
 
 /** Mirror of the FastAPI MessageDetail schema. */
@@ -194,6 +196,7 @@ export interface GlobalRateDetail {
 export interface FinancialSettingsDetail {
   default_commercial_status: CommercialStatus;
   currency: string;
+  cancellation_notice_hours: number;
   rates: GlobalRateDetail[];
 }
 
@@ -390,6 +393,7 @@ export interface RevenueCandidateDetail {
   participants: RevenueCandidateParticipant[];
   recognized_occurrence_id: string | null;
   can_confirm: boolean;
+  billing_type?: "billable" | "courtesy" | null;
 }
 
 export interface RevenueCandidateList {
@@ -403,6 +407,7 @@ export interface RevenueParticipantOutcomeInput {
   contact_id: string;
   attendance_status: AttendanceStatus;
   billable: boolean;
+  non_billable_reason?: string | null;
 }
 
 export interface RevenueOccurrenceCreateInput {
@@ -434,6 +439,7 @@ export interface RevenueOccurrenceParticipantDetail {
   contact_name: string;
   attendance_status: AttendanceStatus;
   billable: boolean;
+  non_billable_reason: string | null;
   quoted_amount_cents: number;
   billed_amount_cents: number;
   pricing_lines: RevenuePricingLineDetail[];
@@ -626,6 +632,7 @@ export interface ContactSummary {
   level: string | null;
   home_place_id: string | null;
   home_place_name: string | null;
+  makeup_credits_available: number;
 }
 
 export interface ContactListResponse {
@@ -641,8 +648,19 @@ export interface ContactDetailData extends ContactSummary {
   country: string | null;
   latitude: number | null;
   longitude: number | null;
+  makeup_credits_available: number;
   created_at: string;
   fixed_slots: RecurringSlot[];
+  courtesy_appointments: CourtesyAppointmentSummary[];
+}
+
+export interface CourtesyAppointmentSummary {
+  id: string;
+  start_at: string;
+  end_at: string;
+  place_name: string | null;
+  service: string;
+  status: string;
 }
 
 export interface ContactUpdateInput {

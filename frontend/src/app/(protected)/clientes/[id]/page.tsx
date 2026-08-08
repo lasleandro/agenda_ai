@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, X } from "lucide-react";
+import { ArrowLeft, Gift, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { AddressAutocomplete } from "@/components/ontology/address-autocomplete";
@@ -171,6 +171,18 @@ export default function ContactDetailPage() {
         <p className="text-sm text-muted-foreground">{contact.phone ?? "—"}</p>
       </div>
 
+      {contact.makeup_credits_available > 0 && (
+        <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+          <RotateCcw className="h-4 w-4" />
+          <span>
+            {contact.makeup_credits_available}{" "}
+            {contact.makeup_credits_available === 1
+              ? "crédito de reposição disponível"
+              : "créditos de reposição disponíveis"}
+          </span>
+        </div>
+      )}
+
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <div className="grid grid-cols-2 gap-4">
@@ -226,6 +238,51 @@ export default function ContactDetailPage() {
           onSelect={handleAddressSelect}
         />
       </div>
+
+      {contact.courtesy_appointments.length > 0 && (
+        <div className="space-y-2">
+          <Label>Aulas cortesia</Label>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+            <div className="space-y-1.5">
+              {contact.courtesy_appointments.map((appt) => {
+                const startDate = new Date(appt.start_at);
+                const endDate = new Date(appt.end_at);
+                const dateLabel = startDate.toLocaleDateString("pt-BR", {
+                  day: "2-digit",
+                  month: "2-digit",
+                  year: "numeric",
+                });
+                const timeLabel = `${startDate.toLocaleTimeString("pt-BR", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}–${endDate.toLocaleTimeString("pt-BR", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}`;
+                const placeLabel = appt.place_name ? ` · ${appt.place_name}` : "";
+                const statusLabel =
+                  appt.status === "cancelled"
+                    ? " (Cancelada)"
+                    : appt.status === "completed"
+                      ? ""
+                      : "";
+                return (
+                  <div
+                    key={appt.id}
+                    className="flex items-center gap-2 text-sm text-amber-800"
+                  >
+                    <Gift className="h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      {dateLabel} {timeLabel}{placeLabel} · {appt.service}
+                      {statusLabel}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="space-y-2">
         <Label>Horários fixos</Label>

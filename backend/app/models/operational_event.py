@@ -42,6 +42,10 @@ EVENT_TYPES = (
     "place.updated",
     "place.deactivated",
     "assistant.settings.updated",
+    "makeup_credit.granted",
+    "makeup_credit.redeemed",
+    "makeup_credit.expired",
+    "schedule.participant.absence_noted",
 )
 
 

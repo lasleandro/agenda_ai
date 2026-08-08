@@ -19,6 +19,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 
+NON_BILLABLE_REASONS = ("courtesy", "write_off", "other")
+
 
 class RevenueOccurrenceParticipant(Base):
     __tablename__ = "revenue_occurrence_participants"
@@ -40,6 +42,11 @@ class RevenueOccurrenceParticipant(Base):
             "billed_amount_cents BETWEEN 0 AND 10000000000",
             name="ck_revenue_occurrence_participants_billed",
         ),
+        CheckConstraint(
+            "non_billable_reason IS NULL OR non_billable_reason IN "
+            "('courtesy', 'write_off', 'other')",
+            name="ck_revenue_occurrence_participants_non_billable_reason",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -54,6 +61,9 @@ class RevenueOccurrenceParticipant(Base):
     contact_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False)
     attendance_status: Mapped[str] = mapped_column(String(20), nullable=False)
     billable: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    non_billable_reason: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )
     quoted_amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
     billed_amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

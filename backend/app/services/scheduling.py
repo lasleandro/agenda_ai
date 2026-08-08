@@ -200,6 +200,7 @@ class ScheduleOccurrence:
     # Only set for source_type == "appointment" — how the booking was made
     # (dashboard/ai_detected/...). None for recurring_slot occurrences.
     appointment_source: str | None = None
+    billing_type: str | None = None
     is_exception: bool = False
 
 
@@ -293,6 +294,7 @@ def _appointment_occurrences(
                     status=appointment.status,
                     class_type=appointment.class_type,
                     appointment_source=appointment.source,
+                    billing_type=appointment.billing_type,
                 )
             )
     return occurrences

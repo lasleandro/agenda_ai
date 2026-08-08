@@ -17,8 +17,13 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from app.agent import entity_resolution, temporal
-from app.models import Professional
-from app.services import financial_capacity, scheduling
+from app.models import Place, Professional, RecurringSlot
+from app.services import (
+    financial_capacity,
+    makeup_credits,
+    makeup_recommender,
+    scheduling,
+)
 
 MAX_SCHEDULE_SPAN_DAYS = 31
 NEXT_SESSION_SEARCH_DAYS = 90
@@ -271,6 +276,71 @@ def resolve_date_phrase(
     }
 
 
+def list_makeup_credits(
+    db: Session,
+    professional_id: uuid.UUID,
+    *,
+    contact_id: str,
+) -> dict[str, Any]:
+    """List a contact's available (unredeemed) make-up class credits, with
+    their credit_id — the only way to discover a valid credit_id for
+    propose_redeem_makeup_credit; never guess or reuse an ID from a
+    different contact/turn."""
+    credits = makeup_credits.list_available_credits(
+        db, professional_id, uuid.UUID(contact_id)
+    )
+    slot_ids = {credit.origin_recurring_slot_id for credit in credits}
+    slot_labels: dict[uuid.UUID, str] = {}
+    if slot_ids:
+        for slot, place_name in (
+            db.query(RecurringSlot, Place.name)
+            .join(Place, RecurringSlot.place_id == Place.id)
+            .filter(RecurringSlot.id.in_(slot_ids))
+            .all()
+        ):
+            label = slot.group_name or slot.label or "Grupo"
+            slot_labels[slot.id] = f"{label} ({place_name})"
+    return {
+        "contact_id": contact_id,
+        "credits": [
+            {
+                "credit_id": str(credit.id),
+                "origin_group_label": slot_labels.get(
+                    credit.origin_recurring_slot_id, "Grupo"
+                ),
+                "origin_occurrence_date": credit.origin_occurrence_date.isoformat(),
+                "granted_at": credit.granted_at.isoformat(),
+                "expires_at": credit.expires_at.isoformat() if credit.expires_at else None,
+            }
+            for credit in credits
+        ],
+    }
+
+
+def recommend_makeup_slots(
+    db: Session,
+    professional_id: uuid.UUID,
+    *,
+    contact_id: str,
+) -> dict[str, Any]:
+    """Recommend the best available slots for a contact's make-up class
+    credits, ranked by cost efficiency and historical occupancy."""
+    recommendations = makeup_recommender.recommend_makeup_slots(
+        db,
+        professional_id,
+        uuid.UUID(contact_id),
+    )
+    return {
+        "contact_id": contact_id,
+        "recommendations": recommendations,
+        "note": (
+            None
+            if recommendations
+            else "No available make-up credits for this contact, or no suitable slots found in the lookahead window."
+        ),
+    }
+
+
 TOOL_SPECS: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -376,6 +446,34 @@ TOOL_SPECS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "recommend_makeup_slots",
+            "description": "For a contact with available make-up class credits, find and rank the best open time slots in the upcoming days. Rankings consider cost (prefer cheaper hourly rates) and historical occupancy (prefer quieter time slots). Returns empty if the contact has no credits.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "contact_id": {"type": "string", "description": "The contact/student UUID."},
+                },
+                "required": ["contact_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_makeup_credits",
+            "description": "List a contact's available (unredeemed) make-up class credits, each with its credit_id. Call this before propose_redeem_makeup_credit — that tool requires a real credit_id and none may be guessed or invented.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "contact_id": {"type": "string", "description": "The contact/student UUID."},
+                },
+                "required": ["contact_id"],
+            },
+        },
+    },
 ]
 
 TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
@@ -386,4 +484,6 @@ TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
     "get_schedule": get_schedule,
     "get_next_session": get_next_session,
     "find_instructor_openings": find_instructor_openings,
+    "recommend_makeup_slots": recommend_makeup_slots,
+    "list_makeup_credits": list_makeup_credits,
 }

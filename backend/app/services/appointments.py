@@ -211,6 +211,7 @@ def create_appointment(
     is_recurring: bool = False,
     source: str = "dashboard",
     actor: str = "system",
+    billing_type: str = "billable",
 ) -> Appointment:
     assert_no_conflict(
         db, professional_id, start_at=start_at, end_at=end_at, is_recurring=is_recurring
@@ -226,6 +227,7 @@ def create_appointment(
         status="confirmed",
         source=source,
         recurrence_rule="FREQ=WEEKLY" if is_recurring else None,
+        billing_type=billing_type,
     )
     db.add(appointment)
     db.flush()

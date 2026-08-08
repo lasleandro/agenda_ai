@@ -414,7 +414,9 @@ export function RevenueSection({
                               {OUTCOME_LABELS[participant.attendance_status]} ·{" "}
                               {participant.billable
                                 ? "Faturável"
-                                : "Não faturável"}
+                                : participant.non_billable_reason === "courtesy"
+                                  ? "Não faturável (cortesia)"
+                                  : "Não faturável"}
                             </p>
                           </div>
                           <p className="font-medium">

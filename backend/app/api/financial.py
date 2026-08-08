@@ -425,6 +425,9 @@ def get_financial_settings(
             settings.default_commercial_status if settings else "active"
         ),
         currency=settings.currency if settings else "BRL",
+        cancellation_notice_hours=(
+            settings.cancellation_notice_hours if settings else 24
+        ),
         rates=[
             GlobalRateDetail(
                 participant_count=participant_count,
@@ -463,6 +466,27 @@ def update_financial_settings(
             changes["default_commercial_status"] = {
                 "before": previous_status,
                 "after": body.default_commercial_status,
+            }
+
+    if "cancellation_notice_hours" in body.model_fields_set:
+        settings = (
+            db.query(ProfessionalFinancialSettings)
+            .filter(ProfessionalFinancialSettings.professional_id == professional_id)
+            .first()
+        )
+        previous_hours = (
+            settings.cancellation_notice_hours if settings else 24
+        )
+        if body.cancellation_notice_hours != previous_hours:
+            if settings is None:
+                settings = ProfessionalFinancialSettings(
+                    professional_id=professional_id,
+                )
+                db.add(settings)
+            settings.cancellation_notice_hours = body.cancellation_notice_hours
+            changes["cancellation_notice_hours"] = {
+                "before": previous_hours,
+                "after": body.cancellation_notice_hours,
             }
 
     if body.rates is not None:

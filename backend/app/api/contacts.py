@@ -9,14 +9,17 @@ PATCH /api/contacts/{id}  — update level, address, home place.
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func as sqla_func
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_professional_id
 from app.database import SessionLocal
-from app.models import Contact, Place, RecurringSlot, RecurringSlotParticipant
+from app.models import Contact, MakeupClassCredit, Place, RecurringSlot, RecurringSlotParticipant
+from app.models.appointment import Appointment
 from app.schemas.ontology import ContactDetail, ContactListResponse, ContactSummary, ContactUpdate
-from app.schemas.ontology import RecurringSlotDetail
+from app.schemas.ontology import CourtesyAppointmentSummary, RecurringSlotDetail
 from app.services.contacts import apply_contact_updates
+from app.services.makeup_credits import get_available_credits_count
 from app.services.participants import count_participants as _participant_count
 
 router = APIRouter(prefix="/api/contacts", tags=["contacts"])
@@ -41,7 +44,7 @@ def _get_contact_or_404(db: Session, contact_id: uuid.UUID, professional_id: uui
     return contact
 
 
-def _to_summary(contact: Contact, home_place_name: str | None) -> ContactSummary:
+def _to_summary(contact: Contact, home_place_name: str | None, credits: int = 0) -> ContactSummary:
     return ContactSummary(
         id=contact.id,
         display_name=contact.display_name,
@@ -49,6 +52,7 @@ def _to_summary(contact: Contact, home_place_name: str | None) -> ContactSummary
         level=contact.level,
         home_place_id=contact.home_place_id,
         home_place_name=home_place_name,
+        makeup_credits_available=credits,
     )
 
 
@@ -64,7 +68,29 @@ def list_contacts(
         .order_by(Contact.display_name)
         .all()
     )
-    return ContactListResponse(contacts=[_to_summary(c, name) for c, name in rows])
+    contact_ids = [contact.id for contact, _ in rows]
+    credit_counts: dict[uuid.UUID, int] = {}
+    if contact_ids:
+        credit_rows = (
+            db.query(
+                MakeupClassCredit.contact_id,
+                sqla_func.count(MakeupClassCredit.id),
+            )
+            .filter(
+                MakeupClassCredit.professional_id == professional_id,
+                MakeupClassCredit.contact_id.in_(contact_ids),
+                MakeupClassCredit.status == "available",
+            )
+            .group_by(MakeupClassCredit.contact_id)
+            .all()
+        )
+        credit_counts = {contact_id: count for contact_id, count in credit_rows}
+    return ContactListResponse(
+        contacts=[
+            _to_summary(contact, name, credit_counts.get(contact.id, 0))
+            for contact, name in rows
+        ]
+    )
 
 
 @router.get("/{contact_id}", response_model=ContactDetail)
@@ -109,8 +135,35 @@ def get_contact(
         for slot, place_name in slot_rows
     ]
 
+    courtesy_rows = (
+        db.query(Appointment, Place.name)
+        .outerjoin(Place, Appointment.place_id == Place.id)
+        .filter(
+            Appointment.professional_id == professional_id,
+            Appointment.contact_id == contact_id,
+            Appointment.billing_type == "courtesy",
+        )
+        .order_by(Appointment.start_at.desc())
+        .all()
+    )
+    courtesy_appointments = [
+        CourtesyAppointmentSummary(
+            id=appt.id,
+            start_at=appt.start_at,
+            end_at=appt.end_at,
+            place_name=place_name,
+            service=appt.service,
+            status=appt.status,
+        )
+        for appt, place_name in courtesy_rows
+    ]
+
     return ContactDetail(
-        **_to_summary(contact, home_place_name).model_dump(),
+        **_to_summary(
+            contact,
+            home_place_name,
+            get_available_credits_count(db, professional_id, contact_id),
+        ).model_dump(),
         address_line=contact.address_line,
         city=contact.city,
         state=contact.state,
@@ -120,6 +173,7 @@ def get_contact(
         longitude=contact.longitude,
         created_at=contact.created_at,
         fixed_slots=fixed_slots,
+        courtesy_appointments=courtesy_appointments,
     )
 
 

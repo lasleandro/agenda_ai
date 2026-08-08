@@ -54,6 +54,7 @@ export function AppointmentFormDialog({
   const [placeId, setPlaceId] = useState(suggestedPlaceId ?? places[0]?.id ?? "");
   const [service, setService] = useState("Aula de tênis");
   const [isRecurring, setIsRecurring] = useState(false);
+  const [isCourtesy, setIsCourtesy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,6 +74,7 @@ export function AppointmentFormDialog({
         start_at: start.toISOString(),
         end_at: end.toISOString(),
         is_recurring: isRecurring,
+        billing_type: isCourtesy ? "courtesy" : "billable",
       });
       onOpenChange(false);
     } catch (requestError) {
@@ -146,6 +148,22 @@ export function AppointmentFormDialog({
               role="switch"
               checked={isRecurring}
               onChange={(event) => setIsRecurring(event.target.checked)}
+              className="h-4 w-4 accent-primary"
+            />
+          </label>
+
+          <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border px-3 py-2">
+            <span>
+              <span className="block text-sm font-medium">Aula Cortesia</span>
+              <span className="block text-xs text-muted-foreground">
+                Agendamento sem cobranca para o cliente.
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              role="switch"
+              checked={isCourtesy}
+              onChange={(event) => setIsCourtesy(event.target.checked)}
               className="h-4 w-4 accent-primary"
             />
           </label>

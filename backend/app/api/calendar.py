@@ -88,6 +88,7 @@ def list_appointments(
                 for p in occurrence.participants
             ],
             occurrence_date=occurrence.occurrence_date,
+            billing_type=occurrence.billing_type,
         )
         for occurrence in occurrences
     ]
@@ -131,6 +132,7 @@ def create_appointment(
         is_recurring=body.is_recurring,
         source="dashboard",
         actor=f"user:{user['user_id']}",
+        billing_type=body.billing_type,
     )
     db.commit()
 
@@ -149,6 +151,7 @@ def create_appointment(
         source=appointment.source,
         recurrence_rule=appointment.recurrence_rule,
         class_type=appointment.class_type,
+        billing_type=appointment.billing_type,
         participants=[
             AppointmentParticipantSummary(
                 contact_id=contact.id, display_name=contact.display_name
@@ -236,6 +239,7 @@ def get_appointment(
             ],
             source=appt.source,
             recurrence_rule=appt.recurrence_rule,
+            billing_type=occurrence.billing_type,
             occurrence_date=occurrence.occurrence_date,
             is_exception=occurrence.is_exception,
             created_at=appt.created_at,
@@ -265,6 +269,7 @@ def get_appointment(
         participants=_load_participants(db, appt),
         source=appt.source,
         recurrence_rule=appt.recurrence_rule,
+        billing_type=appt.billing_type,
         created_at=appt.created_at,
         updated_at=appt.updated_at,
     )

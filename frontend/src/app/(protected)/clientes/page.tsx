@@ -8,6 +8,7 @@ import {
   MapPin,
   Pencil,
   Phone,
+  RotateCcw,
   Search,
   UserPlus,
   Users,
@@ -256,6 +257,12 @@ export default function ClientesPage() {
                   {contact.level && (
                     <span className="rounded-full bg-muted px-2 py-0.5">
                       {CONTACT_LEVEL_LABELS[contact.level] ?? contact.level}
+                    </span>
+                  )}
+                  {contact.makeup_credits_available > 0 && (
+                    <span className="flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">
+                      <RotateCcw className="h-3 w-3" />
+                      {contact.makeup_credits_available}
                     </span>
                   )}
                 </div>

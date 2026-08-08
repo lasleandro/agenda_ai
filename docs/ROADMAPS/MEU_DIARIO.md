@@ -50,3 +50,11 @@ joao@agenda.ai / agenda-dev-2026 — direct professional login (the existing "Jo
 
 
 - Roadmap (ainda não implementado) de reposição de aula e aula cortesia: docs/ROADMAPS/makeup_class_credits_roadmap_v0.1_2026-08-07.md
+
+
+
+- Implementado o docs/ROADMAPS/makeup_class_credits_roadmap_v0.1_2026-08-07.md
+
+
+
+- Avaliando mover a parte de definição da carga horária diária, definição de tempo limite para cancelamento com reposição de aula etc para uma sessão dedicada tipo "Minhas Regras", ou então mudar o nome de "Financeiro" para "Minha Operação" ou "Meu Negócio"

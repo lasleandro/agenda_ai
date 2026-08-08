@@ -7,6 +7,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy.orm import Session
 
 from app.models import (
+    Appointment,
     RevenueOccurrence,
     RevenueOccurrenceLine,
     RevenueOccurrenceParticipant,
@@ -108,6 +109,7 @@ def list_revenue_candidates(
                 )
             ),
             can_confirm=occurrence.ends_at <= now,
+            billing_type=occurrence.billing_type,
         )
         for occurrence in occurrences
     ]
@@ -222,6 +224,20 @@ def create_revenue_occurrence(
     outcomes = {
         outcome.contact_id: outcome for outcome in body.participant_outcomes
     }
+
+    # Courtesy appointments default to non-billable in the confirmation UI
+    # (RevenueCandidateDetail.billing_type tells the frontend to pre-fill
+    # billable=False), but the instructor can still override per participant
+    # — never force it here. Only backfill the reporting reason when the
+    # instructor actually left (or chose) non-billable on a courtesy booking,
+    # so "why wasn't this billed" stays distinguishable from a write-off.
+    if body.source_type == "appointment":
+        appointment = db.get(Appointment, body.source_id)
+        if appointment is not None and appointment.billing_type == "courtesy":
+            for outcome in outcomes.values():
+                if not outcome.billable and outcome.non_billable_reason is None:
+                    outcome.non_billable_reason = "courtesy"
+
     scheduled_contact_ids = {
         participant.contact_id for participant in schedule.participants
     }
@@ -301,6 +317,7 @@ def create_revenue_occurrence(
             contact_name_snapshot=participant.contact_name,
             attendance_status=outcome.attendance_status,
             billable=outcome.billable,
+            non_billable_reason=getattr(outcome, "non_billable_reason", None),
             quoted_amount_cents=quoted_amount,
             billed_amount_cents=billed_amount,
         )
@@ -406,6 +423,7 @@ def revenue_occurrence_detail(
                 contact_name=participant.contact_name_snapshot,
                 attendance_status=participant.attendance_status,
                 billable=participant.billable,
+                non_billable_reason=participant.non_billable_reason,
                 quoted_amount_cents=participant.quoted_amount_cents,
                 billed_amount_cents=participant.billed_amount_cents,
                 pricing_lines=[

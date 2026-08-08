@@ -1,0 +1,143 @@
+# AI Agent Modes
+
+The platform defines two distinct AI interaction modes, each with different
+autonomy levels, tools, and user interfaces.
+
+---
+
+## Mode 1: Instructor Agent (Active / Direct)
+
+```
+Instructor → talks TO the AI assistant → Assistant proposes, instructor confirms → Action executed
+```
+
+### Overview
+
+Today the instructor interacts directly with the AI assistant via the
+**web chat UI only** (the floating panel — see `docs/pages/chat.md`).
+WhatsApp as a channel for the *active* agent is explicitly deferred — it
+needs its own dedicated assistant phone number, a phone→instructor
+identity resolver, server-side conversation loading, and a WhatsApp-native
+confirm/reject mechanism, none of which exist yet. Don't confuse this
+with the *passive observer* (Mode 2 below), which does run over WhatsApp
+today but never talks back or proposes anything.
+
+The assistant has full access to the instructor's ontology (contacts,
+places, schedule, financial configuration) and can both answer questions
+and propose actions.
+
+### Capabilities
+
+- **Read:** Search contacts/places/groups, view schedule, check availability,
+  recommend makeup slots, resolve dates
+- **Propose mutations:** Create appointments, cancel, reschedule, add
+  participants, enroll in groups, redeem makeup credits, update contacts
+
+### Safety Model
+
+The agent NEVER executes mutations autonomously. Every write action follows:
+
+```
+propose → show deterministic preview → user confirms → execute in transaction → audit event
+```
+
+See `docs/ontology_chat_architecture.md` for the full tool taxonomy and
+orchestration loop.
+
+### User Experience
+
+In the chat UI, when the agent proposes an action, the user sees:
+- The agent's natural-language explanation
+- A **structured preview card** showing exactly what will happen
+- **Confirm** and **Reject** buttons (web chat only — see the WhatsApp
+  caveat above; there's no equivalent WhatsApp confirmation UI today)
+
+Confirming triggers `POST /api/assistant/candidates/{id}/confirm`, which
+runs the executor in a single transaction and returns the result.
+
+---
+
+## Mode 2: Passive Observer (Watch & Surface)
+
+```
+Customer → messages the instructor → Extraction observes → Candidate surfaced → Instructor confirms or dismisses
+```
+
+### Overview
+
+This mode does **not** involve the instructor talking to the AI. Instead,
+the system observes the natural conversation between the instructor and
+their customer on WhatsApp and detects scheduling intent automatically.
+
+### How It Works
+
+1. A WhatsApp message arrives from a customer (not the assistant number).
+2. The ingestion pipeline (`chat/ingestion.py`) stores it in the
+   conversation.
+3. After a 30-second debounce, the extraction pipeline
+   (`chat/extraction.py`) analyzes the conversation window via Azure
+   OpenAI, using the `instructor` library to enforce a `SchedulingEvent`
+   Pydantic schema for structured output.
+4. The extraction identifies potential scheduling events: dates, contacts,
+   actions (create/reschedule/cancel).
+5. Temporal validation (`chat/temporal.py`) resolves date expressions
+   against the instructor's timezone.
+6. An `AppointmentCandidate` is created with status `pending`, linked to
+   the supporting messages via `AppointmentEvidence`.
+7. The instructor sees a notification or dashboard alert: "Possible
+   scheduling intent detected from conversation with Maria."
+8. The instructor can review and act on the candidate, or dismiss it.
+
+### Autonomy Level
+
+The passive observer has **zero autonomy** beyond detection. It never:
+- Proposes an `OperatorActionCandidate` on its own
+- Executes any mutation
+- Sends any message to the customer or instructor
+
+It only surfaces what it detects. The instructor always initiates the
+action.
+
+### Technical Distinction
+
+| | Active Agent | Passive Observer |
+|---|---|---|
+| Trigger | Instructor messages assistant | Customer messages instructor |
+| LLM Call | Agent orchestrator (manual tool loop) | Instructor structured extraction |
+| Output | Agent reply + PendingCandidate (proposed) | AppointmentCandidate (pending) |
+| Write access | Can propose mutations (requires confirm) | None — detection only |
+| UI surface | Chat UI + confirmation cards | Dashboard notification / candidate list |
+
+---
+
+## How They Complement Each Other
+
+The two modes are designed to work together in a typical day:
+
+1. **Passive observer** catches scheduling intent that happens organically
+   in instructor-customer chats. The instructor doesn't need to remember to
+   tell the assistant -- the system already detected it.
+
+2. **Active agent** handles explicit requests: the instructor can ask
+   questions ("quem tenho amanha?"), look up information, and initiate
+   actions directly.
+
+3. **They don't currently converge.** `AppointmentCandidate` (passive
+   extraction) and `OperatorActionCandidate` (active-agent proposals) are
+   two separate state machines with no code path linking one to the
+   other — an instructor reviewing a detected `AppointmentCandidate`
+   today acts on it through the dashboard's own review flow, not through
+   the active agent's confirm/reject. Sharing one lifecycle is a
+   plausible future direction (see the auto-propose idea below), not
+   current behavior.
+
+---
+
+## Future: Auto-Propose from Passive Observation
+
+The architecture supports a future enhancement where high-confidence
+passive observations (e.g., a customer clearly says "vou na quinta as 15h"
+and the slot is open) automatically flow into the propose step, presenting
+a confirmation directly without the instructor needing to manually review
+the candidate first. This requires a confidence threshold and the
+`candidate_worker.py` background process is already designed to support it.

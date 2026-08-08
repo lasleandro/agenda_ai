@@ -17,6 +17,10 @@ class ProfessionalFinancialSettings(Base):
             "default_commercial_status IN ('active', 'waiting', 'paused')",
             name="ck_professional_financial_settings_status",
         ),
+        CheckConstraint(
+            "cancellation_notice_hours >= 0 AND cancellation_notice_hours <= 168",
+            name="ck_professional_financial_settings_notice_hours",
+        ),
     )
 
     professional_id: Mapped[uuid.UUID] = mapped_column(
@@ -30,6 +34,9 @@ class ProfessionalFinancialSettings(Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="BRL")
     prime_time_configured: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
+    )
+    cancellation_notice_hours: Mapped[int] = mapped_column(
+        default=24, nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

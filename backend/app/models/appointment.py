@@ -26,6 +26,7 @@ from app.database import Base
 # same closed vocabulary, kept as a local literal per this codebase's
 # per-model vocabulary convention (see EVENT_TYPES, SLOT_KINDS elsewhere).
 CLASS_TYPES = ("individual", "group")
+BILLING_TYPES = ("billable", "courtesy")
 
 
 class Appointment(Base):
@@ -34,6 +35,10 @@ class Appointment(Base):
         CheckConstraint(
             "class_type IN ('individual', 'group')",
             name="ck_appointments_class_type",
+        ),
+        CheckConstraint(
+            "billing_type IN ('billable', 'courtesy')",
+            name="ck_appointments_billing_type",
         ),
     )
 
@@ -58,6 +63,7 @@ class Appointment(Base):
     )
     timezone: Mapped[str] = mapped_column(String(100), default="America/Sao_Paulo")
     class_type: Mapped[str] = mapped_column(String(50), nullable=False, default="individual")
+    billing_type: Mapped[str] = mapped_column(String(20), nullable=False, default="billable")
     status: Mapped[str] = mapped_column(String(50), default="tentative")
     source: Mapped[str] = mapped_column(String(50), default="ai_detected")
     recurrence_rule: Mapped[str | None] = mapped_column(String)

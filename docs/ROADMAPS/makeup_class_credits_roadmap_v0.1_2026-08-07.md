@@ -1,7 +1,6 @@
 # Aulas de Reposição (Make-up Class Credits) Roadmap v0.1 — 2026-08-07
 
-**Status: Not started. This is an assessment and phased plan, written
-before any code changes.**
+**Status: All phases (1-5) and Addendum implemented. 2026-08-07.**
 
 **2026-08-07 update:** eligibility policy decided (see "Open product
 questions") — every cancellation grants a credit automatically *except*
@@ -349,3 +348,25 @@ make-up-credit work above — the only shared surface is `Appointment`
 gaining another small classification column (`class_type` from the
 participants work, `billing_type` here), which is additive and doesn't
 conflict.
+
+### Implementation Progress — 2026-08-07
+
+- [x] Model: `billing_type` on `Appointment` (with `CheckConstraint`)
+- [x] Model: `non_billable_reason` on `RevenueOccurrenceParticipant`
+- [x] Migration: `7a48cebd571f_courtesy_billing_type` (applied)
+- [x] Agent: `billing_type` param in `propose_create_appointment` TOOL_SPEC
+- [x] Agent: `_execute_create_appointment` sets `appointment.billing_type`
+- [x] Agent: `propose_create_appointment` accepts and forwards `billing_type`
+- [x] API: `AppointmentCreate` schema + `billing_type`
+- [x] API: `AppointmentSummary` + `AppointmentDetail` schemas + `billing_type`
+- [x] API: `POST /api/appointments` passes `billing_type` to service
+- [x] API: `GET /api/calendar` returns `billing_type` in summaries
+- [x] API: `GET /api/appointments/{id}` returns `billing_type` in detail
+- [x] Service: `create_appointment` accepts and stores `billing_type`
+- [x] Service: `create_revenue_occurrence` auto-detects courtesy appointments and forces `billable=False`
+- [x] Service: `ScheduleOccurrence` dataclass + `billing_type` propagation
+- [x] Frontend: `AppointmentCreateInput` + `AppointmentSummary` types + `billing_type`
+- [x] Frontend: `AppointmentFormDialog` "Cortesia" checkbox
+- [x] Frontend: Calendar "(Cortesia)" badge in event titles
+- [x] Frontend: Optimistic UI includes `billing_type`
+- [x] Frontend: Contact detail page shows courtesy appointments list

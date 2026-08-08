@@ -38,11 +38,13 @@ export function RevenueConfirmDialog({
   onOpenChange: (open: boolean) => void;
   onConfirmed: (occurrence: RevenueOccurrenceDetail) => void;
 }) {
+  const isCourtesy = candidate.billing_type === "courtesy";
   const [outcomes, setOutcomes] = useState<RevenueParticipantOutcomeInput[]>(
     candidate.participants.map((participant) => ({
       contact_id: participant.contact_id,
       attendance_status: "attended",
-      billable: true,
+      billable: !isCourtesy,
+      non_billable_reason: isCourtesy ? "courtesy" : null,
     }))
   );
   const [adjustment, setAdjustment] = useState("");
@@ -57,7 +59,13 @@ export function RevenueConfirmDialog({
           ? {
               ...outcome,
               attendance_status: status,
-              billable: status === "attended",
+              billable: status === "attended" && !isCourtesy,
+              non_billable_reason:
+                status === "attended" && !isCourtesy
+                  ? null
+                  : isCourtesy
+                    ? "courtesy"
+                    : null,
             }
           : outcome
       )
@@ -68,7 +76,15 @@ export function RevenueConfirmDialog({
     setOutcomes((current) =>
       current.map((outcome) =>
         outcome.contact_id === contactId
-          ? { ...outcome, billable }
+          ? {
+              ...outcome,
+              billable,
+              non_billable_reason: billable
+                ? null
+                : isCourtesy
+                  ? "courtesy"
+                  : null,
+            }
           : outcome
       )
     );
@@ -118,7 +134,15 @@ export function RevenueConfirmDialog({
             {candidate.source_label} ·{" "}
             {candidate.occurrence_date.split("-").reverse().join("/")} ·{" "}
             {candidate.place_name ?? "Sem local"}
+            {isCourtesy && " · Cortesia"}
           </DialogDescription>
+          {isCourtesy && (
+            <p className="text-xs text-muted-foreground">
+              Agendada como cortesia — participantes começam como não
+              faturáveis, mas você pode marcar como faturável individualmente
+              se necessário.
+            </p>
+          )}
         </DialogHeader>
 
         <div className="max-h-[55vh] space-y-3 overflow-y-auto">

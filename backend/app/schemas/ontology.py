@@ -247,6 +247,16 @@ class ContactSummary(BaseModel):
     level: str | None
     home_place_id: uuid.UUID | None
     home_place_name: str | None
+    makeup_credits_available: int = 0
+
+
+class CourtesyAppointmentSummary(BaseModel):
+    id: uuid.UUID
+    start_at: datetime
+    end_at: datetime
+    place_name: str | None
+    service: str
+    status: str
 
 
 class ContactDetail(ContactSummary):
@@ -257,8 +267,10 @@ class ContactDetail(ContactSummary):
     country: str | None
     latitude: float | None
     longitude: float | None
+    makeup_credits_available: int = 0
     created_at: datetime
     fixed_slots: list[RecurringSlotDetail] = []
+    courtesy_appointments: list[CourtesyAppointmentSummary] = []
 
 
 class ContactListResponse(BaseModel):

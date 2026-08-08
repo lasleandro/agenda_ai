@@ -47,6 +47,7 @@ class GlobalRateInput(BaseModel):
 
 class FinancialSettingsUpdate(BaseModel):
     default_commercial_status: CommercialStatus | None = None
+    cancellation_notice_hours: int | None = Field(default=None, ge=0, le=168)
     rates: list[GlobalRateInput] | None = None
 
     @field_validator("default_commercial_status")
@@ -81,6 +82,7 @@ class GlobalRateDetail(BaseModel):
 class FinancialSettingsDetail(BaseModel):
     default_commercial_status: CommercialStatus
     currency: str
+    cancellation_notice_hours: int
     rates: list[GlobalRateDetail]
 
 
@@ -377,6 +379,7 @@ class RevenueCandidateDetail(BaseModel):
     participants: list[RevenueCandidateParticipant]
     recognized_occurrence_id: uuid.UUID | None
     can_confirm: bool
+    billing_type: str | None = None
 
 
 class RevenueCandidateList(BaseModel):
@@ -390,6 +393,7 @@ class RevenueParticipantOutcomeInput(BaseModel):
     contact_id: uuid.UUID
     attendance_status: AttendanceStatus
     billable: bool
+    non_billable_reason: str | None = None
 
 
 class RevenueOccurrenceCreate(BaseModel):
@@ -441,6 +445,7 @@ class RevenueOccurrenceParticipantDetail(BaseModel):
     contact_name: str
     attendance_status: AttendanceStatus
     billable: bool
+    non_billable_reason: str | None = None
     quoted_amount_cents: int
     billed_amount_cents: int
     pricing_lines: list[RevenuePricingLineDetail]

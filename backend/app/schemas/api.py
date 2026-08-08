@@ -18,6 +18,7 @@ class AppointmentCreate(BaseModel):
     start_at: datetime
     end_at: datetime
     is_recurring: bool = False
+    billing_type: str = Field(default="billable", pattern=r"^(billable|courtesy)$")
 
     @field_validator("service")
     @classmethod
@@ -59,6 +60,7 @@ class AppointmentSummary(BaseModel):
     source: str
     recurrence_rule: str | None = None
     class_type: str = "individual"
+    billing_type: str | None = None
     participants: list[AppointmentParticipantSummary] = []
     # The specific dated occurrence this row represents — pass back on
     # GET /api/appointments/{id}?occurrence_date=... so a rescheduled/
@@ -86,6 +88,7 @@ class AppointmentDetail(BaseModel):
     source: str
     recurrence_rule: str | None = None
     class_type: str = "individual"
+    billing_type: str | None = None
     participants: list[AppointmentParticipantSummary] = []
     occurrence_date: date | None = None
     is_exception: bool = False

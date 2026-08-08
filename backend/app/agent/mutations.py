@@ -28,6 +28,7 @@ from app.models import (
     Appointment,
     AppointmentParticipant,
     Contact,
+    MakeupClassCredit,
     OperatorActionCandidate,
     Place,
     RecurringSlot,
@@ -35,10 +36,12 @@ from app.models import (
 )
 from app.services import appointment_participants, appointments, participants, schedule_overrides
 from app.services.contacts import apply_contact_updates
+from app.services.makeup_credits import grant_credit_if_eligible
 from app.services.operational_events import record_event
 from app.services.scheduling import TIMEZONE
 
 VALID_TARGET_TYPES = ("appointment", "recurring_slot")
+VALID_BILLING_TYPES = ("billable", "courtesy")
 
 
 def _parse_datetime(value: str) -> datetime:
@@ -636,6 +639,7 @@ def propose_create_appointment(
     start_at: str,
     end_at: str,
     service: str,
+    billing_type: str = "billable",
 ) -> dict[str, Any]:
     contact = (
         db.query(Contact)
@@ -653,6 +657,9 @@ def propose_create_appointment(
     if place is None:
         return {"error": "Place not found"}
 
+    if billing_type not in VALID_BILLING_TYPES:
+        return {"error": f"billing_type must be one of {VALID_BILLING_TYPES}"}
+
     parsed_start = _parse_datetime(start_at)
     parsed_end = _parse_datetime(end_at)
     if parsed_end <= parsed_start:
@@ -666,9 +673,10 @@ def propose_create_appointment(
         return {"error": exc.detail}
 
     local_start = parsed_start.astimezone(TIMEZONE)
+    courtesy_label = " (Cortesia)" if billing_type == "courtesy" else ""
     preview_text = (
         f"Criar atendimento de {service.strip()} para {contact.display_name} em "
-        f"{local_start.strftime('%d/%m/%Y %H:%M')}, {place.name}."
+        f"{local_start.strftime('%d/%m/%Y %H:%M')}, {place.name}{courtesy_label}."
     )
     candidate = candidates.propose(
         db,
@@ -681,6 +689,7 @@ def propose_create_appointment(
             "start_at": parsed_start.isoformat(),
             "end_at": parsed_end.isoformat(),
             "service": service,
+            "billing_type": billing_type,
         },
         preview_text=preview_text,
         affected_entities=[
@@ -707,6 +716,12 @@ def _execute_create_appointment(
         source="assistant",
         actor=f"user:{candidate.actor_user_id}",
     )
+    billing_type = args.get("billing_type", "billable")
+    if billing_type not in VALID_BILLING_TYPES:
+        billing_type = "billable"
+    if billing_type == "courtesy":
+        appointment.billing_type = "courtesy"
+
     record_event(
         db,
         professional_id=professional_id,
@@ -724,6 +739,160 @@ def _execute_create_appointment(
         after_state={"status": appointment.status},
     )
     return ExecutionResult(ok=True, summary=f"Atendimento criado para {args['start_at']}.")
+
+
+# ---------------------------------------------------------------------------
+# propose_redeem_makeup_credit
+# ---------------------------------------------------------------------------
+
+def propose_redeem_makeup_credit(
+    db: Session,
+    professional_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    correlation_id: uuid.UUID,
+    *,
+    credit_id: str,
+    place_id: str,
+    start_at: str,
+    end_at: str,
+) -> dict[str, Any]:
+    credit = (
+        db.query(MakeupClassCredit)
+        .filter(
+            MakeupClassCredit.id == uuid.UUID(credit_id),
+            MakeupClassCredit.professional_id == professional_id,
+        )
+        .first()
+    )
+    if credit is None:
+        return {"error": "Crédito de reposição não encontrado"}
+    if credit.status != "available":
+        return {
+            "error": f"Este crédito não está disponível (status: {credit.status})"
+        }
+
+    contact = (
+        db.query(Contact)
+        .filter(
+            Contact.id == credit.contact_id,
+            Contact.professional_id == professional_id,
+        )
+        .first()
+    )
+    if contact is None:
+        return {"error": "Contato não encontrado"}
+
+    place = (
+        db.query(Place)
+        .filter(Place.id == uuid.UUID(place_id), Place.professional_id == professional_id)
+        .first()
+    )
+    if place is None:
+        return {"error": "Local não encontrado"}
+
+    parsed_start = _parse_datetime(start_at)
+    parsed_end = _parse_datetime(end_at)
+    if parsed_end <= parsed_start:
+        return {"error": "end_at must be after start_at"}
+
+    try:
+        appointments.assert_no_conflict(
+            db, professional_id, start_at=parsed_start, end_at=parsed_end
+        )
+    except HTTPException as exc:
+        return {"error": exc.detail}
+
+    local_start = parsed_start.astimezone(TIMEZONE)
+    preview_text = (
+        f"Agendar reposição para {contact.display_name} em "
+        f"{local_start.strftime('%d/%m/%Y %H:%M')}, {place.name}."
+    )
+    candidate = candidates.propose(
+        db,
+        professional_id,
+        actor_user_id,
+        tool_name="propose_redeem_makeup_credit",
+        arguments={
+            "credit_id": credit_id,
+            "place_id": place_id,
+            "start_at": parsed_start.isoformat(),
+            "end_at": parsed_end.isoformat(),
+        },
+        preview_text=preview_text,
+        affected_entities=[
+            {"entity_type": "contact", "entity_id": str(contact.id), "label": contact.display_name},
+            {"entity_type": "place", "entity_id": place_id, "label": place.name},
+            {"entity_type": "makeup_credit", "entity_id": credit_id, "label": f"Crédito {credit.origin_occurrence_date.isoformat()}"},
+        ],
+        correlation_id=correlation_id,
+    )
+    return _pending_result(candidate)
+
+
+def _execute_redeem_makeup_credit(
+    db: Session, professional_id: uuid.UUID, candidate: OperatorActionCandidate
+) -> ExecutionResult:
+    args = candidate.resolved_arguments
+    credit_id = uuid.UUID(args["credit_id"])
+
+    credit = (
+        db.query(MakeupClassCredit)
+        .filter(
+            MakeupClassCredit.id == credit_id,
+            MakeupClassCredit.professional_id == professional_id,
+        )
+        .first()
+    )
+    if credit is None:
+        raise HTTPException(status_code=404, detail="Crédito de reposição não encontrado")
+    if credit.status != "available":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Este crédito não está disponível (status: {credit.status})",
+        )
+
+    appointment = appointments.create_appointment(
+        db,
+        professional_id,
+        contact_id=credit.contact_id,
+        place_id=uuid.UUID(args["place_id"]),
+        service=f"Reposição — {credit.origin_occurrence_date.isoformat()}",
+        start_at=_parse_datetime(args["start_at"]),
+        end_at=_parse_datetime(args["end_at"]),
+        source="assistant",
+        actor=f"user:{candidate.actor_user_id}",
+    )
+
+    now = datetime.now(TIMEZONE)
+    credit.status = "redeemed"
+    credit.redeemed_at = now
+    credit.redeemed_appointment_id = appointment.id
+
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type="makeup_credit.redeemed",
+        occurred_at=now,
+        actor_type="user",
+        actor_id=candidate.actor_user_id,
+        source_channel=candidate.channel,
+        entity_type="makeup_class_credit",
+        entity_id=credit.id,
+        correlation_id=candidate.correlation_id,
+        operator_action_candidate_id=candidate.id,
+        payload={
+            "redeemed_appointment_id": str(appointment.id),
+            "start_at": args["start_at"],
+            "end_at": args["end_at"],
+        },
+        before_state={"status": "available"},
+        after_state={"status": "redeemed"},
+    )
+
+    return ExecutionResult(
+        ok=True,
+        summary=f"Reposição agendada para {args['start_at']} e crédito resgatado.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -780,19 +949,29 @@ def _execute_cancel_schedule(
 ) -> ExecutionResult:
     args = candidate.resolved_arguments
     target_id = uuid.UUID(args["target_id"])
+    parsed_date = date.fromisoformat(args["occurrence_date"])
+
+    # Snapshot the occurrence's starts_at before cancelling — after the
+    # cancel, get_target_occurrence won't find it anymore, but we need the
+    # timestamp for credit-eligibility checks.
+    occurrence = schedule_overrides.get_target_occurrence(
+        db, professional_id, args["target_type"], target_id, parsed_date
+    )
+
     schedule_overrides.cancel_occurrence(
         db,
         professional_id,
         target_type=args["target_type"],
         target_id=target_id,
-        occurrence_date=date.fromisoformat(args["occurrence_date"]),
+        occurrence_date=parsed_date,
         actor_user_id=candidate.actor_user_id,
     )
-    record_event(
+    cancelled_at = datetime.now(TIMEZONE)
+    event = record_event(
         db,
         professional_id=professional_id,
         event_type="schedule.occurrence.cancelled",
-        occurred_at=datetime.now(TIMEZONE),
+        occurred_at=cancelled_at,
         actor_type="user",
         actor_id=candidate.actor_user_id,
         source_channel=candidate.channel,
@@ -804,7 +983,189 @@ def _execute_cancel_schedule(
         before_state={"status": "scheduled"},
         after_state={"status": "cancelled"},
     )
+
+    # Grant make-up credits to recurring participants when eligible.
+    if args["target_type"] == "recurring_slot":
+        participants = (
+            db.query(RecurringSlotParticipant)
+            .filter(RecurringSlotParticipant.recurring_slot_id == target_id)
+            .all()
+        )
+        for participant in participants:
+            grant_credit_if_eligible(
+                db,
+                professional_id=professional_id,
+                contact_id=participant.contact_id,
+                recurring_slot_id=target_id,
+                origin_event_id=event.id,
+                occurrence_date=parsed_date,
+                occurrence_starts_at=occurrence.starts_at,
+                cancelled_at=cancelled_at,
+                correlation_id=candidate.correlation_id,
+                actor_user_id=candidate.actor_user_id,
+                source_channel=candidate.channel,
+            )
+
     return ExecutionResult(ok=True, summary=f"Ocorrência de {args['occurrence_date']} cancelada.")
+
+
+# ---------------------------------------------------------------------------
+# propose_note_participant_absence
+# ---------------------------------------------------------------------------
+#
+# Distinct from propose_cancel_schedule: cancelling an occurrence removes it
+# for every participant (correct when the whole class doesn't happen — rain,
+# holiday, instructor illness). This tool is for the much more common group-
+# class case where *one* student can't make it but the class still runs for
+# everyone else — it never touches ScheduleOccurrenceOverride, so the
+# occurrence stays exactly as scheduled; it only (subject to the same
+# eligibility rules as a cancellation) grants that one student a make-up
+# credit.
+
+def propose_note_participant_absence(
+    db: Session,
+    professional_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    correlation_id: uuid.UUID,
+    *,
+    contact_id: str,
+    recurring_slot_id: str,
+    occurrence_date: str,
+) -> dict[str, Any]:
+    contact = (
+        db.query(Contact)
+        .filter(Contact.id == uuid.UUID(contact_id), Contact.professional_id == professional_id)
+        .first()
+    )
+    if contact is None:
+        return {"error": "Contact not found"}
+
+    slot = (
+        db.query(RecurringSlot)
+        .filter(
+            RecurringSlot.id == uuid.UUID(recurring_slot_id),
+            RecurringSlot.professional_id == professional_id,
+        )
+        .first()
+    )
+    if slot is None:
+        return {"error": "Group not found"}
+
+    is_member = (
+        db.query(RecurringSlotParticipant)
+        .filter(
+            RecurringSlotParticipant.recurring_slot_id == slot.id,
+            RecurringSlotParticipant.contact_id == contact.id,
+        )
+        .first()
+        is not None
+    )
+    if not is_member:
+        return {"error": "Contact is not a member of this group"}
+
+    parsed_date = date.fromisoformat(occurrence_date)
+    try:
+        occurrence = schedule_overrides.get_target_occurrence(
+            db, professional_id, "recurring_slot", slot.id, parsed_date
+        )
+    except HTTPException as exc:
+        return {"error": exc.detail}
+
+    place_name = _place_name(db, slot.place_id)
+    preview_text = (
+        f"Registrar falta de {contact.display_name} no {_group_label(slot)} "
+        f"em {parsed_date.strftime('%d/%m/%Y')} ({_weekday_time_label(slot)}, "
+        f"{place_name}) — a aula continua para o restante do grupo. Se dentro "
+        f"do prazo de aviso configurado, gera crédito de reposição."
+    )
+    candidate = candidates.propose(
+        db,
+        professional_id,
+        actor_user_id,
+        tool_name="propose_note_participant_absence",
+        arguments={
+            "contact_id": contact_id,
+            "recurring_slot_id": recurring_slot_id,
+            "occurrence_date": occurrence_date,
+        },
+        preview_text=preview_text,
+        affected_entities=[
+            {"entity_type": "contact", "entity_id": contact_id, "label": contact.display_name},
+            {
+                "entity_type": "recurring_slot",
+                "entity_id": recurring_slot_id,
+                "label": _group_label(slot),
+            },
+        ],
+        correlation_id=correlation_id,
+    )
+    return _pending_result(candidate)
+
+
+def _execute_note_participant_absence(
+    db: Session, professional_id: uuid.UUID, candidate: OperatorActionCandidate
+) -> ExecutionResult:
+    args = candidate.resolved_arguments
+    contact_id = uuid.UUID(args["contact_id"])
+    slot_id = uuid.UUID(args["recurring_slot_id"])
+    parsed_date = date.fromisoformat(args["occurrence_date"])
+
+    contact = (
+        db.query(Contact)
+        .filter(Contact.id == contact_id, Contact.professional_id == professional_id)
+        .first()
+    )
+    slot = (
+        db.query(RecurringSlot)
+        .filter(RecurringSlot.id == slot_id, RecurringSlot.professional_id == professional_id)
+        .first()
+    )
+    if contact is None or slot is None:
+        raise ValueError("Contact or group no longer exists")
+
+    occurrence = schedule_overrides.get_target_occurrence(
+        db, professional_id, "recurring_slot", slot_id, parsed_date
+    )
+
+    noted_at = datetime.now(TIMEZONE)
+    event = record_event(
+        db,
+        professional_id=professional_id,
+        event_type="schedule.participant.absence_noted",
+        occurred_at=noted_at,
+        actor_type="user",
+        actor_id=candidate.actor_user_id,
+        source_channel=candidate.channel,
+        entity_type="recurring_slot",
+        entity_id=slot_id,
+        correlation_id=candidate.correlation_id,
+        operator_action_candidate_id=candidate.id,
+        payload={"contact_id": args["contact_id"], "occurrence_date": args["occurrence_date"]},
+        before_state=None,
+        after_state={"contact_id": args["contact_id"], "attendance": "absent"},
+    )
+
+    credit = grant_credit_if_eligible(
+        db,
+        professional_id=professional_id,
+        contact_id=contact_id,
+        recurring_slot_id=slot_id,
+        origin_event_id=event.id,
+        occurrence_date=parsed_date,
+        occurrence_starts_at=occurrence.starts_at,
+        cancelled_at=noted_at,
+        correlation_id=candidate.correlation_id,
+        actor_user_id=candidate.actor_user_id,
+        source_channel=candidate.channel,
+    )
+
+    summary = f"Falta de {contact.display_name} registrada em {args['occurrence_date']}."
+    summary += (
+        " Crédito de reposição gerado."
+        if credit is not None
+        else " Sem crédito de reposição (fora do prazo de aviso ou limite atingido)."
+    )
+    return ExecutionResult(ok=True, summary=summary)
 
 
 # ---------------------------------------------------------------------------
@@ -1009,6 +1370,7 @@ MUTATION_TOOL_SPECS: list[dict[str, Any]] = [
                     "start_at": {"type": "string", "description": "ISO 8601 datetime, e.g. 2026-08-10T14:00:00-03:00."},
                     "end_at": {"type": "string", "description": "ISO 8601 datetime."},
                     "service": {"type": "string"},
+                    "billing_type": {"type": "string", "enum": ["billable", "courtesy"], "description": "Optional — 'courtesy' marks this as a free/courtesy class that shouldn't generate revenue."},
                 },
                 "required": ["contact_id", "place_id", "start_at", "end_at", "service"],
             },
@@ -1017,8 +1379,25 @@ MUTATION_TOOL_SPECS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "propose_redeem_makeup_credit",
+            "description": "Propose redeeming a make-up class credit by creating a one-off appointment in an open slot and marking the credit as redeemed in the same transaction. Requires explicit instructor confirmation — use after recommend_makeup_slots has suggested slots.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "credit_id": {"type": "string", "description": "The make-up credit ID (from the contact's available credits)."},
+                    "place_id": {"type": "string"},
+                    "start_at": {"type": "string", "description": "ISO 8601 datetime, e.g. 2026-08-10T14:00:00-03:00."},
+                    "end_at": {"type": "string", "description": "ISO 8601 datetime."},
+                },
+                "required": ["credit_id", "place_id", "start_at", "end_at"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "propose_cancel_schedule",
-            "description": "Propose cancelling a single dated occurrence of an appointment or recurring class (not the whole series). Requires explicit instructor confirmation.",
+            "description": "Propose cancelling a single dated occurrence of an appointment or recurring class ENTIRELY — nobody has class that day (not the whole series). For a group class where only ONE student can't attend but the class still happens for the rest of the group, use propose_note_participant_absence instead. Requires explicit instructor confirmation.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1027,6 +1406,22 @@ MUTATION_TOOL_SPECS: list[dict[str, Any]] = [
                     "occurrence_date": {"type": "string", "description": "ISO date of the specific occurrence to cancel."},
                 },
                 "required": ["target_type", "target_id", "occurrence_date"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_note_participant_absence",
+            "description": "Propose recording that ONE participant of a recurring group class will miss (or missed) a specific dated occurrence, while the class still happens normally for the rest of the group — does not cancel anything on the calendar. If the notice given meets the tenant's configured cancellation_notice_hours, this grants that student a make-up class credit. Use this instead of propose_cancel_schedule whenever the group class itself is not being cancelled.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "contact_id": {"type": "string"},
+                    "recurring_slot_id": {"type": "string", "description": "The group's recurring_slot_id, from find_groups."},
+                    "occurrence_date": {"type": "string", "description": "ISO date of the specific occurrence the student will miss."},
+                },
+                "required": ["contact_id", "recurring_slot_id", "occurrence_date"],
             },
         },
     },
@@ -1086,7 +1481,9 @@ MUTATION_TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
     "propose_remove_group_member": propose_remove_group_member,
     "propose_update_contact": propose_update_contact,
     "propose_create_appointment": propose_create_appointment,
+    "propose_redeem_makeup_credit": propose_redeem_makeup_credit,
     "propose_cancel_schedule": propose_cancel_schedule,
+    "propose_note_participant_absence": propose_note_participant_absence,
     "propose_reschedule_occurrence": propose_reschedule_occurrence,
     "propose_add_appointment_participant": propose_add_appointment_participant,
     "propose_remove_appointment_participant": propose_remove_appointment_participant,
@@ -1102,5 +1499,9 @@ candidates.MUTATION_EXECUTORS[
 ] = _execute_remove_appointment_participant
 candidates.MUTATION_EXECUTORS["propose_update_contact"] = _execute_update_contact
 candidates.MUTATION_EXECUTORS["propose_create_appointment"] = _execute_create_appointment
+candidates.MUTATION_EXECUTORS["propose_redeem_makeup_credit"] = _execute_redeem_makeup_credit
 candidates.MUTATION_EXECUTORS["propose_cancel_schedule"] = _execute_cancel_schedule
+candidates.MUTATION_EXECUTORS[
+    "propose_note_participant_absence"
+] = _execute_note_participant_absence
 candidates.MUTATION_EXECUTORS["propose_reschedule_occurrence"] = _execute_reschedule_occurrence

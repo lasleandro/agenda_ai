@@ -98,9 +98,10 @@ function appointmentToEvent(appointment: AppointmentSummary): EventInput {
         start: appointment.start_at,
         end: appointment.end_at,
       };
+  const courtesyTag = appointment.billing_type === "courtesy" ? " (Cortesia)" : "";
   return {
     id: appointment.id,
-    title: `${participantNames} · ${appointment.service}${placeLabel}`,
+    title: `${participantNames} · ${appointment.service}${placeLabel}${courtesyTag}`,
     ...schedule,
     backgroundColor: colors.bg,
     borderColor: colors.border,
@@ -278,6 +279,7 @@ export function WeekCalendar() {
         source: "dashboard",
         recurrence_rule: input.is_recurring ? "FREQ=WEEKLY" : null,
         occurrence_date: input.start_at.slice(0, 10),
+        billing_type: input.billing_type,
       });
       setEvents((current) => [...current, optimistic]);
 

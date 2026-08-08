@@ -31,3 +31,4 @@ from app.models.schedule_occurrence_override import ScheduleOccurrenceOverride  
 from app.models.operator_action_candidate import OperatorActionCandidate  # noqa: F401
 from app.models.operational_event import OperationalEvent  # noqa: F401
 from app.models.assistant_settings import AssistantSettings  # noqa: F401
+from app.models.makeup_class_credit import MakeupClassCredit  # noqa: F401
