@@ -47,7 +47,6 @@ class GlobalRateInput(BaseModel):
 
 class FinancialSettingsUpdate(BaseModel):
     default_commercial_status: CommercialStatus | None = None
-    cancellation_notice_hours: int | None = Field(default=None, ge=0, le=168)
     rates: list[GlobalRateInput] | None = None
 
     @field_validator("default_commercial_status")
@@ -82,7 +81,6 @@ class GlobalRateDetail(BaseModel):
 class FinancialSettingsDetail(BaseModel):
     default_commercial_status: CommercialStatus
     currency: str
-    cancellation_notice_hours: int
     rates: list[GlobalRateDetail]
 
 
@@ -147,31 +145,9 @@ class PlaceRateMatrixDetail(BaseModel):
     rates: list[PlaceRateDetail]
 
 
-class WorkJourneyIntervalInput(BaseModel):
-    day_of_week: int = Field(ge=0, le=6)
-    interval_type: Literal["work", "break"]
-    start_time: time
-    end_time: time
-
-    @model_validator(mode="after")
-    def validate_time_range(self) -> Self:
-        if self.end_time <= self.start_time:
-            raise ValueError("Journey intervals must end after they start")
-        return self
-
-
-class WorkJourneyIntervalDetail(WorkJourneyIntervalInput):
-    id: uuid.UUID
-
-
-class WorkJourneyReplace(BaseModel):
-    intervals: list[WorkJourneyIntervalInput]
-
-
 class FinancialConfigurationDetail(BaseModel):
     prime_time_windows: list[PrimeTimeWindowDetail]
     places: list[PlaceRateMatrixDetail]
-    work_journey: list[WorkJourneyIntervalDetail]
 
 
 class PricingQuoteInput(BaseModel):

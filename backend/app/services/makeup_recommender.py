@@ -3,8 +3,10 @@ Phase 4 — Make-up class slot recommender (heuristic, not ML).
 
 Given a contact with available make-up credits, rank candidate capacity
 segments over the next N days using a weighted combination of cost score
-(lower hourly rate = better) and flow score (historically quieter
-weekday+hour buckets = better).
+(lower hourly rate = better), flow score (historically quieter
+weekday+hour buckets = better), a preferred-place bonus, and a
+level-match bonus (the slot coincides with a recurring class at the
+student's usual level).
 """
 
 import uuid
@@ -94,6 +96,56 @@ def _contact_duration_places_and_level(
 
     level = Counter(levels).most_common(1)[0][0] if levels else None
     return duration, places, level
+
+
+def _load_levels_by_place_weekday(
+    db: Session,
+    professional_id: uuid.UUID,
+    place_ids: set[uuid.UUID],
+) -> dict[tuple[uuid.UUID, int], list[tuple[int, int, str]]]:
+    """For each (place_id, weekday), the list of (start_minute, end_minute,
+    level) covered by an active RecurringSlot with a level set. Used to
+    bonus candidate slots that line up with the student's usual level."""
+    if not place_ids:
+        return {}
+    rows = (
+        db.query(RecurringSlot)
+        .filter(
+            RecurringSlot.professional_id == professional_id,
+            RecurringSlot.place_id.in_(place_ids),
+            RecurringSlot.status == "active",
+            RecurringSlot.level.isnot(None),
+        )
+        .all()
+    )
+    by_place_weekday: dict[tuple[uuid.UUID, int], list[tuple[int, int, str]]] = defaultdict(list)
+    for slot in rows:
+        by_place_weekday[(slot.place_id, slot.day_of_week)].append(
+            (
+                scheduling.time_to_minutes(slot.start_time),
+                scheduling.time_to_minutes(slot.end_time),
+                slot.level,
+            )
+        )
+    return by_place_weekday
+
+
+def _level_matches(
+    levels_by_place_weekday: dict[tuple[uuid.UUID, int], list[tuple[int, int, str]]],
+    place_id: uuid.UUID,
+    weekday: int,
+    start_minute: int,
+    end_minute: int,
+    preferred_level: str | None,
+) -> bool:
+    """True if the candidate's time range overlaps a RecurringSlot at this
+    place/weekday whose level matches the student's preferred_level."""
+    if preferred_level is None:
+        return False
+    for slot_start, slot_end, level in levels_by_place_weekday.get((place_id, weekday), []):
+        if level == preferred_level and start_minute < slot_end and end_minute > slot_start:
+            return True
+    return False
 
 
 def _compute_flow_ratios(
@@ -206,6 +258,9 @@ def recommend_makeup_slots(
     )
     pricing = financial_capacity.load_pricing_rules(db, professional_id)
     flow_ratios = _compute_flow_ratios(db, professional_id, flow_lookback_weeks)
+    levels_by_place_weekday = _load_levels_by_place_weekday(
+        db, professional_id, {place.id for place in places}
+    )
 
     # Build set of booked intervals keyed by (date, place_id)
     booked: dict[tuple[date, uuid.UUID], list[tuple[int, int]]] = defaultdict(list)
@@ -248,9 +303,19 @@ def recommend_makeup_slots(
                 )
 
                 # Flow score: look up (weekday, hour_bucket)
+                weekday = segment.local_date.weekday()
                 start_hour = start_min // 60
-                flow_key = (segment.local_date.weekday(), start_hour)
+                flow_key = (weekday, start_hour)
                 flow_ratio = flow_ratios.get(flow_key)
+
+                level_match = _level_matches(
+                    levels_by_place_weekday,
+                    place.id,
+                    weekday,
+                    start_min,
+                    end_min,
+                    preferred_level,
+                )
 
                 candidates.append(
                     {
@@ -265,6 +330,7 @@ def recommend_makeup_slots(
                         "hourly_rate_cents": rate,
                         "flow_ratio": flow_ratio,
                         "preferred_place": place.id in preferred_places,
+                        "level_match": level_match,
                     }
                 )
 
@@ -293,10 +359,15 @@ def recommend_makeup_slots(
         # Preferred place bonus
         place_bonus = 5.0 if c["preferred_place"] else 0.0
 
+        # Level-match bonus: this slot coincides with a recurring class at
+        # the student's usual level (see _level_matches)
+        level_bonus = 5.0 if c["level_match"] else 0.0
+
         combined = (
             cost_weight * cost_percentile
             + flow_weight * flow_percentile
             + place_bonus
+            + level_bonus
         )
         c["cost_score"] = round(cost_percentile, 1)
         c["flow_score"] = round(flow_percentile, 1)
@@ -320,6 +391,7 @@ def recommend_makeup_slots(
                 "hourly_rate_cents": c["hourly_rate_cents"],
                 "cost_score": c["cost_score"],
                 "flow_score": c["flow_score"],
+                "level_match": c["level_match"],
                 "combined_score": c["combined_score"],
             }
         )

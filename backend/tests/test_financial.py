@@ -13,6 +13,7 @@ from app.core.security import hash_password
 from app.database import SessionLocal
 from app.main import app
 from app.models import (
+    Appointment,
     Contact,
     FinancialChangeAuditLog,
     FinancialRate,
@@ -493,7 +494,7 @@ def test_financial_configuration_prime_place_and_journey() -> None:
         assert quote.json()["total_cents"] == 5000
 
         invalid_break = client.put(
-            "/api/financial/work-journey",
+            "/api/rules/work-journey",
             json={
                 "intervals": [
                     {
@@ -515,7 +516,7 @@ def test_financial_configuration_prime_place_and_journey() -> None:
         assert invalid_break.status_code == 422
 
         journey = client.put(
-            "/api/financial/work-journey",
+            "/api/rules/work-journey",
             json={
                 "intervals": [
                     {
@@ -662,7 +663,7 @@ def test_financial_dashboard_capacity_scenarios_and_tenant_scope() -> None:
         )
         assert rates.status_code == 200
         journey = client.put(
-            "/api/financial/work-journey",
+            "/api/rules/work-journey",
             json={
                 "intervals": [
                     {
@@ -824,4 +825,118 @@ def test_financial_dashboard_capacity_scenarios_and_tenant_scope() -> None:
             professionals=[professional, other_professional],
             users=[owner, admin, other_owner, other_admin],
         )
+        db.close()
+
+
+def test_financial_dashboard_top_line_uses_work_journey_not_recurring_slots() -> None:
+    """Top-line available/booked/occupancy must reflect the instructor's
+    declared work journey even when no (or only partial) RecurringSlot
+    coverage exists for a place — RecurringSlot is only required for the
+    by-place/by-weekday/etc. breakdowns, which need a place to attribute
+    hours to. See docs/business_rules.md 'Financial capacity vs. work
+    journey'."""
+    db = SessionLocal()
+    professional, owner, admin, cookies = _create_tenant(db, enabled=True)
+    try:
+        place = Place(
+            professional_id=professional.id,
+            name="Quadra única",
+            normalized_name="quadra unica",
+        )
+        contact = Contact(
+            professional_id=professional.id,
+            phone=f"+55119{uuid.uuid4().hex[:8]}",
+            display_name="Cliente Solo",
+            normalized_name="cliente solo",
+        )
+        db.add_all([place, contact])
+        db.flush()
+
+        rates = client.patch(
+            "/api/financial/settings",
+            json={"rates": [{"participant_count": 1, "hourly_rate_cents": 1000}]},
+            cookies=cookies,
+        )
+        assert rates.status_code == 200
+
+        # Full-day work journey, Monday only — no RecurringSlot at all.
+        journey = client.put(
+            "/api/rules/work-journey",
+            json={
+                "intervals": [
+                    {
+                        "day_of_week": 0,
+                        "interval_type": "work",
+                        "start_time": "08:00:00",
+                        "end_time": "12:00:00",
+                    }
+                ]
+            },
+            cookies=cookies,
+        )
+        assert journey.status_code == 200
+
+        appointment = Appointment(
+            professional_id=professional.id,
+            contact_id=contact.id,
+            place_id=place.id,
+            start_at=datetime(2026, 8, 10, 9, tzinfo=timezone.utc),
+            end_at=datetime(2026, 8, 10, 10, tzinfo=timezone.utc),
+            status="confirmed",
+            service="Aula individual",
+        )
+        db.add(appointment)
+        db.commit()
+
+        dashboard = client.get(
+            "/api/financial/dashboard",
+            params={"date_from": "2026-08-10", "date_to": "2026-08-10"},
+            cookies=cookies,
+        )
+        assert dashboard.status_code == 200
+        body = dashboard.json()
+        # Work journey is 4h (240min); with zero RecurringSlot coverage the
+        # old segment-based calculation would have reported 0 here.
+        assert body["available_minutes"] == 240
+        assert body["booked_minutes"] == 60
+        assert body["occupancy_pct"] == 25.0
+        assert body["projected_revenue_cents"] == 1000
+
+        # The by-place breakdown still correctly reports zero — it needs an
+        # explicit RecurringSlot to attribute hours to that place.
+        assert all(row["available_minutes"] == 0 for row in body["by_place"])
+
+        # "Potencial com 100% da capacidade" must price the uncovered
+        # work-journey time (240min) against the global rate too, not
+        # just the (empty) RecurringSlot-scoped segments.
+        all_individual = next(
+            preset
+            for preset in body["capacity_presets"]
+            if preset["key"] == "all_individual"
+        )
+        assert all_individual["projected_revenue_cents"] == 4000
+
+        # With a place filter applied, top-line figures must fall back to
+        # the place-scoped (RecurringSlot-based) accounting — otherwise
+        # a place-filtered booked_minutes would be compared against a
+        # tenant-wide available_minutes.
+        filtered = client.get(
+            "/api/financial/dashboard",
+            params={
+                "date_from": "2026-08-10",
+                "date_to": "2026-08-10",
+                "place_id": str(place.id),
+            },
+            cookies=cookies,
+        )
+        assert filtered.status_code == 200
+        filtered_body = filtered.json()
+        assert filtered_body["available_minutes"] == 0
+        assert filtered_body["booked_minutes"] == 0
+        assert filtered_body["occupancy_pct"] == 0
+    finally:
+        db.query(Appointment).filter(
+            Appointment.professional_id == professional.id
+        ).delete(synchronize_session=False)
+        _cleanup(db, professionals=[professional], users=[owner, admin])
         db.close()

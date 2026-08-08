@@ -61,47 +61,67 @@ Entry point: `app/services/financial_analytics.py::build_financial_dashboard(db,
 
 ### What it computes
 
-1. **Available minutes** — sum of `CapacitySegment.duration_minutes` from
-   `build_capacity_segments`, bucketed simultaneously by place, weekday,
-   part-of-day, time category, and calendar date.
-2. **Booked minutes** — for every actual booking
-   (`load_booking_occurrences`, which reads confirmed appointments +
-   enrolled recurring-class occurrences) in range, its time range is
-   split the same way (prime/part-of-day boundaries) and **overlapped
-   against the capacity segments** for that exact (date, place) via
-   `_capacity_overlap` — so booked time outside any capacity segment
-   (e.g. a one-off appointment at a time/place with no matching
-   `RecurringSlot`) contributes to `booked_minutes` but not to
-   `available_minutes`, which is why `occupancy_pct` can exceed 100%
-   in principle (bookings aren't clipped to capacity).
-3. **Projected revenue** — for each booked segment, resolves a rate via
+1. **Available/booked minutes come from two different sources**, per
+   `docs/business_rules.md` §3.5:
+   - **Top-line** `available_minutes`/`booked_minutes` (and therefore the
+     top-line `occupancy_pct`/`unused_minutes`) are place-agnostic:
+     `available_minutes` is `total_work_journey_minutes` — the raw Work
+     Journey (work minus break intervals) summed over the range, with no
+     `RecurringSlot` requirement — and `booked_minutes` is the raw sum of
+     every booked occurrence's duration, uncapped to any capacity segment.
+   - **Per-bucket breakdowns** (`by_place`, `by_weekday`, `by_part_of_day`,
+     `by_time_category`, and the daily `time_series`) still use
+     `CapacitySegment.duration_minutes` from `build_capacity_segments`,
+     which **does** require a `RecurringSlot` at that place/weekday (see
+     the capacity caveat above) — a booking's time range is split the same
+     way (prime/part-of-day boundaries) and **overlapped against the
+     capacity segments** for that exact (date, place) via
+     `_capacity_overlap`, so booked time outside any capacity segment
+     contributes to a bucket's `booked_minutes` but not its
+     `available_minutes`.
+   - This split exists because top-line occupancy was found to collapse
+     to a misleadingly high number for tenants who hadn't fully declared
+     per-place `RecurringSlot` availability — see `docs/business_rules.md`
+     §3.5 for the full rationale.
+2. **Projected revenue** — for each booked segment, resolves a rate via
    `PricingRules.resolve(place_id, time_category, participant_count)`
    and multiplies by duration; bookings with no resolvable rate are
    counted (`unpriced_booking_count`) but contribute 0 revenue, not an
-   error.
-4. **`occupancy_pct`** — `booked_minutes / available_minutes * 100`,
-   rounded to 1 decimal, `0` if `available_minutes` is `0`. Computed
-   once for the whole period and again per-bucket (`by_place`,
-   `by_weekday`, `by_part_of_day`, `by_time_category`, and a daily
-   `time_series`).
-5. **Observed participant mix** — how booked minutes are distributed
+   error. Top-line `projected_revenue_cents` sums every booking
+   regardless of capacity overlap (always has, unaffected by the split
+   above).
+3. **`occupancy_pct`** — `booked_minutes / available_minutes * 100`,
+   rounded to 1 decimal, `0` if `available_minutes` is `0`. The top-line
+   value and each per-bucket value are computed independently from their
+   respective sources (see point 1) — a per-bucket `occupancy_pct` can
+   still exceed 100% in principle, since bucket-level bookings aren't
+   clipped to their capacity segment.
+4. **Observed participant mix** — how booked minutes are distributed
    across participant counts (1 vs 2 vs 3 vs 4), normalized to
    percentages; used as the default mix for what-if scenarios.
-6. **Capacity presets** — three fixed reference points computed at
+5. **Capacity presets** — three fixed reference points computed at
    100% occupancy for comparison: "all individual," "observed demand,"
-   "full groups of 4."
+   "full groups of 4." Unlike the per-bucket breakdowns, these also fold
+   in Work Journey time that falls outside any place's `RecurringSlot`
+   coverage (`build_uncovered_capacity_minutes`), priced against the
+   **global rate only** — see `docs/business_rules.md` §3.5. Only applies
+   to the unfiltered "all places" view.
 
 ### What-if scenarios (`evaluate_financial_scenario`)
 
 Takes a participant mix (`all_individual` | `full_groups` | `observed_demand`
 | `custom`), an assumed `occupancy_pct`, and optional rate overrides, and
-projects revenue at that hypothetical occupancy — same capacity segments,
+projects revenue at that hypothetical occupancy — same capacity segments
+**plus the same uncovered-work-journey time as the capacity presets**,
 different assumed utilization and pricing. Also computes
 `_tradeoffs`: for each participant count 1–4, the capacity-weighted
 average rate, full-class revenue, revenue vs. an individual class, and
 the **break-even occupancy** (the occupancy % at which a group class
 matches an individual class's revenue) — this powers the "is it worth
 running groups vs. 1:1s" comparison in the Simulador tab.
+`_tradeoffs` deliberately stays scoped to `RecurringSlot`-covered capacity
+only (no uncovered-time credit) since it answers "of my configured
+places/rates," not "at full potential."
 
 ### Explicitly excluded from this model
 
@@ -127,9 +147,8 @@ work happens for an ineligible contact.
   `RecurringSlotParticipant` memberships (most common duration among
   their groups, falling back to `Professional.default_duration_minutes`,
   then `60`), plus the set of places they usually attend
-  (`preferred_places`). Their most common class `level` is also computed
-  but **not currently used** anywhere in filtering or scoring — fetched,
-  not wasted, just not wired up yet.
+  (`preferred_places`) and their most common class `level`
+  (`preferred_level`) — both feed bonuses in step 3.
 - Window: **tomorrow through `lookahead_days` days out** (14 by default)
   — never today, never the past.
 - Pulls `CapacitySegment`s (same shared foundation as §1 above — so the
@@ -186,17 +205,27 @@ that day changed.
   an exclusion; non-preferred places are still fully eligible and are
   simply sorted after preferred ones as a tie-break during candidate
   generation.
+- **`level_bonus`** = flat `+5` if the candidate's time range overlaps an
+  *active* `RecurringSlot` at the same place/weekday whose `level`
+  matches the contact's `preferred_level` (`_level_matches`), `0`
+  otherwise (including when the contact has no `preferred_level` at
+  all). Also a bonus, not an exclusion or a penalty for a level
+  mismatch — a candidate next to a *different*-level class scores the
+  same as one next to no class at all.
 - **`combined_score = cost_weight * cost_score + flow_weight * flow_score
-  + place_bonus`** — with the 0.5/0.5 defaults and the two flat +5
-  bonuses, the theoretical max is 105, though `cost_score`/`flow_score`
-  are each individually capped at 100 before combining.
+  + place_bonus + level_bonus`** — with the 0.5/0.5 defaults and the
+  three flat +5 bonuses, the theoretical max is 110, though
+  `cost_score`/`flow_score` are each individually capped at 100 before
+  combining.
 
 Candidates are sorted descending by `combined_score` and the top
 `max_recommendations` (5 by default) are returned, each carrying its
 `date`, `place_id`/`place_name`, `start_time`/`end_time`,
-`time_category`, `part_of_day`, `hourly_rate_cents`, and the three
-scores (`cost_score`, `flow_score`, `combined_score`) — the agent
-receives these scores directly and can use them to explain the ranking
-to the instructor, but the *choice* of which one to book always goes
-through `list_makeup_credits` → `propose_redeem_makeup_credit` for
-confirmation, same as every other write in this app.
+`time_category`, `part_of_day`, `hourly_rate_cents`, `level_match`
+(bool), and the three scores (`cost_score`, `flow_score`,
+`combined_score` — note `level_bonus` itself isn't returned separately,
+only folded into `combined_score`) — the agent receives these directly
+and can use them to explain the ranking to the instructor, but the
+*choice* of which one to book always goes through `list_makeup_credits`
+→ `propose_redeem_makeup_credit` for confirmation, same as every other
+write in this app.

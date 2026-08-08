@@ -196,7 +196,6 @@ export interface GlobalRateDetail {
 export interface FinancialSettingsDetail {
   default_commercial_status: CommercialStatus;
   currency: string;
-  cancellation_notice_hours: number;
   rates: GlobalRateDetail[];
 }
 
@@ -244,7 +243,10 @@ export interface WorkJourneyIntervalDetail extends WorkJourneyIntervalInput {
 export interface FinancialConfigurationDetail {
   prime_time_windows: PrimeTimeWindowDetail[];
   places: PlaceRateMatrixDetail[];
-  work_journey: WorkJourneyIntervalDetail[];
+}
+
+export interface CancellationNoticeHoursDetail {
+  cancellation_notice_hours: number;
 }
 
 export interface FinancialAnalyticsAssumptions {
@@ -270,6 +272,12 @@ export interface FinancialTimeSeriesPoint {
   date: string;
   available_minutes: number;
   booked_minutes: number;
+  projected_revenue_cents: number;
+}
+
+export interface MonthlyRevenuePoint {
+  month: string;
+  label: string;
   projected_revenue_cents: number;
 }
 

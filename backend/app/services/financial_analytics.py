@@ -26,12 +26,14 @@ from app.services.financial_capacity import (
     PricingRules,
     assert_all_places_found,
     build_capacity_segments,
+    build_uncovered_capacity_minutes,
     iter_dates,
     load_booking_occurrences,
     load_places,
     load_pricing_rules,
     load_prime_ranges,
     split_range,
+    total_work_journey_minutes,
 )
 
 WEEKDAY_LABELS = (
@@ -61,6 +63,7 @@ class AnalyticsContext:
     pricing: PricingRules
     capacity: list[CapacitySegment]
     bookings: list[BookingOccurrence]
+    uncovered_minutes: dict[str, int]
 
 
 def _round_cents(value: Decimal) -> int:
@@ -86,7 +89,10 @@ def _assumptions(
             "não representa receita reconhecida."
         ),
         capacity_basis=(
-            "Interseção entre jornada líquida e horários reservados por local."
+            "Total geral: jornada líquida (jornada menos pausas), independente "
+            "de local. Quebras por local/dia/período/categoria: interseção "
+            "entre jornada líquida e horários reservados por local — exigem "
+            "um horário reservado (RecurringSlot) configurado naquele local."
         ),
         excluded_constraints=[
             "presença, cancelamentos e faltas",
@@ -107,6 +113,23 @@ def _load_context(
     places = load_places(db, professional_id, place_ids)
     assert_all_places_found(places, place_ids)
     prime_ranges = load_prime_ranges(db, professional_id)
+    # Uncovered (place-agnostic) work-journey time only makes sense to
+    # fold into potential-revenue calculations for the "all places" view
+    # — with a place filter, time not covered by the filtered place(s)
+    # may well be covered by a place the user filtered out, so crediting
+    # it to the filtered place(s) would overstate their potential.
+    uncovered_minutes = (
+        build_uncovered_capacity_minutes(
+            db,
+            professional_id,
+            date_from,
+            date_to,
+            places,
+            prime_ranges,
+        )
+        if place_ids is None
+        else {"regular": 0, "prime": 0}
+    )
     return AnalyticsContext(
         places=places,
         prime_ranges=prime_ranges,
@@ -126,6 +149,7 @@ def _load_context(
             date_to,
             places,
         ),
+        uncovered_minutes=uncovered_minutes,
     )
 
 
@@ -247,6 +271,7 @@ def _potential_metric(
     mix: list[ParticipantMixItem],
     occupancy_pct: float,
     overrides: dict[tuple[str, int], int] | None = None,
+    uncovered_minutes: dict[str, int] | None = None,
 ) -> FinancialScenarioMetric:
     occupancy = Decimal(str(occupancy_pct)) / Decimal(100)
     revenue = Decimal(0)
@@ -269,7 +294,32 @@ def _potential_metric(
                 / Decimal(100)
                 * occupancy
             )
-    available = sum(segment.duration_minutes for segment in capacity)
+    # Work-journey time not attributed to any place: no place-specific
+    # override applies, only the global rate (or an explicit override,
+    # which isn't place-scoped either).
+    for category, minutes in (uncovered_minutes or {}).items():
+        if minutes <= 0:
+            continue
+        for item in mix:
+            rate = None
+            if overrides is not None:
+                rate = overrides.get((category, item.participant_count))
+            if rate is None:
+                rate = pricing.global_rates.get(item.participant_count)
+            if rate is None:
+                continue
+            revenue += (
+                Decimal(rate)
+                * Decimal(item.participant_count)
+                * Decimal(minutes)
+                / Decimal(60)
+                * Decimal(str(item.percentage))
+                / Decimal(100)
+                * occupancy
+            )
+    available = sum(segment.duration_minutes for segment in capacity) + sum(
+        (uncovered_minutes or {}).values()
+    )
     utilized = int(
         (Decimal(available) * occupancy).quantize(
             Decimal("1"),
@@ -324,6 +374,7 @@ def _capacity_presets(
                 context.pricing,
                 mix,
                 100,
+                uncovered_minutes=context.uncovered_minutes,
             )
         ]
     ]
@@ -370,12 +421,14 @@ def build_financial_dashboard(
         ).append(segment)
 
     participant_minutes = 0
+    raw_booked_minutes = 0
     participant_mix_weights: dict[int, int] = {}
     unpriced_booking_count = 0
     for booking in context.bookings:
         occurrence_unpriced = False
         occurrence_minutes = max(0, booking.end_minute - booking.start_minute)
         participant_minutes += occurrence_minutes * booking.participant_count
+        raw_booked_minutes += occurrence_minutes
         participant_mix_weights[booking.participant_count] = (
             participant_mix_weights.get(booking.participant_count, 0)
             + occurrence_minutes
@@ -425,14 +478,27 @@ def build_financial_dashboard(
             unpriced_booking_count += 1
 
     observed_mix = _normalize_mix(participant_mix_weights)
+    # Top-line figures are place-agnostic (raw work journey) only when no
+    # place filter narrows the view — with a place filter, booked_minutes
+    # is already scoped to that place, so available_minutes must be too
+    # (the place-scoped, RecurringSlot-based total) or the ratio would
+    # compare a filtered numerator against a tenant-wide denominator.
+    if place_ids is None:
+        top_available_minutes = total_work_journey_minutes(
+            db, professional_id, date_from, date_to
+        )
+        top_booked_minutes = raw_booked_minutes
+    else:
+        top_available_minutes = total.available_minutes
+        top_booked_minutes = total.booked_minutes
     return FinancialDashboardDetail(
         assumptions=_assumptions(date_from, date_to),
-        available_minutes=total.available_minutes,
-        booked_minutes=total.booked_minutes,
-        unused_minutes=max(0, total.available_minutes - total.booked_minutes),
+        available_minutes=top_available_minutes,
+        booked_minutes=top_booked_minutes,
+        unused_minutes=max(0, top_available_minutes - top_booked_minutes),
         occupancy_pct=_percentage(
-            total.booked_minutes,
-            total.available_minutes,
+            top_booked_minutes,
+            top_available_minutes,
         ),
         participant_hours=round(participant_minutes / 60, 2),
         projected_revenue_cents=total.projected_revenue_cents,
@@ -559,6 +625,7 @@ def evaluate_financial_scenario(
         mix,
         body.occupancy_pct,
         overrides,
+        uncovered_minutes=context.uncovered_minutes,
     )
     baseline = FinancialScenarioMetric(
         available_minutes=dashboard.available_minutes,

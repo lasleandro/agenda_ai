@@ -18,7 +18,6 @@ from app.models import (
     ProfessionalFinancialSettings,
     RecurringSlot,
     RecurringSlotParticipant,
-    WorkJourneyInterval,
 )
 from app.schemas.financial import (
     CommercialOverrideUpdate,
@@ -37,8 +36,6 @@ from app.schemas.financial import (
     PricingQuoteDetail,
     PricingQuoteInput,
     PricingQuoteSegment,
-    WorkJourneyIntervalDetail,
-    WorkJourneyReplace,
 )
 from app.services.financial_audit import add_financial_audit
 from app.services.financial_resolver import (
@@ -233,41 +230,6 @@ def _assert_prime_windows_do_not_overlap(
             )
 
 
-def _assert_work_journey_is_valid(body: WorkJourneyReplace) -> None:
-    for day in range(7):
-        day_intervals = [
-            interval for interval in body.intervals if interval.day_of_week == day
-        ]
-        work_ranges = sorted(
-            (interval.start_time, interval.end_time)
-            for interval in day_intervals
-            if interval.interval_type == "work"
-        )
-        break_ranges = sorted(
-            (interval.start_time, interval.end_time)
-            for interval in day_intervals
-            if interval.interval_type == "break"
-        )
-        for ranges in (work_ranges, break_ranges):
-            if any(
-                current[0] < previous[1]
-                for previous, current in zip(ranges, ranges[1:])
-            ):
-                raise HTTPException(
-                    status_code=422,
-                    detail="Journey intervals of the same type must not overlap",
-                )
-        for break_start, break_end in break_ranges:
-            if not any(
-                work_start <= break_start and work_end >= break_end
-                for work_start, work_end in work_ranges
-            ):
-                raise HTTPException(
-                    status_code=422,
-                    detail="Break intervals must be contained in a work interval",
-                )
-
-
 def _time_to_minutes(value: time) -> int:
     return value.hour * 60 + value.minute
 
@@ -377,28 +339,9 @@ def _configuration_detail(
             )
         )
 
-    journey_rows = (
-        db.query(WorkJourneyInterval)
-        .filter(WorkJourneyInterval.professional_id == professional_id)
-        .order_by(
-            WorkJourneyInterval.day_of_week,
-            WorkJourneyInterval.start_time,
-        )
-        .all()
-    )
     return FinancialConfigurationDetail(
         prime_time_windows=prime_windows,
         places=place_matrices,
-        work_journey=[
-            WorkJourneyIntervalDetail(
-                id=interval.id,
-                day_of_week=interval.day_of_week,
-                interval_type=interval.interval_type,
-                start_time=interval.start_time,
-                end_time=interval.end_time,
-            )
-            for interval in journey_rows
-        ],
     )
 
 
@@ -425,9 +368,6 @@ def get_financial_settings(
             settings.default_commercial_status if settings else "active"
         ),
         currency=settings.currency if settings else "BRL",
-        cancellation_notice_hours=(
-            settings.cancellation_notice_hours if settings else 24
-        ),
         rates=[
             GlobalRateDetail(
                 participant_count=participant_count,
@@ -466,27 +406,6 @@ def update_financial_settings(
             changes["default_commercial_status"] = {
                 "before": previous_status,
                 "after": body.default_commercial_status,
-            }
-
-    if "cancellation_notice_hours" in body.model_fields_set:
-        settings = (
-            db.query(ProfessionalFinancialSettings)
-            .filter(ProfessionalFinancialSettings.professional_id == professional_id)
-            .first()
-        )
-        previous_hours = (
-            settings.cancellation_notice_hours if settings else 24
-        )
-        if body.cancellation_notice_hours != previous_hours:
-            if settings is None:
-                settings = ProfessionalFinancialSettings(
-                    professional_id=professional_id,
-                )
-                db.add(settings)
-            settings.cancellation_notice_hours = body.cancellation_notice_hours
-            changes["cancellation_notice_hours"] = {
-                "before": previous_hours,
-                "after": body.cancellation_notice_hours,
             }
 
     if body.rates is not None:
@@ -799,72 +718,6 @@ def replace_place_rates(
     db.commit()
     configuration = _configuration_detail(db, professional_id)
     return next(matrix for matrix in configuration.places if matrix.place_id == place_id)
-
-
-@router.put(
-    "/work-journey",
-    response_model=list[WorkJourneyIntervalDetail],
-)
-def replace_work_journey(
-    body: WorkJourneyReplace,
-    request: Request,
-    db: Session = Depends(get_db),
-    professional_id: uuid.UUID = Depends(require_commercial_financials),
-    user: dict = Depends(require_authenticated),
-):
-    _assert_work_journey_is_valid(body)
-    previous_rows = (
-        db.query(WorkJourneyInterval)
-        .filter(WorkJourneyInterval.professional_id == professional_id)
-        .all()
-    )
-    previous = [
-        {
-            "day_of_week": interval.day_of_week,
-            "interval_type": interval.interval_type,
-            "start_time": interval.start_time.isoformat(),
-            "end_time": interval.end_time.isoformat(),
-        }
-        for interval in previous_rows
-    ]
-    db.query(WorkJourneyInterval).filter(
-        WorkJourneyInterval.professional_id == professional_id
-    ).delete(synchronize_session=False)
-    db.add_all(
-        [
-            WorkJourneyInterval(
-                professional_id=professional_id,
-                day_of_week=interval.day_of_week,
-                interval_type=interval.interval_type,
-                start_time=interval.start_time,
-                end_time=interval.end_time,
-            )
-            for interval in body.intervals
-        ]
-    )
-
-    source_ip, user_agent = _request_origin(request)
-    add_financial_audit(
-        db,
-        professional_id=professional_id,
-        actor_user_id=uuid.UUID(user["user_id"]),
-        entity_type="work_journey",
-        entity_id=professional_id,
-        action="replace",
-        changes={
-            "intervals": {
-                "before": previous,
-                "after": [
-                    interval.model_dump(mode="json")
-                    for interval in body.intervals
-                ],
-            }
-        },
-        source_ip=source_ip,
-        user_agent=user_agent,
-    )
-    db.commit()
-    return _configuration_detail(db, professional_id).work_journey
 
 
 @router.get("/customers/{contact_id}", response_model=CustomerFinancialDetail)

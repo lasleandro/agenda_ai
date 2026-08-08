@@ -142,6 +142,70 @@ notice**, via either of two distinct actions:
   splitting the class duration by time category (regular/prime).
 - Prime overrides are tracked per line for audit.
 
+### 3.5 Financial Capacity vs. Work Journey
+
+The Financeiro dashboard (`GET /api/financial/dashboard`) reports capacity
+at two different granularities, deliberately built from two different
+sources:
+
+- **Top-line figures** (`available_minutes`, `booked_minutes`,
+  `unused_minutes`, `occupancy_pct`) are computed from the instructor's
+  raw **Work Journey** (`WorkJourneyInterval`, work minus break intervals —
+  see 1.2 above) — professional-wide, with no place attribution.
+  `booked_minutes` here is the raw sum of every booked occurrence's
+  duration, uncapped to any place-specific window.
+- **Breakdowns** (`by_place`, `by_weekday`, `by_part_of_day`,
+  `by_time_category`, and the daily `time_series`) require an explicit
+  `RecurringSlot` covering that place/weekday, because `WorkJourneyInterval`
+  has no `place_id` — a place with zero `RecurringSlot` rows on a given
+  weekday contributes zero capacity to *those breakdowns* for that
+  weekday, no matter how broad the Work Journey is. Same caveat applies to
+  the make-up slot recommender (`docs/capacity_and_recommendations.md`).
+
+**Why not require RecurringSlot for the top line too:** an instructor who
+hasn't (or hasn't fully) declared per-place availability windows would
+otherwise see a near-zero denominator and a misleading ~100% occupancy on
+real bookings that simply fall outside those narrow windows — this was
+observed on a live tenant (Joao) whose top-line occupancy showed 100% from
+3h of RecurringSlot-covered capacity while 90% of his actual bookings
+weren't being counted at all. The by-place breakdown still needs
+RecurringSlot for place attribution and is correctly sparse until the
+instructor configures it — the fix only changes what the *aggregate*
+number is measured against.
+
+Every booked occurrence must have a `place_id` to be counted at all
+(`load_booking_occurrences` in `app/services/financial_capacity.py`) — the
+dashboard/agent appointment creation paths always require a place, so this
+should never happen in real usage, but if it ever does the occurrence is
+silently excluded from both capacity and revenue.
+
+**Place filter narrows both sides together:** when `GET
+/api/financial/dashboard` is called with `place_id` (viewing one or more
+specific places instead of "all places"), the top-line figures fall back
+to the same `RecurringSlot`-scoped accounting as the breakdowns, instead
+of the place-agnostic Work Journey total — otherwise a place-filtered
+`booked_minutes` would be compared against a tenant-wide
+`available_minutes`, understating occupancy. Only the unfiltered "all
+places" view uses the place-agnostic top line.
+
+**"Potencial com 100% da capacidade" and the Simulador scenario**
+(`_capacity_presets`, `evaluate_financial_scenario`'s `scenario` metric)
+also fold in the Work Journey time that falls outside any place's
+`RecurringSlot` coverage (`build_uncovered_capacity_minutes`), priced
+against the **global rate only** (`FinancialRate`, no place to resolve a
+`PlaceFinancialRate` override against) — a tenant with no global rate
+configured gets 0 revenue credit for that uncovered time, same
+"unpriced contributes 0, not an error" convention used everywhere else in
+this dashboard. This only applies to the unfiltered "all places" view,
+for the same reason the top-line figures don't place-filter it: time not
+covered by the filtered place(s) may be covered by a place the user
+filtered out, so crediting it to the filtered place(s) would overstate
+their potential. `_tradeoffs` (the group-vs-individual break-even
+comparison) is intentionally **not** extended this way — it answers "of
+my *configured* places/rates, what's the average rate," a narrower
+question where diluting it with the global-rate-only uncovered time would
+be misleading.
+
 ---
 
 ## 4. Multi-Tenancy Rules

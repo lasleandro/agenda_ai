@@ -42,9 +42,6 @@ export function GlobalRatesSection({
   const [defaultStatus, setDefaultStatus] = useState(
     settings.default_commercial_status
   );
-  const [cancellationNoticeHours, setCancellationNoticeHours] = useState(
-    settings.cancellation_notice_hours ?? 24
-  );
   const [rates, setRates] = useState<Record<number, string>>(() =>
     initialRates(settings)
   );
@@ -74,13 +71,11 @@ export function GlobalRatesSection({
       onSaved(
         await updateFinancialSettings({
           default_commercial_status: defaultStatus,
-          cancellation_notice_hours: cancellationNoticeHours,
           rates: parsedRates,
         })
       );
     } catch (caught) {
       setDefaultStatus(settings.default_commercial_status);
-      setCancellationNoticeHours(settings.cancellation_notice_hours ?? 24);
       setRates(initialRates(settings));
       setNotice({
         text: caught instanceof Error ? caught.message : "Falha ao salvar configuração",
@@ -115,26 +110,6 @@ export function GlobalRatesSection({
             <option value="waiting">Em espera</option>
             <option value="paused">Pausado</option>
           </select>
-        </div>
-
-        <div className="max-w-xs space-y-1.5">
-          <Label htmlFor="financial-notice-hours">
-            Aviso prévio para reposição
-          </Label>
-          <Input
-            id="financial-notice-hours"
-            type="number"
-            min={0}
-            max={168}
-            value={cancellationNoticeHours}
-            onChange={(event) =>
-              setCancellationNoticeHours(Number(event.target.value))
-            }
-          />
-          <p className="text-xs text-muted-foreground">
-            Cancelamentos dentro deste prazo (em horas) não geram crédito de
-            reposição.
-          </p>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

@@ -6,6 +6,7 @@ import type {
   AssistantMessage,
   AssistantSettingsState,
   CalendarResponse,
+  CancellationNoticeHoursDetail,
   CandidateDetail,
   ContactDetailData,
   CommercialOverrideInput,
@@ -292,7 +293,6 @@ export const fetchFinancialSettings = () =>
   apiRequest<FinancialSettingsDetail>("/api/financial/settings");
 export const updateFinancialSettings = (body: {
   default_commercial_status?: string;
-  cancellation_notice_hours?: number;
   rates?: { participant_count: number; hourly_rate_cents: number | null }[];
 }) =>
   apiRequest<FinancialSettingsDetail>("/api/financial/settings", {
@@ -311,11 +311,26 @@ export const replacePlaceRates = (placeId: string, rates: PlaceRateInput[]) =>
     method: "PUT",
     body: { rates },
   });
+
+export const fetchWorkJourney = () =>
+  apiRequest<WorkJourneyIntervalDetail[]>("/api/rules/work-journey");
 export const replaceWorkJourney = (intervals: WorkJourneyIntervalInput[]) =>
-  apiRequest<WorkJourneyIntervalDetail[]>("/api/financial/work-journey", {
+  apiRequest<WorkJourneyIntervalDetail[]>("/api/rules/work-journey", {
     method: "PUT",
     body: { intervals },
   });
+export const fetchCancellationNoticeHours = () =>
+  apiRequest<CancellationNoticeHoursDetail>(
+    "/api/rules/cancellation-notice-hours"
+  );
+export const updateCancellationNoticeHours = (hours: number) =>
+  apiRequest<CancellationNoticeHoursDetail>(
+    "/api/rules/cancellation-notice-hours",
+    {
+      method: "PATCH",
+      body: { cancellation_notice_hours: hours },
+    }
+  );
 
 export const fetchFinancialDashboard = (
   dateFrom: string,

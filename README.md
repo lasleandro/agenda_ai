@@ -18,6 +18,7 @@ A passive WhatsApp Business copilot that converts conversations between independ
 - [Agenda (Calendar)](docs/pages/agenda.md) — primary scheduling interface with FullCalendar week view, appointment creation, group management.
 - [Clientes (Contacts)](docs/pages/clientes.md) — customer list with search/groups, and detail page with level, address, courtesy appointments, fixed slots.
 - [Financeiro (Financial)](docs/pages/financeiro.md) — financial dashboard with revenue projections, rate configuration, what-if scenarios, and revenue occurrence confirmation.
+- [Minhas Regras (Operational Rules)](docs/pages/minhas_regras.md) — work journey and make-up cancellation notice window, ungated by the commercial_financials feature flag.
 - [Chat / AI Assistant](docs/pages/chat.md) — floating chat panel accessible from every page, with tool call transparency and action confirmation.
 
 ### Roadmaps & Guides
@@ -28,6 +29,7 @@ A passive WhatsApp Business copilot that converts conversations between independ
 - [Operational ontology & AI agent roadmap](docs/ROADMAPS/operational_ontology_and_agent_roadmap_v0.2_2026-08-05.md) — canonical plan for explicit schedule semantics, occurrence history, availability, and safe instructor-operated tools across the platform and WhatsApp.
 - [Commercial & financial module roadmap](docs/ROADMAPS/commercial_financial_module_roadmap_v0.2_2026-08-05.md) — one-customer groups, inherited pricing, tenant feature controls, financial capacity scenarios, and the path to auditable revenue.
 - [Make-up class credits & courtesy classes roadmap](docs/ROADMAPS/makeup_class_credits_roadmap_v0.1_2026-08-07.md) — completed: credit ledger, recommender, redemption through chat, courtesy classification, and contact detail surface.
+- [Mobile readiness & PWA "Add to Home Screen" roadmap](docs/ROADMAPS/mobile_pwa_readiness_roadmap_v0.1_2026-08-08.md) — draft: mapped touch points for mobile-responsive screens and installable-app (manifest, icons, home-screen launch) support.
 - [Local dev webhook tunnel](docs/local_dev_webhook_tunnel.md) — current YCloud webhook tunnel URL and how to restart it during Phase 1 development.
 
 ## Running the platform

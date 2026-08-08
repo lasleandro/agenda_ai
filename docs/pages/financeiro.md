@@ -27,7 +27,6 @@ this route redirects to the home page.
 | `GlobalRatesSection` | `components/financial/global-rates-section.tsx` | Edit per-participant-count hourly rates |
 | `PrimeTimeSection` | `components/financial/prime-time-section.tsx` | Configure prime-time windows |
 | `PlaceRatesSection` | `components/financial/place-rates-section.tsx` | Place-specific rate matrices |
-| `WorkJourneySection` | `components/financial/work-journey-section.tsx` | Define work and break intervals |
 
 ---
 
@@ -79,11 +78,10 @@ Four sub-sections stacked vertically:
 - Matrix input: rows = participant counts, columns = time categories
 - Endpoint: `PUT /api/financial/places/{id}/rates`
 
-**4. Work Journey**
-- For each day of week (0-6), define work and break intervals
-- Work intervals: when the instructor is available for classes
-- Break intervals: mid-day gaps where no classes are scheduled
-- Endpoint: `PUT /api/financial/work-journey`
+Work journey (daily schedule) and the make-up cancellation notice window
+moved to `docs/pages/minhas_regras.md` — they aren't feature-gated, since
+scheduling and make-up credit eligibility enforce them for every tenant
+regardless of `commercial_financials`.
 
 ---
 

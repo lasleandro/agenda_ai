@@ -15,7 +15,6 @@ import { GlobalRatesSection } from "@/components/financial/global-rates-section"
 import { PlaceRatesSection } from "@/components/financial/place-rates-section";
 import { PrimeTimeSection } from "@/components/financial/prime-time-section";
 import { RevenueSection } from "@/components/financial/revenue-section";
-import { WorkJourneySection } from "@/components/financial/work-journey-section";
 import {
   fetchFinancialDashboard,
   fetchFinancialConfiguration,
@@ -256,16 +255,6 @@ export default function FinanceiroPage() {
             <PlaceRatesSection
               places={configuration.places}
               onSaved={updatePlace}
-            />
-            <WorkJourneySection
-              intervals={configuration.work_journey}
-              onSaved={(intervals) =>
-                setConfiguration((current) =>
-                  current
-                    ? { ...current, work_journey: intervals }
-                    : current
-                )
-              }
             />
           </>
         )}

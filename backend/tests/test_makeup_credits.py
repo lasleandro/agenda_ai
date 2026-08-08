@@ -36,7 +36,9 @@ from app.models import (
     ScheduleOccurrenceOverride,
     TenantFeature,
     User,
+    WorkJourneyInterval,
 )
+from app.services import makeup_recommender
 from app.services.makeup_credits import has_sufficient_cancellation_notice
 from app.services.scheduling import TIMEZONE, list_schedule_occurrences
 
@@ -186,6 +188,9 @@ def _cleanup(db, *, professionals: list[Professional], users: list[User]) -> Non
         ).delete(synchronize_session=False)
         db.query(RecurringSlot).filter(
             RecurringSlot.professional_id.in_(professional_ids)
+        ).delete(synchronize_session=False)
+        db.query(WorkJourneyInterval).filter(
+            WorkJourneyInterval.professional_id.in_(professional_ids)
         ).delete(synchronize_session=False)
         db.query(Contact).filter(Contact.professional_id.in_(professional_ids)).delete(
             synchronize_session=False
@@ -482,6 +487,131 @@ def test_makeup_credit_tools_are_tenant_scoped() -> None:
         assert "error" in result
     finally:
         _cleanup(db, professionals=[professional_a, professional_b], users=[user_a, user_b])
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# recommend_makeup_slots — level-match bonus
+# ---------------------------------------------------------------------------
+
+def test_recommend_makeup_slots_bonuses_level_matching_candidates() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        today = date.today()
+        # A weekday a few days out — inside the recommender's default
+        # 14-day lookahead, never "today" (candidates start tomorrow).
+        target_weekday = (today.weekday() + 3) % 7
+
+        db.add(
+            WorkJourneyInterval(
+                professional_id=professional.id,
+                day_of_week=target_weekday,
+                interval_type="work",
+                start_time=time(8, 0),
+                end_time=time(18, 0),
+            )
+        )
+
+        ana = _make_contact(db, professional.id, "Ana")
+        # Ana's own group determines her preferred_level="advanced" and
+        # her usual 60-minute duration.
+        ana_group = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=target_weekday,
+            start_time=time(8, 0),
+            end_time=time(9, 0),
+            class_type="group",
+            slot_kind="class",
+            level="advanced",
+            max_participants=4,
+            recurrence_type="weekly",
+            created_at=datetime.combine(today - timedelta(days=60), time(8), tzinfo=TIMEZONE),
+        )
+        # An advanced-level slot later the same day — capacity + a
+        # level match for Ana.
+        advanced_slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=target_weekday,
+            start_time=time(10, 0),
+            end_time=time(11, 0),
+            class_type="group",
+            slot_kind="class",
+            level="advanced",
+            max_participants=4,
+            recurrence_type="weekly",
+            created_at=datetime.combine(today - timedelta(days=60), time(8), tzinfo=TIMEZONE),
+        )
+        # A beginner-level slot — capacity but no level match for Ana.
+        beginner_slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=target_weekday,
+            start_time=time(14, 0),
+            end_time=time(15, 0),
+            class_type="group",
+            slot_kind="class",
+            level="beginner",
+            max_participants=4,
+            recurrence_type="weekly",
+            created_at=datetime.combine(today - timedelta(days=60), time(8), tzinfo=TIMEZONE),
+        )
+        db.add_all([ana_group, advanced_slot, beginner_slot])
+        db.commit()
+        db.add(RecurringSlotParticipant(recurring_slot_id=ana_group.id, contact_id=ana.id))
+        db.commit()
+
+        # One available make-up credit for Ana (created directly — the
+        # eligibility flow itself is covered by other tests in this file).
+        origin_event = OperationalEvent(
+            professional_id=professional.id,
+            event_type="makeup_credit.granted",
+            occurred_at=datetime.now(TIMEZONE),
+            actor_type="user",
+            actor_id=user.id,
+            source_channel="web",
+            entity_type="makeup_class_credit",
+            entity_id=uuid.uuid4(),
+            correlation_id=uuid.uuid4(),
+            payload={},
+        )
+        db.add(origin_event)
+        db.flush()
+        db.add(
+            MakeupClassCredit(
+                professional_id=professional.id,
+                contact_id=ana.id,
+                origin_event_id=origin_event.id,
+                origin_recurring_slot_id=ana_group.id,
+                origin_occurrence_date=today,
+                status="available",
+            )
+        )
+        db.commit()
+
+        recommendations = makeup_recommender.recommend_makeup_slots(
+            db, professional.id, ana.id
+        )
+        assert recommendations, "expected at least one recommended slot"
+
+        by_start_time = {r["start_time"]: r for r in recommendations}
+        assert "10:00" in by_start_time, "advanced-level slot should be a candidate"
+        assert by_start_time["10:00"]["level_match"] is True
+
+        if "14:00" in by_start_time:
+            assert by_start_time["14:00"]["level_match"] is False
+            # Same duration/place/pricing — the only difference is the
+            # level match, so the matching slot must score at least as
+            # high, and strictly higher whenever flow/cost are tied.
+            assert (
+                by_start_time["10:00"]["combined_score"]
+                >= by_start_time["14:00"]["combined_score"]
+            )
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
         db.close()
 
 

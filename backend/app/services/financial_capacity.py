@@ -155,14 +155,14 @@ def load_pricing_rules(
     return PricingRules(global_rates=global_rates, place_rates=place_rates)
 
 
-def build_capacity_segments(
+def _load_net_work_ranges_by_day(
     db: Session,
     professional_id: uuid.UUID,
-    date_from: date,
-    date_to: date,
-    places: list[Place],
-    prime_ranges: dict[int, list[tuple[int, int]]],
-) -> list[CapacitySegment]:
+) -> dict[int, list[tuple[int, int]]]:
+    """Work journey intervals minus break intervals, per weekday. Place-
+    agnostic: WorkJourneyInterval has no place_id, so this is the
+    instructor's raw declared availability before any per-place
+    RecurringSlot attribution."""
     journey_rows = (
         db.query(WorkJourneyInterval)
         .filter(WorkJourneyInterval.professional_id == professional_id)
@@ -175,6 +175,95 @@ def build_capacity_segments(
         target[row.day_of_week].append(
             (time_to_minutes(row.start_time), time_to_minutes(row.end_time))
         )
+    return {
+        day: subtract_ranges(sorted(work_by_day[day]), sorted(breaks_by_day[day]))
+        for day in range(7)
+    }
+
+
+def total_work_journey_minutes(
+    db: Session,
+    professional_id: uuid.UUID,
+    date_from: date,
+    date_to: date,
+) -> int:
+    """Aggregate net work-journey minutes (work minus break) across the
+    date range, independent of place attribution. Used for the
+    dashboard's top-line available/booked/occupancy figures so they
+    aren't zeroed out for tenants who haven't declared per-place
+    RecurringSlot availability windows — see
+    docs/business_rules.md 'Financial capacity vs. work journey'."""
+    net_by_day = _load_net_work_ranges_by_day(db, professional_id)
+    return sum(
+        end - start
+        for local_date in iter_dates(date_from, date_to)
+        for start, end in net_by_day[local_date.weekday()]
+    )
+
+
+def build_uncovered_capacity_minutes(
+    db: Session,
+    professional_id: uuid.UUID,
+    date_from: date,
+    date_to: date,
+    places: list[Place],
+    prime_ranges: dict[int, list[tuple[int, int]]],
+) -> dict[str, int]:
+    """Work-journey minutes not covered by any place's RecurringSlot
+    availability, bucketed by time_category (regular/prime) only — no
+    place or part-of-day breakdown, since there's no place to attribute
+    this time to. Used to price the "potential at 100% capacity" presets
+    against the global rate for the portion of the work journey the
+    instructor hasn't (yet) opened at a specific place — see
+    docs/business_rules.md 'Financial capacity vs. work journey'."""
+    net_by_day = _load_net_work_ranges_by_day(db, professional_id)
+    availability = _load_place_availability_ranges(
+        db,
+        professional_id,
+        date_from,
+        date_to,
+        {place.id for place in places},
+    )
+    totals = {"regular": 0, "prime": 0}
+    for local_date in iter_dates(date_from, date_to):
+        weekday = local_date.weekday()
+        covered = merge_ranges(
+            [
+                place_range
+                for place in places
+                for place_range in availability.get((local_date, place.id), [])
+            ]
+        )
+        uncovered = subtract_ranges(net_by_day[weekday], covered)
+        prime = prime_ranges[weekday]
+        boundaries = {
+            boundary for start, end in prime for boundary in (start, end)
+        }
+        for start_minute, end_minute in uncovered:
+            for segment_start, segment_end in split_range(
+                start_minute,
+                end_minute,
+                boundaries,
+            ):
+                midpoint = (segment_start + segment_end) / 2
+                category = (
+                    "prime"
+                    if any(start <= midpoint < end for start, end in prime)
+                    else "regular"
+                )
+                totals[category] += segment_end - segment_start
+    return totals
+
+
+def build_capacity_segments(
+    db: Session,
+    professional_id: uuid.UUID,
+    date_from: date,
+    date_to: date,
+    places: list[Place],
+    prime_ranges: dict[int, list[tuple[int, int]]],
+) -> list[CapacitySegment]:
+    net_by_day = _load_net_work_ranges_by_day(db, professional_id)
 
     availability = _load_place_availability_ranges(
         db,
@@ -191,10 +280,7 @@ def build_capacity_segments(
     }
     for local_date in iter_dates(date_from, date_to):
         weekday = local_date.weekday()
-        net_ranges = subtract_ranges(
-            sorted(work_by_day[weekday]),
-            sorted(breaks_by_day[weekday]),
-        )
+        net_ranges = net_by_day[weekday]
         prime = prime_ranges[weekday]
         boundaries = day_boundaries | {
             boundary for start, end in prime for boundary in (start, end)

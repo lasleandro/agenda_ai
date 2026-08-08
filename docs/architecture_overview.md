@@ -121,6 +121,7 @@ agenda_ai/
         financial.py     # Financial configuration
         financial_analytics.py  # Analytics endpoints
         revenue.py       # Revenue confirmation flow
+        rules.py         # Operational rules — work journey, make-up cancellation notice window (ungated)
         whatsapp.py      # Inbound webhook handler
         dev_mock.py      # Dev-only mock WhatsApp conversation
         dependencies.py  # Shared auth depends
@@ -267,10 +268,10 @@ appointment cancellations never earn a credit. `expires_at` and the
 credits don't expire and never auto-forfeit in this pass; they're simply
 not granted once `MAX_OUTSTANDING_CREDITS` (10) is reached.
 `makeup_recommender.py` is a separate module that ranks candidate
-make-up slots by cost and historical occupancy — see
-`docs/capacity_and_recommendations.md` for the exact scoring formula
-(percentile ranks, weights, and the two flat bonuses), verified against
-the shipped code.
+make-up slots by cost, historical occupancy, place preference, and level
+match — see `docs/capacity_and_recommendations.md` for the exact scoring
+formula (percentile ranks, weights, and the three flat bonuses),
+verified against the shipped code.
 
 ---
 

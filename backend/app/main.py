@@ -21,6 +21,7 @@ from app.api.financial_analytics import router as financial_analytics_router
 from app.api.places import router as places_router
 from app.api.recurring_slots import router as recurring_slots_router
 from app.api.revenue import router as revenue_router
+from app.api.rules import router as rules_router
 from app.api.whatsapp import router as whatsapp_router
 
 app = FastAPI(
@@ -54,6 +55,7 @@ app.include_router(financial_analytics_router)
 app.include_router(places_router)
 app.include_router(recurring_slots_router)
 app.include_router(revenue_router)
+app.include_router(rules_router)
 app.include_router(whatsapp_router)
 
 if os.getenv("DEBUG", "").lower() == "true":

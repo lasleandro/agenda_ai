@@ -26,6 +26,7 @@ from app.database import SessionLocal, engine
 from app.models import (  # noqa: E402
     Appointment,
     Contact,
+    Place,
     Professional,
 )
 
@@ -122,6 +123,20 @@ def seed():
             db.commit()
             return
 
+        places = (
+            db.query(Place)
+            .filter_by(professional_id=PROFESSIONAL_ID)
+            .order_by(Place.name)
+            .all()
+        )
+        if not places:
+            print(
+                "  No places found for this professional — appointments will be "
+                "seeded without a place_id, which the Financeiro dashboard "
+                "excludes entirely from capacity and revenue. Create at least "
+                "one place first."
+            )
+
         appointments = [
             # Monday
             ("mariana", 0, 8, "confirmed"),
@@ -143,12 +158,13 @@ def seed():
             ("thiago", 5, 9, "confirmed"),
         ]
 
-        for contact_key, day_offset, hour, status in appointments:
+        for index, (contact_key, day_offset, hour, status) in enumerate(appointments):
             start = _make_dt(day_offset, hour)
             end = _end_dt(start)
             appt = Appointment(
                 professional_id=PROFESSIONAL_ID,
                 contact_id=contact_ids[contact_key],
+                place_id=places[index % len(places)].id if places else None,
                 service="tennis_lesson",
                 start_at=start,
                 end_at=end,
