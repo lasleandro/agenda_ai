@@ -93,6 +93,11 @@ body {
   opacity: 0.5;
 }
 
+.fc .agenda-waitlist-entry {
+  border-style: dashed !important;
+  border-width: 2px !important;
+}
+
 .fc .agenda-place-slot-label {
   display: block;
   overflow: hidden;

@@ -136,7 +136,7 @@ class PlaceRatesReplace(BaseModel):
 
 class PlaceRateDetail(PlaceRateInput):
     effective_hourly_rate_cents: int | None
-    source: Literal["place", "tenant", "unset"]
+    source: Literal["place", "generic", "tenant", "unset"]
 
 
 class PlaceRateMatrixDetail(BaseModel):
@@ -145,13 +145,18 @@ class PlaceRateMatrixDetail(BaseModel):
     rates: list[PlaceRateDetail]
 
 
+class GenericPlaceRateMatrixDetail(BaseModel):
+    rates: list[PlaceRateDetail]
+
+
 class FinancialConfigurationDetail(BaseModel):
     prime_time_windows: list[PrimeTimeWindowDetail]
+    generic_place: GenericPlaceRateMatrixDetail
     places: list[PlaceRateMatrixDetail]
 
 
 class PricingQuoteInput(BaseModel):
-    place_id: uuid.UUID
+    place_id: uuid.UUID | None = None
     day_of_week: int = Field(ge=0, le=6)
     start_time: time
     end_time: time
@@ -170,7 +175,7 @@ class PricingQuoteSegment(BaseModel):
     duration_minutes: int
     time_category: Literal["regular", "prime"]
     hourly_rate_cents: int | None
-    source: Literal["place", "tenant", "unset"]
+    source: Literal["place", "generic", "tenant", "unset"]
     segment_total_cents: int | None
 
 
@@ -253,6 +258,8 @@ class FinancialScenarioInput(BaseModel):
         "all_individual",
         "observed_demand",
         "full_groups",
+        "individual_regular_groups_prime",
+        "groups_regular_individual_prime",
         "custom",
     ] = "observed_demand"
     occupancy_pct: float = Field(default=100, ge=0, le=100)
@@ -310,6 +317,27 @@ class FinancialTradeoffDetail(BaseModel):
     break_even_occupancy_pct: float | None
 
 
+class FinancialScenarioScheduleEvent(BaseModel):
+    """A read-only class block generated for a financial scenario."""
+
+    id: str
+    local_date: date
+    place_name: str
+    start_time: time
+    end_time: time
+    participant_count: int
+    time_category: Literal["regular", "prime"]
+    hourly_rate_cents: int | None = None
+    total_revenue_cents: int | None = None
+
+
+class FinancialScenarioCustomerEstimate(BaseModel):
+    calendar_weeks: int
+    weekly_participant_hours: float
+    minimum_customers: int
+    maximum_customers: int
+
+
 class FinancialScenarioResult(BaseModel):
     assumptions: FinancialAnalyticsAssumptions
     mode: str
@@ -319,6 +347,10 @@ class FinancialScenarioResult(BaseModel):
     incremental_revenue_cents: int
     incremental_participant_hours: float
     tradeoffs: list[FinancialTradeoffDetail]
+    simulated_schedule: list[FinancialScenarioScheduleEvent] = Field(
+        default_factory=list
+    )
+    customer_estimate: FinancialScenarioCustomerEstimate | None = None
 
 
 class FinancialScenarioDetail(BaseModel):
@@ -335,7 +367,14 @@ class FinancialScenarioList(BaseModel):
 
 AttendanceStatus = Literal["attended", "no_show", "cancelled"]
 RevenueSourceType = Literal["appointment", "recurring_slot"]
-RevenueRateSource = Literal["customer", "group", "place", "tenant", "unset"]
+RevenueRateSource = Literal[
+    "customer",
+    "group",
+    "place",
+    "generic",
+    "tenant",
+    "unset",
+]
 
 
 class RevenueCandidateParticipant(BaseModel):
@@ -356,6 +395,12 @@ class RevenueCandidateDetail(BaseModel):
     recognized_occurrence_id: uuid.UUID | None
     can_confirm: bool
     billing_type: str | None = None
+
+
+class RevenuePreviewDetail(BaseModel):
+    estimated_revenue_cents: int | None
+    participant_count: int
+    capacity_revenue_cents: int | None = None
 
 
 class RevenueCandidateList(BaseModel):
@@ -476,6 +521,13 @@ class RevenueSummaryDetail(BaseModel):
     subtotal_cents: int
     adjustment_cents: int
     total_cents: int
+    # Confirmed InstructorEvent income in the period (instructor events
+    # roadmap v0.1, Phase 2) — a flat fee with no participants, surfaced
+    # alongside (not merged into) the participant-priced total_cents above,
+    # since by_place/by_customer/by_group are specifically about billing
+    # individual clients and don't apply to a one-off event.
+    event_income_cents: int = 0
+    event_count: int = 0
     by_place: list[RevenueSummaryBreakdown]
     by_customer: list[RevenueSummaryBreakdown]
     by_group: list[RevenueSummaryBreakdown]

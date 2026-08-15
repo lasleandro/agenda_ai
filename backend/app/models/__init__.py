@@ -5,6 +5,7 @@ from app.models.contact import Contact  # noqa: F401
 from app.models.conversation import Conversation  # noqa: F401
 from app.models.message import Message  # noqa: F401
 from app.models.appointment_candidate import AppointmentCandidate  # noqa: F401
+from app.models.passive_escalation import PassiveEscalation  # noqa: F401
 from app.models.appointment import Appointment  # noqa: F401
 from app.models.appointment_participant import AppointmentParticipant  # noqa: F401
 from app.models.appointment_evidence import AppointmentEvidence  # noqa: F401
@@ -32,3 +33,6 @@ from app.models.operator_action_candidate import OperatorActionCandidate  # noqa
 from app.models.operational_event import OperationalEvent  # noqa: F401
 from app.models.assistant_settings import AssistantSettings  # noqa: F401
 from app.models.makeup_class_credit import MakeupClassCredit  # noqa: F401
+from app.models.agent_channel_message import AgentChannelMessage  # noqa: F401
+from app.models.waitlist_entry import WaitlistEntry  # noqa: F401
+from app.models.instructor_event import InstructorEvent  # noqa: F401

@@ -24,7 +24,7 @@ export function ScenarioResults({
       <div className="grid items-stretch gap-3 md:grid-cols-[1fr_auto_1fr]">
         <Card>
           <CardHeader>
-            <CardDescription>Agenda atual</CardDescription>
+            <CardDescription>Aulas agendadas atuais</CardDescription>
             <CardTitle>
               {formatBrlFromCents(result.baseline.projected_revenue_cents)}
             </CardTitle>
@@ -32,6 +32,7 @@ export function ScenarioResults({
           <CardContent className="space-y-1 text-xs text-muted-foreground">
             <p>{result.baseline.occupancy_pct.toFixed(1)}% de ocupação</p>
             <p>{result.baseline.participant_hours.toFixed(1)} horas-aluno</p>
+            <p>Eventos avulsos não entram nesta comparação.</p>
           </CardContent>
         </Card>
         <ArrowRight className="hidden size-5 self-center text-muted-foreground md:block" />
@@ -57,6 +58,20 @@ export function ScenarioResults({
           </CardContent>
         </Card>
       </div>
+
+      {result.customer_estimate && (
+        <Card>
+          <CardHeader>
+            <CardDescription>Base de clientes estimada</CardDescription>
+            <CardTitle>
+              {result.customer_estimate.minimum_customers}–{result.customer_estimate.maximum_customers} clientes
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground">
+            {result.customer_estimate.weekly_participant_hours.toFixed(1)} horas-aluno por semana, considerando de 1 a 3 horas por cliente/semana em {result.customer_estimate.calendar_weeks} semana(s).
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

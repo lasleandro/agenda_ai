@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,6 +13,11 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { updateFinancialSettings } from "@/lib/api";
 import {
   centsToRateInput,
@@ -89,7 +95,21 @@ export function GlobalRatesSection({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Configuração global</CardTitle>
+        <CardTitle className="flex items-center gap-1.5">
+          Configuração global
+          <Tooltip>
+            <TooltipTrigger
+              className="text-muted-foreground"
+              aria-label="Como o valor por participante é cobrado"
+            >
+              <Info className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent>
+              O valor informado é por participante. Uma aula de 2 pessoas a
+              R$ 180/h cobra R$ 180 de cada uma — R$ 360/h no total da aula.
+            </TooltipContent>
+          </Tooltip>
+        </CardTitle>
         <CardDescription>
           Valores por participante. O total estimado da aula considera a quantidade
           de pessoas.

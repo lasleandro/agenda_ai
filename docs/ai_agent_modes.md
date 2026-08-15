@@ -13,14 +13,49 @@ Instructor → talks TO the AI assistant → Assistant proposes, instructor conf
 
 ### Overview
 
-Today the instructor interacts directly with the AI assistant via the
-**web chat UI only** (the floating panel — see `docs/pages/chat.md`).
-WhatsApp as a channel for the *active* agent is explicitly deferred — it
-needs its own dedicated assistant phone number, a phone→instructor
-identity resolver, server-side conversation loading, and a WhatsApp-native
-confirm/reject mechanism, none of which exist yet. Don't confuse this
-with the *passive observer* (Mode 2 below), which does run over WhatsApp
-today but never talks back or proposes anything.
+The instructor interacts directly with the AI assistant via the
+**web chat UI** (the floating panel — see `docs/pages/chat.md`) and via a
+**dedicated WhatsApp agent number** (`Professional.agent_phone`, distinct
+from the customer-facing `assistant_phone` — see `app/chat/agent_channel.py`).
+Both channels now share the same tool-calling orchestrator
+(`app/agent/orchestrator.py`) and the same propose → confirm → execute
+safety model — full tool parity, not a restricted subset.
+
+WhatsApp-specific behavior:
+- Four deterministic commands (`hoje`, `amanha`, `esta semana`, `proxima
+  aula`) are answered directly against `Appointment`, no LLM call — kept
+  as a fast path since they're the most common asks.
+- Anything else is sent to `run_agent_turn(..., channel="whatsapp")`,
+  same as the web chat, tagging any resulting `OperatorActionCandidate`
+  with `channel="whatsapp"` for correct audit attribution
+  (`app/services/operational_events.py`).
+- WhatsApp has no buttons, so confirmation is reply-keyword based: a
+  proposal's preview text is appended with "responda *sim* para confirmar
+  ou *nao* para cancelar"; a following `sim`/`confirmar`/etc. or
+  `nao`/`cancelar`/etc. reply resolves the professional's most recent
+  `proposed` candidate on the `whatsapp` channel.
+- Conversation history persists across separate WhatsApp messages via
+  `AgentChannelMessage`, windowed by message count the same way as the web
+  chat (`AssistantSettings.memory_window_messages`) and additionally by age
+  (`HISTORY_MAX_AGE`, 12h, since this history — unlike the web chat's — is
+  persisted server-side and would otherwise replay stale relative dates)
+  — follow-ups and corrections ("não, era terça") have the prior turn as
+  context. Deterministic Phase 0 commands are not recorded into this
+  history.
+- The actor for WhatsApp-originated mutations is resolved as the
+  `professional`-role `User` row owning the tenant (no login session
+  exists over WhatsApp) — see `agent_channel._resolve_actor_user`.
+- The agent number is private to the instructor: an inbound message is
+  only processed if its sender (`from_phone`) matches
+  `Professional.assistant_phone` — the instructor's own known number
+  (the same phone that runs the customer-facing side). Messages from any
+  other sender are silently dropped (no reply), so an unauthorized sender
+  can't even confirm the number is live. Fails closed if
+  `assistant_phone` isn't configured.
+
+Don't confuse either of these with the *passive observer* (Mode 2 below),
+which runs over the customer-facing number and never talks back or
+proposes anything.
 
 The assistant has full access to the instructor's ontology (contacts,
 places, schedule, financial configuration) and can both answer questions

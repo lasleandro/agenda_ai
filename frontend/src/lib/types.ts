@@ -49,17 +49,57 @@ export interface AppointmentDetail {
   updated_at: string;
 }
 
+// Instructor Events (instructor events roadmap v0.1) — non-class calendar
+// occupants: refereeing a tournament, running a workshop or clinic. No
+// client involved, optional flat fee. Named to avoid confusion with
+// audit-log "events" elsewhere in the platform.
+export const EVENT_TYPES = ["tournament_referee", "workshop", "clinic", "other"] as const;
+export type EventType = (typeof EVENT_TYPES)[number];
+
+/** Mirror of the FastAPI InstructorEventDetail schema. */
+export interface InstructorEvent {
+  id: string;
+  event_type: EventType;
+  title: string | null;
+  place_id: string | null;
+  place_name: string | null;
+  start_at: string;
+  end_at: string;
+  income_cents: number | null;
+  note: string | null;
+  status: "confirmed" | "cancelled";
+  created_at: string;
+}
+
+export interface InstructorEventListResponse {
+  events: InstructorEvent[];
+}
+
+/** Mirror of the FastAPI InstructorEventCreate schema. */
+export interface InstructorEventInput {
+  event_type: EventType;
+  start_at: string;
+  end_at: string;
+  place_id?: string | null;
+  title?: string | null;
+  income_cents?: number | null;
+  note?: string | null;
+}
+
 export interface CalendarResponse {
   appointments: AppointmentSummary[];
+  events: InstructorEvent[];
 }
 
 export interface AppointmentCreateInput {
   contact_id: string;
+  contact_ids?: string[];
   place_id: string;
   service: string;
   start_at: string;
   end_at: string;
   is_recurring: boolean;
+  class_type?: "individual" | "group";
   billing_type?: "billable" | "courtesy";
 }
 
@@ -83,18 +123,47 @@ export interface CandidateEvidenceItem {
   text: string | null;
 }
 
+export type CandidateAction =
+  | "create"
+  | "confirm"
+  | "reschedule"
+  | "cancel"
+  | "recurrence"
+  | "waitlist_request"
+  | "none";
+
 /** Mirror of the FastAPI CandidateDetail schema. */
 export interface CandidateDetail {
   id: string;
-  action: "create" | "confirm" | "reschedule" | "cancel" | "recurrence" | "none";
+  action: CandidateAction;
+  operation: CandidateAction | null;
+  confirmation_status:
+    | "instructor_confirmed"
+    | "customer_confirmed"
+    | "mutually_confirmed"
+    | "unclear"
+    | "not_confirmed"
+    | null;
+  existing_appointment_id: string | null;
+  resulting_appointment_id: string | null;
+  operator_action_candidate_id: string | null;
+  suggested_place_id: string | null;
+  contact_id: string | null;
+  contact_name: string | null;
   proposed_start_at: string | null;
   proposed_end_at: string | null;
   service: string | null;
   confidence: number | null;
-  status: string;
+  status: "detected" | "dismissed" | "fulfilled";
+  escalation_status: "proposed" | "confirmed" | "rejected" | "expired" | "executed" | "failed" | null;
+  escalation_delivery_status: "queued" | "sent" | "failed" | "expired" | null;
   ambiguities: { field: string; description: string }[];
   created_at: string;
   evidence: CandidateEvidenceItem[];
+}
+
+export interface CandidateListResponse {
+  candidates: CandidateDetail[];
 }
 
 /** Mirror of the FastAPI ConversationDetail schema. */
@@ -220,12 +289,16 @@ export interface PlaceRateInput {
 
 export interface PlaceRateDetail extends PlaceRateInput {
   effective_hourly_rate_cents: number | null;
-  source: "place" | "tenant" | "unset";
+  source: "place" | "generic" | "tenant" | "unset";
 }
 
 export interface PlaceRateMatrixDetail {
   place_id: string;
   place_name: string;
+  rates: PlaceRateDetail[];
+}
+
+export interface GenericPlaceRateMatrixDetail {
   rates: PlaceRateDetail[];
 }
 
@@ -242,6 +315,7 @@ export interface WorkJourneyIntervalDetail extends WorkJourneyIntervalInput {
 
 export interface FinancialConfigurationDetail {
   prime_time_windows: PrimeTimeWindowDetail[];
+  generic_place: GenericPlaceRateMatrixDetail;
   places: PlaceRateMatrixDetail[];
 }
 
@@ -317,6 +391,8 @@ export type FinancialScenarioMode =
   | "all_individual"
   | "observed_demand"
   | "full_groups"
+  | "individual_regular_groups_prime"
+  | "groups_regular_individual_prime"
   | "custom";
 
 export interface ScenarioRateOverride {
@@ -352,6 +428,25 @@ export interface FinancialTradeoffDetail {
   break_even_occupancy_pct: number | null;
 }
 
+export interface FinancialScenarioScheduleEvent {
+  id: string;
+  local_date: string;
+  place_name: string;
+  start_time: string;
+  end_time: string;
+  participant_count: number;
+  time_category: FinancialTimeCategory;
+  hourly_rate_cents: number | null;
+  total_revenue_cents: number | null;
+}
+
+export interface FinancialScenarioCustomerEstimate {
+  calendar_weeks: number;
+  weekly_participant_hours: number;
+  minimum_customers: number;
+  maximum_customers: number;
+}
+
 export interface FinancialScenarioResult {
   assumptions: FinancialAnalyticsAssumptions;
   mode: FinancialScenarioMode;
@@ -361,6 +456,8 @@ export interface FinancialScenarioResult {
   incremental_revenue_cents: number;
   incremental_participant_hours: number;
   tradeoffs: FinancialTradeoffDetail[];
+  simulated_schedule: FinancialScenarioScheduleEvent[];
+  customer_estimate: FinancialScenarioCustomerEstimate | null;
 }
 
 export interface FinancialScenarioDetail {
@@ -381,6 +478,7 @@ export type RevenueRateSource =
   | "customer"
   | "group"
   | "place"
+  | "generic"
   | "tenant"
   | "unset";
 
@@ -402,6 +500,12 @@ export interface RevenueCandidateDetail {
   recognized_occurrence_id: string | null;
   can_confirm: boolean;
   billing_type?: "billable" | "courtesy" | null;
+}
+
+export interface RevenuePreviewDetail {
+  estimated_revenue_cents: number | null;
+  participant_count: number;
+  capacity_revenue_cents?: number | null;
 }
 
 export interface RevenueCandidateList {
@@ -502,6 +606,8 @@ export interface RevenueSummaryDetail {
   subtotal_cents: number;
   adjustment_cents: number;
   total_cents: number;
+  event_income_cents: number;
+  event_count: number;
   by_place: RevenueSummaryBreakdown[];
   by_customer: RevenueSummaryBreakdown[];
   by_group: RevenueSummaryBreakdown[];
@@ -716,4 +822,54 @@ export interface AssistantChatResponse {
 export interface ActionCandidateResultResponse {
   status: string;
   summary: string;
+}
+
+// Fila de Espera (waitlist roadmap v0.1, Phase 1) — a contact wants a
+// specific slot that doesn't exist yet. Not to be confused with
+// ContactSummary/commercial "waiting" status ("Em espera"), an unrelated
+// paused-billing concept from the financial module.
+export type WaitlistEntryStatus = "open" | "matched" | "fulfilled" | "cancelled" | "expired";
+
+/** Mirror of the FastAPI WaitlistEntryDetail schema. */
+export interface WaitlistEntry {
+  id: string;
+  contact_id: string;
+  contact_name: string;
+  place_id: string | null;
+  place_name: string | null;
+  desired_date: string; // "YYYY-MM-DD"
+  desired_start_time: string; // "HH:MM:SS"
+  desired_end_time: string;
+  class_type: ClassType | null;
+  duration_minutes: number;
+  status: WaitlistEntryStatus;
+  note: string | null;
+  created_at: string;
+}
+
+export interface WaitlistEntryListResponse {
+  entries: WaitlistEntry[];
+}
+
+/** Mirror of the FastAPI WaitlistEntryCreate schema. */
+export interface WaitlistEntryInput {
+  contact_id: string;
+  place_id?: string | null;
+  desired_date: string;
+  desired_start_time: string;
+  desired_end_time: string;
+  class_type?: ClassType | null;
+  duration_minutes?: number | null;
+  note?: string | null;
+}
+
+/** Mirror of the FastAPI CandidateFulfillWaitlist schema. */
+export interface CandidateFulfillWaitlistInput {
+  place_id?: string | null;
+  desired_date: string;
+  desired_start_time: string;
+  desired_end_time: string;
+  class_type?: ClassType | null;
+  duration_minutes?: number | null;
+  note?: string | null;
 }

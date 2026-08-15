@@ -8,12 +8,13 @@ domain.
 
 import uuid
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy.orm import Session
 
 from app.models import (
     FinancialRate,
+    InstructorEvent,
     Place,
     PlaceFinancialRate,
     PrimeTimeWindow,
@@ -43,7 +44,7 @@ PART_OF_DAY_RANGES = (
 @dataclass(frozen=True)
 class CapacitySegment:
     local_date: date
-    place_id: uuid.UUID
+    place_id: uuid.UUID | None
     place_name: str
     start_minute: int
     end_minute: int
@@ -68,15 +69,21 @@ class BookingOccurrence:
 class PricingRules:
     global_rates: dict[int, int]
     place_rates: dict[tuple[uuid.UUID, str, int], int]
+    generic_place_rates: dict[tuple[str, int], int]
 
     def resolve(
         self,
-        place_id: uuid.UUID,
+        place_id: uuid.UUID | None,
         time_category: str,
         participant_count: int,
     ) -> int | None:
-        return self.place_rates.get(
-            (place_id, time_category, participant_count),
+        if place_id is not None:
+            return self.place_rates.get(
+                (place_id, time_category, participant_count),
+                self.global_rates.get(participant_count),
+            )
+        return self.generic_place_rates.get(
+            (time_category, participant_count),
             self.global_rates.get(participant_count),
         )
 
@@ -152,7 +159,23 @@ def load_pricing_rules(
             .all()
         )
     }
-    return PricingRules(global_rates=global_rates, place_rates=place_rates)
+    settings = (
+        db.query(ProfessionalFinancialSettings)
+        .filter(ProfessionalFinancialSettings.professional_id == professional_id)
+        .first()
+    )
+    generic_place_rates = {
+        tuple(key.split("-")): value
+        for key, value in (settings.generic_place_rates if settings else {}).items()
+    }
+    return PricingRules(
+        global_rates=global_rates,
+        place_rates=place_rates,
+        generic_place_rates={
+            (category, int(participant_count)): rate
+            for (category, participant_count), rate in generic_place_rates.items()
+        },
+    )
 
 
 def _load_net_work_ranges_by_day(
@@ -179,6 +202,18 @@ def _load_net_work_ranges_by_day(
         day: subtract_ranges(sorted(work_by_day[day]), sorted(breaks_by_day[day]))
         for day in range(7)
     }
+
+
+def load_net_work_ranges(
+    db: Session,
+    professional_id: uuid.UUID,
+    target_date: date,
+) -> list[tuple[int, int]]:
+    """The declared Work Journey (work minus breaks) for a single date's
+    weekday. Callers use it to tell "no journey configured for this weekday"
+    apart from "journey fully booked" — two very different answers to
+    "when am I free?" that an empty free-range list alone can't distinguish."""
+    return _load_net_work_ranges_by_day(db, professional_id)[target_date.weekday()]
 
 
 def total_work_journey_minutes(
@@ -323,6 +358,75 @@ def build_capacity_segments(
     return segments
 
 
+def build_uncovered_capacity_segments(
+    db: Session,
+    professional_id: uuid.UUID,
+    date_from: date,
+    date_to: date,
+    places: list[Place],
+    prime_ranges: dict[int, list[tuple[int, int]]],
+) -> list[CapacitySegment]:
+    """Return place-agnostic work time as calendar-ready capacity segments."""
+    net_by_day = _load_net_work_ranges_by_day(db, professional_id)
+    availability = _load_place_availability_ranges(
+        db,
+        professional_id,
+        date_from,
+        date_to,
+        {place.id for place in places},
+    )
+    segments: list[CapacitySegment] = []
+    day_boundaries = {
+        boundary
+        for _, _, start, end in PART_OF_DAY_RANGES
+        for boundary in (start, end)
+    }
+    for local_date in iter_dates(date_from, date_to):
+        weekday = local_date.weekday()
+        covered = merge_ranges(
+            [
+                place_range
+                for place in places
+                for place_range in availability.get((local_date, place.id), [])
+            ]
+        )
+        boundaries = day_boundaries | {
+            boundary for start, end in prime_ranges[weekday] for boundary in (start, end)
+        }
+        for start_minute, end_minute in subtract_ranges(
+            net_by_day[weekday], covered
+        ):
+            for segment_start, segment_end in split_range(
+                start_minute, end_minute, boundaries
+            ):
+                midpoint = (segment_start + segment_end) / 2
+                category = (
+                    "prime"
+                    if any(
+                        start <= midpoint < end
+                        for start, end in prime_ranges[weekday]
+                    )
+                    else "regular"
+                )
+                part = next(
+                    key
+                    for key, _, start, end in PART_OF_DAY_RANGES
+                    if start <= midpoint < end
+                )
+                segments.append(
+                    CapacitySegment(
+                        local_date=local_date,
+                        place_id=None,
+                        place_name="Sem local definido",
+                        start_minute=segment_start,
+                        end_minute=segment_end,
+                        time_category=category,
+                        part_of_day=part,
+                    )
+                )
+    return segments
+
+
 def load_booking_occurrences(
     db: Session,
     professional_id: uuid.UUID,
@@ -361,3 +465,97 @@ def load_booking_occurrences(
             )
         )
     return bookings
+
+
+def load_event_busy_ranges(
+    db: Session,
+    professional_id: uuid.UUID,
+    target_date: date,
+) -> list[tuple[int, int]]:
+    """Confirmed instructor-event time that blocks the shared calendar."""
+    day_start = datetime.combine(target_date, time.min, tzinfo=TIMEZONE)
+    day_end = day_start + timedelta(days=1)
+    events = (
+        db.query(InstructorEvent)
+        .filter(
+            InstructorEvent.professional_id == professional_id,
+            InstructorEvent.status == "confirmed",
+            InstructorEvent.start_at < day_end,
+            InstructorEvent.end_at > day_start,
+        )
+        .all()
+    )
+
+    ranges: list[tuple[int, int]] = []
+    for event in events:
+        start_at = max(event.start_at.astimezone(TIMEZONE), day_start)
+        end_at = min(event.end_at.astimezone(TIMEZONE), day_end)
+        end_minute = 24 * 60 if end_at == day_end else time_to_minutes(end_at.time())
+        ranges.append((time_to_minutes(start_at.time()), end_minute))
+    return ranges
+
+
+def compute_free_ranges_by_place(
+    db: Session,
+    professional_id: uuid.UUID,
+    target_date: date,
+    places: list[Place],
+) -> dict[uuid.UUID, list[tuple[int, int]]]:
+    """Open (unbooked) capacity ranges per place on a single date, in
+    minutes-since-midnight. The "what's actually free" computation shared by
+    `agent.tools.find_instructor_openings` and the waitlist matcher
+    (`services.waitlist.find_matches`) — reused rather than re-derived, per
+    the waitlist roadmap's explicit "reuse, don't rebuild" decision."""
+    prime_ranges = load_prime_ranges(db, professional_id)
+    segments = build_capacity_segments(
+        db, professional_id, target_date, target_date, places, prime_ranges
+    )
+    bookings = load_booking_occurrences(db, professional_id, target_date, target_date, places)
+    event_busy_ranges = load_event_busy_ranges(db, professional_id, target_date)
+
+    free_by_place: dict[uuid.UUID, list[tuple[int, int]]] = {}
+    for place in places:
+        place_ranges = merge_ranges(
+            [
+                (segment.start_minute, segment.end_minute)
+                for segment in segments
+                if segment.place_id == place.id
+            ]
+        )
+        booked_ranges = [
+            (booking.start_minute, booking.end_minute)
+            for booking in bookings
+            if booking.place_id == place.id and booking.local_date == target_date
+        ]
+        free_by_place[place.id] = subtract_ranges(
+            place_ranges, [*booked_ranges, *event_busy_ranges]
+        )
+    return free_by_place
+
+
+def compute_free_calendar_ranges(
+    db: Session,
+    professional_id: uuid.UUID,
+    target_date: date,
+) -> list[tuple[int, int]]:
+    """Place-agnostic free time on a single date: raw Work Journey (work
+    minus break) minus every real booking across all of the professional's
+    places. Fallback for `agent.tools.find_instructor_openings` when no
+    place has RecurringSlot coverage for the date/weekday — mirrors the
+    top-line dashboard's Work Journey fallback (docs/business_rules.md 3.5
+    "Financial Capacity vs. Work Journey") so the agent doesn't report "no
+    openings" just because per-place availability windows haven't been
+    configured, even though the instructor's actual booked calendar has
+    open gaps."""
+    net_ranges = load_net_work_ranges(db, professional_id, target_date)
+    all_places = load_places(db, professional_id, None)
+    bookings = load_booking_occurrences(db, professional_id, target_date, target_date, all_places)
+    booked_ranges = [
+        (booking.start_minute, booking.end_minute)
+        for booking in bookings
+        if booking.local_date == target_date
+    ]
+    return subtract_ranges(
+        net_ranges,
+        [*booked_ranges, *load_event_busy_ranges(db, professional_id, target_date)],
+    )

@@ -11,11 +11,12 @@
       {"id": "msg_102", "direction": "outbound", "sent_at": "2026-08-01T15:19:00-03:00", "text": "Consigo as 17h."},
       {"id": "msg_103", "direction": "inbound", "sent_at": "2026-08-01T15:20:00-03:00", "text": "Perfeito, confirmado."}
     ],
-    "expected_action": "confirm",
+    "expected_operation": "create",
+    "expected_confirmation_status": "mutually_confirmed",
     "expected_start_at": "2026-08-02T17:00:00-03:00",
     "expected_existing_appointment": null,
     "expected_evidence_message_ids": ["msg_101", "msg_102", "msg_103"],
-    "notes": "Basic creation with explicit confirmation — model correctly contextualizes 'confirmado' as confirm action (brief Section 25)."
+    "notes": "The instructor offers a resolved time and the customer explicitly accepts it; together they clearly agree."
   },
   {
     "id": "create_002",
@@ -28,11 +29,12 @@
       {"id": "msg_201", "direction": "outbound", "sent_at": "2026-08-03T09:58:00-03:00", "text": "Consigo terca as 18h."},
       {"id": "msg_202", "direction": "inbound", "sent_at": "2026-08-03T10:00:00-03:00", "text": "Otimo."}
     ],
-    "expected_action": "confirm",
+    "expected_operation": "create",
+    "expected_confirmation_status": "mutually_confirmed",
     "expected_start_at": "2026-08-04T18:00:00-03:00",
     "expected_existing_appointment": null,
     "expected_evidence_message_ids": ["msg_201", "msg_202"],
-    "notes": "Implicit confirmation (brief Section 25). Model interprets 'Otimo.' as confirmation."
+    "notes": "The instructor offers a resolved time and the customer clearly accepts it; together they clearly agree."
   },
   {
     "id": "proposal_001",
@@ -45,7 +47,8 @@
       {"id": "msg_301", "direction": "inbound", "sent_at": "2026-08-01T11:58:00-03:00", "text": "Talvez sexta as 4?"},
       {"id": "msg_302", "direction": "outbound", "sent_at": "2026-08-01T12:00:00-03:00", "text": "Vou verificar."}
     ],
-    "expected_action": "none",
+    "expected_operation": "none",
+    "expected_confirmation_status": "not_confirmed",
     "expected_start_at": null,
     "expected_existing_appointment": null,
     "expected_evidence_message_ids": [],
@@ -64,7 +67,8 @@
       {"id": "msg_401", "direction": "inbound", "sent_at": "2026-08-05T08:58:00-03:00", "text": "Da pra mover a aula de amanha pra sexta?"},
       {"id": "msg_402", "direction": "outbound", "sent_at": "2026-08-05T09:00:00-03:00", "text": "Sexta as 17h serve."}
     ],
-    "expected_action": "reschedule",
+    "expected_operation": "reschedule",
+    "expected_confirmation_status": "not_confirmed",
     "expected_start_at": "2026-08-07T17:00:00-03:00",
     "expected_existing_appointment": "appt_500",
     "expected_evidence_message_ids": ["msg_401", "msg_402"],
@@ -82,7 +86,8 @@
     "messages": [
       {"id": "msg_501", "direction": "inbound", "sent_at": "2026-08-01T18:00:00-03:00", "text": "Nao vou conseguir ir hoje. Vamos cancelar."}
     ],
-    "expected_action": "cancel",
+    "expected_operation": "cancel",
+    "expected_confirmation_status": "customer_confirmed",
     "expected_start_at": null,
     "expected_existing_appointment": "appt_600",
     "expected_evidence_message_ids": ["msg_501"],
@@ -98,7 +103,8 @@
     "messages": [
       {"id": "msg_601", "direction": "inbound", "sent_at": "2026-08-01T09:00:00-03:00", "text": "Consegue as cinco?"}
     ],
-    "expected_action": "none",
+    "expected_operation": "none",
+    "expected_confirmation_status": "not_confirmed",
     "expected_start_at": null,
     "expected_existing_appointment": null,
     "expected_evidence_message_ids": [],
@@ -117,11 +123,12 @@
       {"id": "msg_701", "direction": "inbound", "sent_at": "2026-08-01T09:58:00-03:00", "text": "Mesmo horario semana que vem?"},
       {"id": "msg_702", "direction": "outbound", "sent_at": "2026-08-01T10:00:00-03:00", "text": "Sim."}
     ],
-    "expected_action": "confirm",
+    "expected_operation": "create",
+    "expected_confirmation_status": "instructor_confirmed",
     "expected_start_at": "2026-08-08T17:00:00-03:00",
     "expected_existing_appointment": null,
     "expected_evidence_message_ids": ["msg_701", "msg_702"],
-    "notes": "Requires historical appointment context to resolve 'mesmo horario' (brief Section 25). Model interprets confirmed response as confirm action."
+    "notes": "The instructor explicitly confirms a new lesson at the customer's usual resolved time."
   },
   {
     "id": "recurrence_001",
@@ -134,7 +141,8 @@
       {"id": "msg_801", "direction": "inbound", "sent_at": "2026-08-01T10:58:00-03:00", "text": "Bora manter toda terca as 18h."},
       {"id": "msg_802", "direction": "outbound", "sent_at": "2026-08-01T11:00:00-03:00", "text": "Fechado."}
     ],
-    "expected_action": "recurrence",
+    "expected_operation": "recurrence",
+    "expected_confirmation_status": "instructor_confirmed",
     "expected_start_at": "2026-08-04T18:00:00-03:00",
     "expected_existing_appointment": null,
     "expected_evidence_message_ids": ["msg_801", "msg_802"],
@@ -151,7 +159,8 @@
       {"id": "msg_901", "direction": "inbound", "sent_at": "2026-08-01T13:58:00-03:00", "text": "A raquete chegou. Obrigada."},
       {"id": "msg_902", "direction": "outbound", "sent_at": "2026-08-01T14:00:00-03:00", "text": "Show."}
     ],
-    "expected_action": "none",
+    "expected_operation": "none",
+    "expected_confirmation_status": "not_confirmed",
     "expected_start_at": null,
     "expected_existing_appointment": null,
     "expected_evidence_message_ids": [],
@@ -168,11 +177,49 @@
       {"id": "msg_1001", "direction": "inbound", "sent_at": "2026-08-01T19:58:00-03:00", "text": "Pdo amanha as 5? Blz pra vc?"},
       {"id": "msg_1002", "direction": "outbound", "sent_at": "2026-08-01T20:00:00-03:00", "text": "Blz, confirmado as 17h."}
     ],
-    "expected_action": "confirm",
+    "expected_operation": "create",
+    "expected_confirmation_status": "instructor_confirmed",
     "expected_start_at": "2026-08-02T17:00:00-03:00",
     "expected_existing_appointment": null,
     "expected_evidence_message_ids": ["msg_1001", "msg_1002"],
-    "notes": "Brazilian Portuguese colloquialisms/abbreviations (brief Section 24). Model correctly interprets 'Blz, confirmado as 17h.' as confirmation."
+    "notes": "The instructor explicitly confirms the resolved 17h lesson."
+  },
+  {
+    "id": "mutual_confirmation_001",
+    "category": "mutual_confirmation",
+    "professional": {"timezone": "America/Sao_Paulo", "default_duration_minutes": 60, "service": "tennis_lesson"},
+    "contact": {"display_name": "Beatriz"},
+    "current_time": "2026-08-01T10:00:00-03:00",
+    "upcoming_appointments": [],
+    "messages": [
+      {"id": "msg_1201", "direction": "outbound", "sent_at": "2026-08-01T09:58:00-03:00", "text": "Tenho quinta as 17h para sua aula."},
+      {"id": "msg_1202", "direction": "inbound", "sent_at": "2026-08-01T09:59:00-03:00", "text": "Fechado, quinta as 17h para mim."},
+      {"id": "msg_1203", "direction": "outbound", "sent_at": "2026-08-01T10:00:00-03:00", "text": "Confirmado, te espero."}
+    ],
+    "expected_operation": "create",
+    "expected_confirmation_status": "mutually_confirmed",
+    "expected_start_at": "2026-08-06T17:00:00-03:00",
+    "expected_existing_appointment": null,
+    "expected_evidence_message_ids": ["msg_1201", "msg_1202", "msg_1203"],
+    "notes": "Both parties explicitly confirm the same resolved lesson."
+  },
+  {
+    "id": "unclear_confirmation_001",
+    "category": "unclear_confirmation",
+    "professional": {"timezone": "America/Sao_Paulo", "default_duration_minutes": 60, "service": "tennis_lesson"},
+    "contact": {"display_name": "Rafael"},
+    "current_time": "2026-08-01T10:00:00-03:00",
+    "upcoming_appointments": [],
+    "messages": [
+      {"id": "msg_1301", "direction": "inbound", "sent_at": "2026-08-01T09:59:00-03:00", "text": "Pode ser amanha as 17h?"},
+      {"id": "msg_1302", "direction": "outbound", "sent_at": "2026-08-01T10:00:00-03:00", "text": "Beleza."}
+    ],
+    "expected_operation": "create",
+    "expected_confirmation_status": "unclear",
+    "expected_start_at": "2026-08-02T17:00:00-03:00",
+    "expected_existing_appointment": null,
+    "expected_evidence_message_ids": ["msg_1301", "msg_1302"],
+    "notes": "The isolated instructor acknowledgement has no sufficiently explicit confirmation meaning."
   },
   {
     "id": "multiple_appointments_001",
@@ -187,7 +234,8 @@
     "messages": [
       {"id": "msg_1101", "direction": "inbound", "sent_at": "2026-08-01T08:00:00-03:00", "text": "Manter terca, mas cancelar quinta."}
     ],
-    "expected_action": "cancel",
+    "expected_operation": "cancel",
+    "expected_confirmation_status": "not_confirmed",
     "expected_start_at": null,
     "expected_existing_appointment": "appt_801",
     "expected_evidence_message_ids": ["msg_1101"],

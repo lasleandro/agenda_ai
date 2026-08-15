@@ -23,6 +23,9 @@ dateparser==1.2.1
 # Azure OpenAI — client comes from the openai package (deps of instructor)
 openai==1.109.1
 
+# ── HTTP client (YCloud outbound WhatsApp API) ──────────────────────────────
+httpx==0.28.1
+
 # ── Observability ──────────────────────────────────────────────────────────
 langfuse==3.1.3
 

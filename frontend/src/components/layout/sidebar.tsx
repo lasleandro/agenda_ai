@@ -31,6 +31,17 @@ const navItems = [
 ];
 
 export function Sidebar() {
+  return (
+    <aside
+      className="hidden md:flex md:w-60 md:flex-col shrink-0"
+      style={{ background: "var(--sidebar-bg)" }}
+    >
+      <SidebarContent />
+    </aside>
+  );
+}
+
+export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const router = useRouter();
   const pathname = usePathname();
   const [user, setUser] = useState<SessionUser | null>(null);
@@ -58,10 +69,7 @@ export function Sidebar() {
     .toUpperCase();
 
   return (
-    <aside
-      className="hidden md:flex md:w-60 md:flex-col shrink-0"
-      style={{ background: "var(--sidebar-bg)" }}
-    >
+    <>
       <div className="h-16 flex items-center gap-2 px-5">
         <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white font-bold text-sm">
           T
@@ -76,6 +84,7 @@ export function Sidebar() {
           href="/admin/select-tenant"
           title="Trocar de tenant"
           className="mx-3 mb-2 flex items-center gap-2 rounded-md bg-indigo-500/20 px-3 py-2 text-xs font-medium text-indigo-200 hover:bg-indigo-500/30"
+          onClick={onNavigate}
         >
           <Repeat className="h-3.5 w-3.5" />
           Trocar tenant
@@ -110,7 +119,14 @@ export function Sidebar() {
 
           if (item.href) {
             return (
-              <Link key={item.label} href={item.href} className={className} style={style} {...hoverProps}>
+              <Link
+                key={item.label}
+                href={item.href}
+                className={className}
+                style={style}
+                onClick={onNavigate}
+                {...hoverProps}
+              >
                 <item.icon className="h-4 w-4" />
                 {item.label}
               </Link>
@@ -148,6 +164,6 @@ export function Sidebar() {
           </button>
         </div>
       </div>
-    </aside>
+    </>
   );
 }

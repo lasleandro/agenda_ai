@@ -9,11 +9,26 @@ import {
 } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { StatusBadge } from "./status-badge";
-import { fetchAppointment } from "@/lib/api";
+import { fetchAppointment, fetchRevenuePreview } from "@/lib/api";
 import { formatFullDate, formatTimeRange } from "@/lib/calendar-utils";
+import { formatBrlFromCents } from "@/lib/financial-utils";
 import type { AppointmentDetail } from "@/lib/types";
-import { Calendar, Clock, User, Tag, Link2, MapPin } from "lucide-react";
+import {
+  Calendar,
+  CircleHelp,
+  CircleDollarSign,
+  Clock,
+  Link2,
+  MapPin,
+  Tag,
+  User,
+} from "lucide-react";
 
 function initials(name: string) {
   return name
@@ -36,28 +51,59 @@ export function AppointmentPanel({
   onOpenChange: (open: boolean) => void;
 }) {
   const [result, setResult] = useState<{
-    appointmentId: string;
+    requestKey: string;
     detail: AppointmentDetail | null;
     error: string | null;
   } | null>(null);
+  const [revenue, setRevenue] = useState<{
+    requestKey: string;
+    estimatedRevenueCents: number | null;
+    capacityRevenueCents?: number | null;
+  } | null>(null);
+  const requestKey = `${appointmentId ?? ""}:${occurrenceDate ?? ""}`;
 
   useEffect(() => {
     if (!appointmentId || !open) return;
+    let active = true;
+    setRevenue(null);
     fetchAppointment(appointmentId, occurrenceDate)
-      .then((detail) => setResult({ appointmentId, detail, error: null }))
+      .then((detail) => {
+        if (!active) return;
+        setResult({ requestKey, detail, error: null });
+        const date = detail.occurrence_date ?? occurrenceDate;
+        if (!date) return;
+        fetchRevenuePreview("appointment", detail.id, date)
+          .then((preview) => {
+            if (active) {
+              setRevenue({
+                requestKey,
+                estimatedRevenueCents: preview.estimated_revenue_cents,
+                capacityRevenueCents: preview.capacity_revenue_cents,
+              });
+            }
+          })
+          .catch(() => {
+            // Revenue is optional in the Agenda and must not block its panel.
+          });
+      })
       .catch((error) =>
+        active &&
         setResult({
-          appointmentId,
+          requestKey,
           detail: null,
           error: error instanceof Error ? error.message : "Falha ao carregar",
         })
       );
-  }, [appointmentId, occurrenceDate, open]);
+    return () => {
+      active = false;
+    };
+  }, [appointmentId, occurrenceDate, open, requestKey]);
 
-  const currentResult = result?.appointmentId === appointmentId ? result : null;
+  const currentResult = result?.requestKey === requestKey ? result : null;
   const detail = currentResult?.detail ?? null;
   const error = currentResult?.error ?? null;
   const loading = Boolean(open && appointmentId && !currentResult);
+  const currentRevenue = revenue?.requestKey === requestKey ? revenue : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -123,6 +169,57 @@ export function AppointmentPanel({
                 <Tag className="h-4 w-4 text-muted-foreground shrink-0" />
                 <span className="capitalize">{detail.service}</span>
               </div>
+              {currentRevenue && (
+                <div className="flex items-center gap-3">
+                  <CircleDollarSign className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span>
+                    {detail.class_type === "group" &&
+                    (detail.participants?.length ?? 1) < 4
+                      ? "Receita corrente"
+                      : "Receita estimada"}
+                    : {" "}
+                    {formatBrlFromCents(currentRevenue.estimatedRevenueCents)}
+                  </span>
+                  {detail.class_type === "group" &&
+                    (detail.participants?.length ?? 1) < 4 && (
+                      <Tooltip>
+                        <TooltipTrigger
+                          className="text-muted-foreground"
+                          aria-label="Como a receita corrente é calculada"
+                        >
+                          <CircleHelp className="h-3.5 w-3.5" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          Receita estimada com os participantes atualmente
+                          atribuídos a este grupo.
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                </div>
+              )}
+              {detail.class_type === "group" &&
+                (detail.participants?.length ?? 1) < 4 &&
+                currentRevenue?.capacityRevenueCents !== undefined && (
+                  <div className="flex items-center gap-3">
+                    <CircleDollarSign className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <span>
+                      Capacidade total de receita: {" "}
+                      {formatBrlFromCents(currentRevenue.capacityRevenueCents)}
+                    </span>
+                    <Tooltip>
+                      <TooltipTrigger
+                        className="text-muted-foreground"
+                        aria-label="Como a capacidade total de receita é calculada"
+                      >
+                        <CircleHelp className="h-3.5 w-3.5" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Receita estimada para esta mesma aula com quatro clientes,
+                        usando as regras de preço do horário e local.
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                )}
               {detail.place_name && (
                 <div className="flex items-center gap-3">
                   <MapPin className="h-4 w-4 text-muted-foreground shrink-0" />

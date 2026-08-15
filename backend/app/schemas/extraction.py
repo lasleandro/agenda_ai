@@ -25,13 +25,35 @@ class Ambiguity(BaseModel):
     description: str
 
 
+SchedulingOperation = Literal[
+    "create",
+    "reschedule",
+    "cancel",
+    "recurrence",
+    "waitlist_request",
+    "none",
+]
+
+ConfirmationStatus = Literal[
+    "instructor_confirmed",
+    "customer_confirmed",
+    "mutually_confirmed",
+    "unclear",
+    "not_confirmed",
+]
+
+
 class SchedulingEvent(BaseModel):
     """The structured extraction result for a conversation window.
 
-    action: the scheduling operation detected (or "none" if no event).
+    operation: the scheduling operation detected (or "none" if no event).
+    confirmation_status: who, if anyone, clearly confirmed the operation.
     customer_name: the student/customer name, if identifiable.
-    start_at: proposed start datetime (ISO 8601), null if ambiguous.
-    end_at: proposed end datetime, null if not determinable.
+    start_at: proposed start datetime (ISO 8601), null if ambiguous. For
+        operation="waitlist_request", this is the *desired* start time the
+        customer asked for (if any was mentioned), not a booking.
+    end_at: proposed end datetime, null if not determinable. Same caveat
+        for operation="waitlist_request" as start_at.
     duration_minutes: lesson duration, null if not mentioned.
     service: the service type (e.g. "tennis_lesson"), null if not mentioned.
     existing_appointment_id: reference to an existing appointment for rescheduling/cancellation.
@@ -42,14 +64,8 @@ class SchedulingEvent(BaseModel):
     explanation: human-readable explanation of the extraction (in pt-BR).
     """
 
-    action: Literal[
-        "create",
-        "confirm",
-        "reschedule",
-        "cancel",
-        "recurrence",
-        "none",
-    ]
+    operation: SchedulingOperation
+    confirmation_status: ConfirmationStatus = "not_confirmed"
 
     customer_name: str | None = None
     start_at: datetime | None = None

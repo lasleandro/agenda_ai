@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Appointment,
+    InstructorEvent,
     RevenueOccurrence,
     RevenueOccurrenceLine,
     RevenueOccurrenceParticipant,
@@ -19,6 +20,7 @@ from app.schemas.financial import (
     RevenueOccurrenceDetail,
     RevenueOccurrenceParticipantDetail,
     RevenuePricingLineDetail,
+    RevenuePreviewDetail,
     RevenueSummaryBreakdown,
     RevenueSummaryDetail,
     RevenueSummaryTimePoint,
@@ -31,6 +33,7 @@ from app.services.financial_capacity import (
     time_to_minutes,
 )
 from app.services.scheduling import (
+    TIMEZONE,
     ScheduleOccurrence,
     ScheduleParticipant,
     get_schedule_occurrence,
@@ -169,6 +172,12 @@ def _participant_rate(
     )
     if occurrence.place_id is not None and place_rule in pricing.place_rates:
         return pricing.place_rates[place_rule], "place"
+    if occurrence.place_id is None:
+        generic_rate = pricing.generic_place_rates.get(
+            (category, participant_count)
+        )
+        if generic_rate is not None:
+            return generic_rate, "generic"
     if participant_count in pricing.global_rates:
         return pricing.global_rates[participant_count], "tenant"
     return None, "unset"
@@ -179,6 +188,60 @@ def _outcome_status(body: RevenueOccurrenceCreate) -> str:
         outcome.attendance_status for outcome in body.participant_outcomes
     }
     return statuses.pop() if len(statuses) == 1 else "mixed"
+
+
+def preview_schedule_revenue(
+    db: Session,
+    professional_id: uuid.UUID,
+    source_type: str,
+    source_id: uuid.UUID,
+    occurrence_date: date,
+) -> RevenuePreviewDetail:
+    """Calculate the projected revenue for one scheduled class occurrence."""
+    schedule = get_schedule_occurrence(
+        db, professional_id, source_type, source_id, occurrence_date
+    )
+    if schedule is None:
+        raise RevenueOccurrenceNotFoundError("Schedule occurrence was not found")
+    participant_count = len(schedule.participants)
+    pricing = load_pricing_rules(db, professional_id)
+    segments = _pricing_segments(schedule, load_prime_ranges(db, professional_id))
+    total = 0
+    current_revenue_priced = True
+    for segment_start, segment_end, category in segments:
+        duration = segment_end - segment_start
+        for participant in schedule.participants:
+            rate, _ = _participant_rate(
+                participant, schedule, category, participant_count, pricing
+            )
+            if rate is None:
+                current_revenue_priced = False
+                break
+            total += _round_cents(Decimal(rate) * Decimal(duration) / Decimal(60))
+        if not current_revenue_priced:
+            break
+
+    capacity_revenue = None
+    if schedule.class_type == "group" and participant_count < 4:
+        capacity_revenue = 0
+        for segment_start, segment_end, category in segments:
+            rate = (
+                schedule.group_hourly_rate_cents
+                if schedule.group_hourly_rate_cents is not None
+                else pricing.resolve(schedule.place_id, category, 4)
+            )
+            if rate is None:
+                capacity_revenue = None
+                break
+            duration = segment_end - segment_start
+            capacity_revenue += 4 * _round_cents(
+                Decimal(rate) * Decimal(duration) / Decimal(60)
+            )
+    return RevenuePreviewDetail(
+        estimated_revenue_cents=total if current_revenue_priced else None,
+        participant_count=participant_count,
+        capacity_revenue_cents=capacity_revenue,
+    )
 
 
 def create_revenue_occurrence(
@@ -486,6 +549,18 @@ def build_revenue_summary(
         )
         .all()
     )
+
+    event_rows = (
+        db.query(InstructorEvent)
+        .filter(
+            InstructorEvent.professional_id == professional_id,
+            InstructorEvent.status == "confirmed",
+            InstructorEvent.income_cents.isnot(None),
+            InstructorEvent.start_at >= datetime.combine(date_from, time.min, tzinfo=TIMEZONE),
+            InstructorEvent.start_at <= datetime.combine(date_to, time.max, tzinfo=TIMEZONE),
+        )
+        .all()
+    )
     details = [revenue_occurrence_detail(db, row) for row in rows]
     by_place: dict[str, tuple[str, int, int]] = {}
     by_group: dict[str, tuple[str, int, int]] = {}
@@ -554,6 +629,8 @@ def build_revenue_summary(
         subtotal_cents=sum(row.subtotal_cents for row in rows),
         adjustment_cents=sum(row.adjustment_cents for row in rows),
         total_cents=sum(row.total_cents for row in rows),
+        event_income_cents=sum(event.income_cents for event in event_rows),
+        event_count=len(event_rows),
         by_place=_breakdown(by_place),
         by_customer=_breakdown(by_customer),
         by_group=_breakdown(by_group),

@@ -68,10 +68,16 @@ _PART_OF_DAY_TIMES = {
 class TemporalResolution:
     resolved_date: date | None
     period: tuple[time, time] | None
+    resolved_date_from: date | None = None
+    resolved_date_to: date | None = None
 
     @property
     def recognized(self) -> bool:
-        return self.resolved_date is not None or self.period is not None
+        return (
+            self.resolved_date is not None
+            or self.period is not None
+            or self.resolved_date_from is not None
+        )
 
 
 def _next_weekday(reference_date: date, weekday: int, *, strictly_after: bool) -> date:
@@ -89,12 +95,23 @@ def resolve_temporal_phrase(
     normalized = normalize_name(phrase)
 
     resolved_date: date | None = None
+    resolved_date_from: date | None = None
+    resolved_date_to: date | None = None
+    monday_this_week = reference_date - timedelta(days=reference_date.weekday())
     if re.search(r"\bhoje\b", normalized):
         resolved_date = reference_date
     elif re.search(r"\bamanh[aã]\b", normalized):
         resolved_date = reference_date + timedelta(days=1)
     elif re.search(r"\bontem\b", normalized):
         resolved_date = reference_date - timedelta(days=1)
+    elif re.search(r"\b(esta|essa) semana\b", normalized):
+        resolved_date_from = monday_this_week
+        resolved_date_to = monday_this_week + timedelta(days=6)
+    elif re.search(r"\bpr[oó]xima semana\b", normalized) or re.search(
+        r"\bsemana que vem\b", normalized
+    ):
+        resolved_date_from = monday_this_week + timedelta(days=7)
+        resolved_date_to = resolved_date_from + timedelta(days=6)
     else:
         for name, weekday in WEEKDAYS.items():
             if re.search(rf"\b{re.escape(name)}\b", normalized):
@@ -110,4 +127,9 @@ def resolve_temporal_phrase(
             period = _PART_OF_DAY_TIMES[part_of_day]
             break
 
-    return TemporalResolution(resolved_date=resolved_date, period=period)
+    return TemporalResolution(
+        resolved_date=resolved_date,
+        period=period,
+        resolved_date_from=resolved_date_from,
+        resolved_date_to=resolved_date_to,
+    )

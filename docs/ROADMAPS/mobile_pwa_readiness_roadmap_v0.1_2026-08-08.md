@@ -1,7 +1,13 @@
 # Mobile Readiness & PWA "Add to Home Screen" Roadmap v0.1 — 2026-08-08
 
-**Status: Decisions locked 2026-08-08 (nav pattern, agenda view, branding,
-offline strategy, scope). Ready to start Phase 1.**
+**Status: Phases 1–3 implemented 2026-08-08.** Mobile hamburger nav,
+`listWeek` Agenda view, Financeiro month summary, Clientes/Places mobile
+layout fixes, PWA manifest with placeholder icons, iOS meta tags, and a
+minimal asset-caching service worker are all in place and verified
+(`tsc --noEmit`, `eslint`, `next build`, and manual checks against the
+running dev server). Phase 4 (real-device walkthrough) is the remaining
+open item — needs a physical iOS/Android device pass, which wasn't
+possible in this session.
 
 ## What this is
 

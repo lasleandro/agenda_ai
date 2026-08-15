@@ -1,0 +1,316 @@
+"""WhatsApp channel for the instructor-facing AI agent number (AI Agent
+Operations Roadmap v0.1, brief Section 17).
+
+Two layers, checked in order for every inbound message:
+
+1. Deterministic Phase 0 commands (`hoje`/`amanha`/`esta semana`/
+   `proxima aula`) — no LLM call, answered directly against `Appointment`.
+2. A `sim`/`nao` reply to a pending proposal, or — for everything else —
+   the same tool-calling orchestrator the web chat uses
+   (`app.agent.orchestrator`), so the instructor can ask questions or
+   request mutations in natural language. Mutations always go through the
+   existing propose -> confirm -> execute flow (`app.agent.candidates`);
+   nothing here writes directly. Confirmation over WhatsApp has no buttons,
+   so it's a reply-keyword convention instead of the web UI's Confirm/
+   Reject buttons.
+
+Conversation history (AI Agent Operations Roadmap v0.1, Phase 3) is kept in
+`AgentChannelMessage`, one row per user/assistant turn, windowed the same
+way the web chat windows history (`AssistantSettings.memory_window_messages`)
+so follow-ups and corrections mid-flow ("na verdade era terca, nao segunda")
+have the prior turn to refer to. Deterministic Phase 0 command exchanges are
+not recorded — they're a separate fast lane, not part of the LLM
+conversation.
+
+Entirely separate from the passive observer pipeline in
+ingestion.py/pipeline.py, which watches the instructor's customer-facing
+number (Professional.assistant_phone). This module watches
+Professional.agent_phone instead.
+"""
+
+import logging
+import unicodedata
+import uuid
+from datetime import datetime, timedelta
+
+from sqlalchemy.orm import Session
+
+from app.agent import candidates
+from app.agent.orchestrator import run_agent_turn
+from app.chat.ycloud_provider import NormalizedMessage, send_text_message
+from app.models import AppointmentCandidate, AgentChannelMessage, OperatorActionCandidate, PassiveEscalation, Professional, User
+from app.services import scheduling
+from app.services.assistant_settings import get_assistant_settings
+
+logger = logging.getLogger(__name__)
+
+NEXT_SESSION_SEARCH_DAYS = 90
+WHATSAPP_CHANNEL = "whatsapp"
+HISTORY_MAX_AGE = timedelta(hours=12)
+
+CONFIRM_WORDS = {"sim", "confirmar", "confirmo", "confirma", "ok"}
+REJECT_WORDS = {"nao", "cancelar", "cancela", "cancelo"}
+
+
+def normalize_command(text: str) -> str:
+    stripped = "".join(
+        c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
+    )
+    return " ".join(stripped.strip().casefold().split())
+
+
+def _participants_label(occurrence) -> str:
+    names = [p.contact_name for p in occurrence.participants]
+    return ", ".join(names) if names else occurrence.source_label
+
+
+def _format_day_list(occurrences, header: str, empty_message: str) -> str:
+    if not occurrences:
+        return f"{header}\n\n{empty_message}"
+    lines = [
+        f"{occurrence.starts_at.strftime('%H:%M')} — {_participants_label(occurrence)}"
+        for occurrence in occurrences
+    ]
+    return header + "\n\n" + "\n".join(lines)
+
+
+def _handle_hoje(db: Session, professional_id: uuid.UUID) -> str:
+    today = datetime.now(scheduling.TIMEZONE).date()
+    occurrences = scheduling.list_schedule_occurrences(db, professional_id, today, today)
+    return _format_day_list(occurrences, "Aulas de hoje", "Nenhuma aula hoje.")
+
+
+def _handle_amanha(db: Session, professional_id: uuid.UUID) -> str:
+    tomorrow = datetime.now(scheduling.TIMEZONE).date() + timedelta(days=1)
+    occurrences = scheduling.list_schedule_occurrences(db, professional_id, tomorrow, tomorrow)
+    return _format_day_list(occurrences, "Aulas de amanha", "Nenhuma aula amanha.")
+
+
+def _handle_esta_semana(db: Session, professional_id: uuid.UUID) -> str:
+    today = datetime.now(scheduling.TIMEZONE).date()
+    end_of_week = today + timedelta(days=6 - today.weekday())
+    occurrences = scheduling.list_schedule_occurrences(db, professional_id, today, end_of_week)
+    return _format_day_list(occurrences, "Aulas desta semana", "Nenhuma aula esta semana.")
+
+
+def _handle_proxima_aula(db: Session, professional_id: uuid.UUID) -> str:
+    now = datetime.now(scheduling.TIMEZONE)
+    occurrences = scheduling.list_schedule_occurrences(
+        db, professional_id, now.date(), now.date() + timedelta(days=NEXT_SESSION_SEARCH_DAYS)
+    )
+    for occurrence in occurrences:
+        if occurrence.ends_at <= now:
+            continue
+        when = occurrence.starts_at.strftime("%d/%m as %H:%M")
+        return f"Proxima aula\n\n{when} — {_participants_label(occurrence)}"
+    return "Nenhuma aula futura encontrada nos proximos 90 dias."
+
+
+COMMANDS = {
+    "hoje": _handle_hoje,
+    "amanha": _handle_amanha,
+    "esta semana": _handle_esta_semana,
+    "proxima aula": _handle_proxima_aula,
+}
+
+
+def get_professional_by_agent_phone(db: Session, agent_phone: str) -> Professional | None:
+    return db.query(Professional).filter(Professional.agent_phone == agent_phone).first()
+
+
+def _resolve_actor_user(db: Session, professional_id: uuid.UUID) -> User | None:
+    """The WhatsApp agent number has no login session — mutations are
+    attributed to the professional's own operator account. Exactly one is
+    expected per tenant (multi-tenancy roadmap Phase B)."""
+    return (
+        db.query(User)
+        .filter(User.professional_id == professional_id, User.role == "professional")
+        .first()
+    )
+
+
+def _latest_pending_candidate(
+    db: Session, professional_id: uuid.UUID
+) -> OperatorActionCandidate | None:
+    escalation_candidate = (
+        db.query(OperatorActionCandidate)
+        .join(AppointmentCandidate, AppointmentCandidate.operator_action_candidate_id == OperatorActionCandidate.id)
+        .join(PassiveEscalation, PassiveEscalation.appointment_candidate_id == AppointmentCandidate.id)
+        .filter(
+            PassiveEscalation.professional_id == professional_id,
+            PassiveEscalation.status == "sent",
+            OperatorActionCandidate.status == "proposed",
+        )
+        .order_by(PassiveEscalation.sent_at.desc())
+        .first()
+    )
+    if escalation_candidate is not None:
+        return escalation_candidate
+    return (
+        db.query(OperatorActionCandidate)
+        .filter(
+            OperatorActionCandidate.professional_id == professional_id,
+            OperatorActionCandidate.channel == WHATSAPP_CHANNEL,
+            OperatorActionCandidate.status == "proposed",
+        )
+        .order_by(OperatorActionCandidate.created_at.desc())
+        .first()
+    )
+
+
+def _pending_candidates_for_turn(
+    db: Session, professional_id: uuid.UUID, correlation_id: uuid.UUID
+) -> list[OperatorActionCandidate]:
+    """A single instructor turn can produce more than one proposal — e.g.
+    "cancela as duas aulas de hoje" makes the model call propose_cancel_schedule
+    once per occurrence. All proposals from one run_agent_turn() call share
+    its correlation_id, so that's the grouping key for "confirm everything
+    this turn proposed" instead of just the most recently created row."""
+    return (
+        db.query(OperatorActionCandidate)
+        .filter(
+            OperatorActionCandidate.professional_id == professional_id,
+            OperatorActionCandidate.channel == WHATSAPP_CHANNEL,
+            OperatorActionCandidate.status == "proposed",
+            OperatorActionCandidate.correlation_id == correlation_id,
+        )
+        .order_by(OperatorActionCandidate.created_at.asc())
+        .all()
+    )
+
+
+def _load_history(db: Session, professional_id: uuid.UUID) -> list[dict[str, str]]:
+    """Recent turns only. Bounded by age as well as by message count: unlike
+    the web chat (whose history lives in the browser tab and dies on reload),
+    this history is persisted server-side forever, so a count-only window can
+    carry days-old turns into the context. Relative dates are the reason this
+    matters — an assistant turn saying "amanhã, dia 9 de agosto" from last
+    week makes the model answer today's "e amanhã?" for the wrong date."""
+    window = get_assistant_settings(db, professional_id).memory_window_messages
+    cutoff = datetime.now(scheduling.TIMEZONE) - HISTORY_MAX_AGE
+    rows = (
+        db.query(AgentChannelMessage)
+        .filter(
+            AgentChannelMessage.professional_id == professional_id,
+            AgentChannelMessage.created_at >= cutoff,
+        )
+        .order_by(AgentChannelMessage.created_at.desc())
+        .limit(window)
+        .all()
+    )
+    return [{"role": row.role, "content": row.content} for row in reversed(rows)]
+
+
+def _record_turn(db: Session, professional_id: uuid.UUID, role: str, content: str) -> None:
+    db.add(AgentChannelMessage(professional_id=professional_id, role=role, content=content))
+    db.commit()
+
+
+def _handle_confirmation_reply(
+    db: Session, professional: Professional, actor_user_id: uuid.UUID, command: str
+) -> str:
+    latest = _latest_pending_candidate(db, professional.id)
+    if latest is None:
+        return "Nao ha nenhuma acao pendente de confirmacao no momento."
+
+    # Resolve the full group sharing this turn's correlation_id, not just
+    # the most recent row — a single instructor request ("cancela as duas
+    # aulas de hoje") can produce more than one pending proposal, and all of
+    # them must be confirmed/rejected together or one silently never applies.
+    group = _pending_candidates_for_turn(db, professional.id, latest.correlation_id)
+
+    if command in CONFIRM_WORDS:
+        summaries = []
+        for candidate in group:
+            try:
+                result = candidates.confirm(db, professional.id, actor_user_id, candidate.id)
+            except candidates.CandidateNotPendingError as exc:
+                summaries.append(f"Ja nao estava mais pendente (status={exc.status}).")
+                continue
+            summaries.append(result.summary if result.ok else f"Falhou: {result.summary}")
+        return "\n".join(summaries)
+
+    for candidate in group:
+        candidates.reject(db, professional.id, actor_user_id, candidate.id)
+    return "Acao cancelada." if len(group) == 1 else f"{len(group)} acoes canceladas."
+
+
+def _handle_agent_turn(
+    db: Session, professional: Professional, actor_user_id: uuid.UUID, text: str
+) -> str:
+    messages = _load_history(db, professional.id) + [{"role": "user", "content": text}]
+    response = run_agent_turn(
+        db, professional.id, actor_user_id, messages, channel=WHATSAPP_CHANNEL
+    )
+    reply = response.reply
+    if response.pending_candidate is not None:
+        # response.pending_candidate only carries the first proposal's own
+        # id, not its correlation_id — look the row up to get the actual
+        # grouping key, then show every proposal from this turn, not just
+        # the first (see _handle_confirmation_reply for why this matters).
+        pending_row = (
+            db.query(OperatorActionCandidate)
+            .filter(OperatorActionCandidate.id == response.pending_candidate.id)
+            .first()
+        )
+        previews = (
+            [c.preview_text for c in _pending_candidates_for_turn(
+                db, professional.id, pending_row.correlation_id
+            )]
+            if pending_row is not None
+            else [response.pending_candidate.preview_text]
+        )
+        reply = (
+            f"{reply}\n\n" + "\n".join(previews) + "\n\n"
+            "Responda *sim* para confirmar ou *nao* para cancelar."
+        )
+    return reply
+
+
+def try_handle(db: Session, normalized: NormalizedMessage) -> bool:
+    """If this message is addressed to a provisioned agent number, answer it
+    and return True. Otherwise return False so the caller can route it
+    through the normal customer-facing pipeline."""
+    if normalized.direction != "inbound":
+        return False
+
+    professional = get_professional_by_agent_phone(db, normalized.to_phone)
+    if professional is None:
+        return False
+
+    # The agent channel is private to the instructor — authorize the sender
+    # against their own known number (the same phone that runs the
+    # customer-facing side) rather than trusting whoever happens to message
+    # this number. Silently drop (no reply) so an unauthorized sender can't
+    # even confirm the number is live.
+    if (
+        not professional.assistant_phone
+        or normalized.from_phone != professional.assistant_phone
+    ):
+        logger.warning(
+            "Rejected agent-channel message from unauthorized sender %s (professional_id=%s)",
+            normalized.from_phone,
+            professional.id,
+        )
+        return True
+
+    text = normalized.text or ""
+    command = normalize_command(text)
+
+    if command in COMMANDS:
+        reply = COMMANDS[command](db, professional.id)
+    else:
+        actor_user = _resolve_actor_user(db, professional.id)
+        if actor_user is None:
+            reply = "Nenhum usuario operador configurado para esta conta."
+        elif command in CONFIRM_WORDS or command in REJECT_WORDS:
+            reply = _handle_confirmation_reply(db, professional, actor_user.id, command)
+            _record_turn(db, professional.id, "user", text)
+            _record_turn(db, professional.id, "assistant", reply)
+        else:
+            reply = _handle_agent_turn(db, professional, actor_user.id, text)
+            _record_turn(db, professional.id, "user", text)
+            _record_turn(db, professional.id, "assistant", reply)
+
+    send_text_message(from_phone=normalized.to_phone, to_phone=normalized.from_phone, body=reply)
+    return True

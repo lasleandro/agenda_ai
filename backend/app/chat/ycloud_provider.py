@@ -7,9 +7,16 @@ WhatsApp Coexistence event payloads into a provider-agnostic shape.
 
 import hashlib
 import hmac
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+YCLOUD_API_BASE = "https://api.ycloud.com/v2"
 
 
 def verify_signature(raw_body: bytes, signature_header: str | None, secret: str) -> bool:
@@ -79,3 +86,26 @@ def normalize_event(event: dict) -> NormalizedMessage | None:
 
 def webhook_signing_secret() -> str:
     return os.getenv("YCLOUD_WEBHOOK_SIGNING_SECRET", "")
+
+
+def send_text_message(from_phone: str, to_phone: str, body: str) -> None:
+    """Send an outbound WhatsApp text message via the YCloud REST API.
+
+    Errors are logged, not raised — a failed reply must not roll back the
+    inbound webhook transaction that triggered it.
+    """
+    try:
+        send_text_message_or_raise(from_phone, to_phone, body)
+    except httpx.HTTPError:
+        logger.exception("Failed to send YCloud WhatsApp message from %s to %s", from_phone, to_phone)
+
+
+def send_text_message_or_raise(from_phone: str, to_phone: str, body: str) -> None:
+    """Send a WhatsApp message and expose provider failures to durable callers."""
+    response = httpx.post(
+        f"{YCLOUD_API_BASE}/whatsapp/messages",
+        headers={"X-API-Key": os.getenv("YCLOUD_API_KEY", ""), "Content-Type": "application/json"},
+        json={"from": from_phone, "to": to_phone, "type": "text", "text": {"body": body}},
+        timeout=10.0,
+    )
+    response.raise_for_status()

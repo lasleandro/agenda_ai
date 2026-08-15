@@ -24,6 +24,7 @@ import type {
   ConversationListResponse,
   MockConversationInfo,
   GroupFinancialDetail,
+  GenericPlaceRateMatrixDetail,
   PlaceRateInput,
   PlaceRateMatrixDetail,
   Place,
@@ -39,11 +40,20 @@ import type {
   RevenueCandidateList,
   RevenueOccurrenceCreateInput,
   RevenueOccurrenceDetail,
+  RevenuePreviewDetail,
   RevenueSummaryDetail,
   PrimeTimeWindowDetail,
   PrimeTimeWindowInput,
+  CandidateFulfillWaitlistInput,
+  CandidateListResponse,
+  InstructorEvent,
+  InstructorEventInput,
+  InstructorEventListResponse,
   TenantListResponse,
   TenantFeatureState,
+  WaitlistEntry,
+  WaitlistEntryInput,
+  WaitlistEntryListResponse,
   WorkJourneyIntervalDetail,
   WorkJourneyIntervalInput,
 } from "./types";
@@ -263,6 +273,55 @@ export const removeSlotParticipant = (slotId: string, contactId: string) =>
     method: "DELETE",
   });
 
+export const fetchWaitlistEntries = (params?: { status?: string; contactId?: string }) => {
+  const query = new URLSearchParams();
+  if (params?.status) query.set("status", params.status);
+  if (params?.contactId) query.set("contact_id", params.contactId);
+  const qs = query.toString();
+  return apiRequest<WaitlistEntryListResponse>(
+    `/api/waitlist-entries${qs ? `?${qs}` : ""}`
+  );
+};
+export const createWaitlistEntry = (body: WaitlistEntryInput) =>
+  apiRequest<WaitlistEntry>("/api/waitlist-entries", { method: "POST", body });
+export const cancelWaitlistEntry = (id: string) =>
+  apiRequest<WaitlistEntry>(`/api/waitlist-entries/${id}/cancel`, { method: "POST" });
+export const fulfillWaitlistEntry = (id: string, appointmentId: string) =>
+  apiRequest<WaitlistEntry>(`/api/waitlist-entries/${id}/fulfill`, {
+    method: "POST",
+    body: { appointment_id: appointmentId },
+  });
+
+export const fetchAppointmentCandidates = (status = "detected") =>
+  apiRequest<CandidateListResponse>(`/api/appointment-candidates?status=${encodeURIComponent(status)}`);
+export const dismissAppointmentCandidate = (id: string) =>
+  apiRequest<CandidateDetail>(`/api/appointment-candidates/${id}/dismiss`, { method: "POST" });
+export const confirmAppointmentFromCandidate = (
+  id: string,
+  body: {
+    place_id?: string | null;
+    start_at?: string | null;
+    end_at?: string | null;
+    service?: string | null;
+  }
+) =>
+  apiRequest<CandidateDetail>(`/api/appointment-candidates/${id}/confirm-appointment`, {
+    method: "POST",
+    body,
+  });
+export const fulfillWaitlistFromCandidate = (id: string, body: CandidateFulfillWaitlistInput) =>
+  apiRequest<WaitlistEntry>(`/api/appointment-candidates/${id}/fulfill-waitlist`, {
+    method: "POST",
+    body,
+  });
+
+export const fetchInstructorEvents = () =>
+  apiRequest<InstructorEventListResponse>("/api/instructor-events");
+export const createInstructorEvent = (body: InstructorEventInput) =>
+  apiRequest<InstructorEvent>("/api/instructor-events", { method: "POST", body });
+export const cancelInstructorEvent = (id: string) =>
+  apiRequest<InstructorEvent>(`/api/instructor-events/${id}/cancel`, { method: "POST" });
+
 export const fetchContacts = () => apiRequest<ContactListResponse>("/api/contacts");
 export const fetchContact = (id: string) => apiRequest<ContactDetailData>(`/api/contacts/${id}`);
 export const updateContact = (id: string, body: ContactUpdateInput) =>
@@ -308,6 +367,11 @@ export const replacePrimeTimeWindows = (windows: PrimeTimeWindowInput[]) =>
   });
 export const replacePlaceRates = (placeId: string, rates: PlaceRateInput[]) =>
   apiRequest<PlaceRateMatrixDetail>(`/api/financial/places/${placeId}/rates`, {
+    method: "PUT",
+    body: { rates },
+  });
+export const replaceGenericPlaceRates = (rates: PlaceRateInput[]) =>
+  apiRequest<GenericPlaceRateMatrixDetail>("/api/financial/generic-place/rates", {
     method: "PUT",
     body: { rates },
   });
@@ -376,6 +440,21 @@ export const fetchRevenueCandidates = (
   });
   return apiRequest<RevenueCandidateList>(
     `/api/financial/revenue/candidates?${params.toString()}`
+  );
+};
+
+export const fetchRevenuePreview = (
+  sourceType: "appointment" | "recurring_slot",
+  sourceId: string,
+  occurrenceDate: string
+) => {
+  const params = new URLSearchParams({
+    source_type: sourceType,
+    source_id: sourceId,
+    occurrence_date: occurrenceDate,
+  });
+  return apiRequest<RevenuePreviewDetail>(
+    `/api/financial/revenue/preview?${params.toString()}`
   );
 };
 

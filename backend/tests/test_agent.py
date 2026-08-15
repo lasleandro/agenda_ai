@@ -15,6 +15,7 @@ from app.database import SessionLocal
 from app.models import (
     Appointment,
     Contact,
+    InstructorEvent,
     Place,
     Professional,
     RecurringSlot,
@@ -76,6 +77,9 @@ def _cleanup(db, *, professionals: list[Professional]) -> None:
     db.query(Appointment).filter(
         Appointment.professional_id.in_(professional_ids)
     ).delete(synchronize_session=False)
+    db.query(InstructorEvent).filter(
+        InstructorEvent.professional_id.in_(professional_ids)
+    ).delete(synchronize_session=False)
     db.query(Contact).filter(Contact.professional_id.in_(professional_ids)).delete(
         synchronize_session=False
     )
@@ -105,6 +109,32 @@ def test_temporal_resolves_closed_vocabulary_phrases() -> None:
     afternoon = temporal.resolve_temporal_phrase("amanhã de tarde", reference_date=ref)
     assert afternoon.resolved_date == ref + timedelta(days=1)
     assert afternoon.period == (time(12, 0), time(18, 0))
+
+
+def test_temporal_resolves_week_range_phrases() -> None:
+    ref = date(2026, 8, 5)  # a Wednesday
+
+    this_week = temporal.resolve_temporal_phrase("essa semana", reference_date=ref)
+    assert this_week.resolved_date_from == date(2026, 8, 3)  # Monday
+    assert this_week.resolved_date_to == date(2026, 8, 9)  # Sunday
+    assert this_week.resolved_date is None
+    assert this_week.recognized is True
+
+    next_week_accented = temporal.resolve_temporal_phrase(
+        "próxima semana", reference_date=ref
+    )
+    assert next_week_accented.resolved_date_from == date(2026, 8, 10)
+    assert next_week_accented.resolved_date_to == date(2026, 8, 16)
+
+    next_week_unaccented = temporal.resolve_temporal_phrase(
+        "quais horarios do leandro na proxima semana", reference_date=ref
+    )
+    assert next_week_unaccented.resolved_date_from == date(2026, 8, 10)
+    assert next_week_unaccented.resolved_date_to == date(2026, 8, 16)
+
+    coming_week = temporal.resolve_temporal_phrase("semana que vem", reference_date=ref)
+    assert coming_week.resolved_date_from == date(2026, 8, 10)
+    assert coming_week.resolved_date_to == date(2026, 8, 16)
 
 
 def test_temporal_unrecognized_phrase_returns_unresolved() -> None:
@@ -434,6 +464,15 @@ def test_find_instructor_openings_subtracts_bookings() -> None:
         assert ("08:00", "10:00") in windows
         assert ("11:00", "18:00") in windows
         assert not any(start < "11:00" <= end and start >= "10:00" for start, end in windows)
+        by_window = {(o["start_time"], o["end_time"]): o for o in result["openings"]}
+        assert by_window[("08:00", "10:00")]["places"] == [
+            {
+                "place_id": str(place.id),
+                "place_name": "Quadra Central",
+                "start_time": "08:00",
+                "end_time": "10:00",
+            }
+        ]
 
         morning_only = tools.find_instructor_openings(
             db,
@@ -449,6 +488,197 @@ def test_find_instructor_openings_subtracts_bookings() -> None:
         db.close()
 
 
+def test_find_instructor_openings_subtracts_confirmed_events() -> None:
+    db = SessionLocal()
+    professional = _make_professional(db)
+    try:
+        place = _make_place(db, professional.id, "Quadra Central")
+        db.add(
+            WorkJourneyInterval(
+                professional_id=professional.id,
+                day_of_week=0,
+                interval_type="work",
+                start_time=time(8, 0),
+                end_time=time(18, 0),
+            )
+        )
+        db.add(
+            InstructorEvent(
+                professional_id=professional.id,
+                place_id=place.id,
+                event_type="clinic",
+                start_at=datetime.combine(MONDAY, time(13, 0), tzinfo=TIMEZONE),
+                end_at=datetime.combine(MONDAY, time(16, 30), tzinfo=TIMEZONE),
+                status="confirmed",
+            )
+        )
+        db.commit()
+
+        result = tools.find_instructor_openings(
+            db,
+            professional.id,
+            date=MONDAY.isoformat(),
+            duration_minutes=60,
+        )
+
+        assert {(o["start_time"], o["end_time"]) for o in result["openings"]} == {
+            ("08:00", "13:00"),
+            ("16:30", "18:00"),
+        }
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_find_instructor_openings_reports_gaps_without_recurring_slot() -> None:
+    """No place has a RecurringSlot covering the date, so no place-specific
+    availability window exists — but the professional does have a Work
+    Journey and real bookings, so the tool should still report the actual
+    open gaps, with an empty 'places' list on each."""
+    db = SessionLocal()
+    professional = _make_professional(db)
+    try:
+        place = _make_place(db, professional.id, "Quadra Central")
+        contact = _make_contact(db, professional.id, "Aluno Fallback")
+
+        db.add(
+            WorkJourneyInterval(
+                professional_id=professional.id,
+                day_of_week=0,
+                interval_type="work",
+                start_time=time(8, 0),
+                end_time=time(18, 0),
+            )
+        )
+        booked_start = datetime.combine(MONDAY, time(10, 0), tzinfo=TIMEZONE)
+        db.add(
+            Appointment(
+                professional_id=professional.id,
+                contact_id=contact.id,
+                place_id=place.id,
+                service="Aula",
+                start_at=booked_start,
+                end_at=booked_start + timedelta(hours=1),
+                status="confirmed",
+                source="dashboard",
+            )
+        )
+        db.commit()
+
+        result = tools.find_instructor_openings(
+            db,
+            professional.id,
+            date=MONDAY.isoformat(),
+            duration_minutes=60,
+        )
+        windows = {(o["start_time"], o["end_time"]) for o in result["openings"]}
+        assert ("08:00", "10:00") in windows
+        assert ("11:00", "18:00") in windows
+        assert all(o["places"] == [] for o in result["openings"])
+        assert "note" in result
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_find_instructor_openings_reports_gaps_outside_narrow_place_window() -> None:
+    """The regression behind "amanhã só das 10 às 12": a place whose
+    recurring availability covers only part of the work journey must not
+    hide the free hours outside that window."""
+    db = SessionLocal()
+    professional = _make_professional(db)
+    try:
+        place = _make_place(db, professional.id, "Quadra Central")
+        contact = _make_contact(db, professional.id, "Aluno Janela")
+        created_at = datetime.combine(MONDAY, time(6, 0), tzinfo=TIMEZONE)
+
+        db.add(
+            WorkJourneyInterval(
+                professional_id=professional.id,
+                day_of_week=0,
+                interval_type="work",
+                start_time=time(6, 0),
+                end_time=time(22, 0),
+            )
+        )
+        db.add(
+            RecurringSlot(
+                professional_id=professional.id,
+                place_id=place.id,
+                day_of_week=0,
+                start_time=time(8, 0),
+                end_time=time(12, 0),
+                recurrence_type="weekly",
+                slot_kind="availability",
+                created_at=created_at,
+            )
+        )
+        booked_start = datetime.combine(MONDAY, time(8, 0), tzinfo=TIMEZONE)
+        db.add(
+            Appointment(
+                professional_id=professional.id,
+                contact_id=contact.id,
+                place_id=place.id,
+                service="Aula",
+                start_at=booked_start,
+                end_at=booked_start + timedelta(hours=2),
+                status="confirmed",
+                source="dashboard",
+            )
+        )
+        db.commit()
+
+        result = tools.find_instructor_openings(
+            db, professional.id, date=MONDAY.isoformat(), duration_minutes=60
+        )
+        windows = {(o["start_time"], o["end_time"]) for o in result["openings"]}
+        assert windows == {("06:00", "08:00"), ("10:00", "22:00")}
+
+        by_window = {(o["start_time"], o["end_time"]): o for o in result["openings"]}
+        assert by_window[("10:00", "22:00")]["places"] == [
+            {
+                "place_id": str(place.id),
+                "place_name": "Quadra Central",
+                "start_time": "10:00",
+                "end_time": "12:00",
+            }
+        ]
+        assert by_window[("06:00", "08:00")]["places"] == []
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_find_instructor_openings_explains_weekday_without_work_journey() -> None:
+    """An empty result must say why: no journey configured for that weekday
+    is a different answer from a fully booked day, and the agent can only
+    relay the difference if the tool states it."""
+    db = SessionLocal()
+    professional = _make_professional(db)
+    try:
+        _make_place(db, professional.id, "Quadra Central")
+        db.add(
+            WorkJourneyInterval(
+                professional_id=professional.id,
+                day_of_week=0,
+                interval_type="work",
+                start_time=time(8, 0),
+                end_time=time(18, 0),
+            )
+        )
+        db.commit()
+
+        sunday = MONDAY - timedelta(days=1)
+        result = tools.find_instructor_openings(
+            db, professional.id, date=sunday.isoformat(), duration_minutes=60
+        )
+        assert result["openings"] == []
+        assert "jornada de trabalho cadastrada" in result["note"]
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
 def test_resolve_date_phrase_tool_wraps_temporal_module() -> None:
     db = SessionLocal()
     professional = _make_professional(db)
@@ -456,6 +686,14 @@ def test_resolve_date_phrase_tool_wraps_temporal_module() -> None:
         result = tools.resolve_date_phrase(db, professional.id, phrase="hoje")
         assert result["recognized"] is True
         assert result["date"] == datetime.now(TIMEZONE).date().isoformat()
+        assert result["date_from"] is None
+        assert result["date_to"] is None
+
+        week_result = tools.resolve_date_phrase(db, professional.id, phrase="proxima semana")
+        assert week_result["recognized"] is True
+        assert week_result["date"] is None
+        assert week_result["date_from"] is not None
+        assert week_result["date_to"] is not None
 
         unresolved = tools.resolve_date_phrase(db, professional.id, phrase="algo aleatorio")
         assert unresolved["recognized"] is False

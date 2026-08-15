@@ -193,16 +193,16 @@ export default function PlaceDetailPage() {
               setEditingSlot(slot);
               setSlotDialogOpen(true);
             }}
-            className="flex w-full items-center justify-between rounded-lg border border-border bg-card px-4 py-3 text-left text-sm hover:border-indigo-400"
+            className="flex w-full flex-col items-start gap-2 rounded-lg border border-border bg-card px-4 py-3 text-left text-sm hover:border-indigo-400 sm:flex-row sm:items-center sm:justify-between"
           >
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <span className="font-medium">{formatSlotDay(slot)}</span>
               <span className="text-muted-foreground">
                 {formatTime(slot.start_time)}–{formatTime(slot.end_time)}
               </span>
               {slot.label && <span className="text-muted-foreground">· {slot.label}</span>}
             </div>
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
               <span className="rounded-full bg-muted px-2 py-0.5">
                 {CLASS_TYPE_LABELS[slot.class_type]}
               </span>

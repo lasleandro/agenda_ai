@@ -66,8 +66,27 @@ Recommend deciding this by looking at how instructors actually talk about their 
 
 ## Phases (staged by risk, not by calendar)
 
-### Phase 0 — Channel + read-only queries
+### Phase 0 — Channel + read-only queries — **implemented 2026-08-08**
 Stand up the assistant WhatsApp number as its own ingestion path (same tenant-resolution pattern as the customer channel, different message handling). Implement exactly the brief's original scope: `hoje`, `amanha`, `esta semana`, `proxima aula` as deterministic queries against `Appointment`. Zero mutation risk — this phase is about proving the channel and tenant-resolution plumbing work, and giving the instructor a reason to use the number at all before asking them to trust it with writes.
+
+Implementation: `Professional.agent_phone` (new column, separate from `assistant_phone`), `app/chat/agent_channel.py` (command matching + reply formatting), `ycloud_provider.send_text_message()` (outbound YCloud send, didn't exist before this phase), routed from `chat/ingestion.py:ingest_event` before it reaches the passive-observer pipeline. Env: `YCLOUD_AGENT_CHANNEL_ID`, `AGENT_WHATSAPP_NUMBER` (renamed from `ASSISTANT_WHATSAPP_NUMBER` for clarity against `assistant_phone`'s existing, unrelated meaning).
+
+### Phases 1–2 — full tool parity — **implemented 2026-08-08, ahead of the original narrow scope**
+When this got built, the full mutation tool set (`app/agent/mutations.py`) already existed for the web chat (Phases 4–5 of the operational ontology roadmap, done earlier) — every mutation already goes through the same propose → confirm → execute gate regardless of caller. That made the originally-planned narrow tool subset (just `UpdateContactLevel` + participant add/remove) mostly moot: the gate is what bounds risk, not the tool list. Decision (confirmed with the instructor before building): give WhatsApp the same full tool set as web chat rather than forking a restricted list to revisit later.
+
+What changed: `run_agent_turn()` and every `propose_*` tool in `mutations.py` now accept a `channel` parameter (default `"web"`), threaded through so `OperatorActionCandidate.channel` — and therefore `operational_events.source_channel` — correctly reflects `"whatsapp"` for agent-channel proposals, not just for confirm/execute (which already read `candidate.channel`). `app/chat/agent_channel.py` resolves the professional's own `User` row as `actor_user_id` (no login session exists over WhatsApp) and calls `run_agent_turn(..., channel="whatsapp")` for any message that isn't a Phase 0 command.
+
+Confirmation UX (also confirmed with the instructor): reply keywords, not YCloud interactive buttons — `sim`/`confirmar`/`confirmo`/`confirma`/`ok` to confirm, `nao`/`cancelar`/`cancela`/`cancelo` to reject, resolved against the professional's most recent `status="proposed"` candidate on `channel="whatsapp"`. Simpler than interactive buttons and matches natural WhatsApp usage; revisit if ambiguity in practice (e.g. two pending proposals) turns out to be a real problem.
+
+### Phase 3 — Multi-turn conversation state — **implemented 2026-08-08**
+New `AgentChannelMessage` table (professional_id, role, content, created_at) — a lightweight per-professional turn log, deliberately not a reuse of the customer-facing `Message`/`Conversation`/`PendingProcessing` machinery, per this doc's own earlier note that the interaction shape differs (synchronous back-and-forth vs. buffered batch extraction).
+
+`agent_channel._load_history()` replays the windowed history (same `AssistantSettings.memory_window_messages` knob the web chat uses) as the `messages` argument to `run_agent_turn`; `agent_channel._record_turn()` persists both the instructor's message and the agent's reply after every non-Phase-0 exchange (both free-text agent turns and sim/nao confirmation replies). Phase 0 deterministic commands are deliberately not recorded — they stay a separate fast lane outside the LLM conversation, keeping context focused on the actual back-and-forth. No explicit session reset exists; history is simply windowed, matching how the web chat already behaves.
+
+### Phase 4 — Web chat as a second entry point
+Already true as a side effect of Phases 1–2 above: the same orchestrator, tools, and `OperatorActionCandidate` state machine serve both channels today, `channel` merely tags which one originated a given proposal. Nothing further needed here.
+
+**All phases of this roadmap are now implemented.** Remaining known gaps: no WhatsApp-native session reset/timeout for stale conversation history, and no interactive-button confirmation (reply-keyword only, per the confirmed decision above) — neither blocks real usage, both are candidates for a future pass based on actual usage patterns.
 
 ### Phase 1 — Low-risk single-entity writes, always confirmed
 `UpdateContactLevel`, add/remove a `RecurringSlotParticipant` for an already-existing slot. Small blast radius if wrong (easy to undo), good place to prove out the tool-calling + entity-resolution + confirmation loop end to end.

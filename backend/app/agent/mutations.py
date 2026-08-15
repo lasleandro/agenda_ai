@@ -16,7 +16,7 @@ diverge between the dashboard and the agent — see those modules' docstrings.
 """
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Any, Callable
 
 from fastapi import HTTPException
@@ -28,13 +28,17 @@ from app.models import (
     Appointment,
     AppointmentParticipant,
     Contact,
+    InstructorEvent,
     MakeupClassCredit,
     OperatorActionCandidate,
     Place,
     RecurringSlot,
     RecurringSlotParticipant,
+    WaitlistEntry,
 )
 from app.services import appointment_participants, appointments, participants, schedule_overrides
+from app.services import instructor_events as instructor_events_service
+from app.services import waitlist as waitlist_service
 from app.services.contacts import apply_contact_updates
 from app.services.makeup_credits import grant_credit_if_eligible
 from app.services.operational_events import record_event
@@ -79,6 +83,7 @@ def propose_add_group_member(
     professional_id: uuid.UUID,
     actor_user_id: uuid.UUID,
     correlation_id: uuid.UUID,
+    channel: str = "web",
     *,
     contact_id: str,
     recurring_slot_id: str,
@@ -127,6 +132,7 @@ def propose_add_group_member(
             },
         ],
         correlation_id=correlation_id,
+        channel=channel,
     )
     return _pending_result(candidate)
 
@@ -187,6 +193,7 @@ def propose_remove_group_member(
     professional_id: uuid.UUID,
     actor_user_id: uuid.UUID,
     correlation_id: uuid.UUID,
+    channel: str = "web",
     *,
     contact_id: str,
     recurring_slot_id: str,
@@ -243,6 +250,7 @@ def propose_remove_group_member(
             },
         ],
         correlation_id=correlation_id,
+        channel=channel,
     )
     return _pending_result(candidate)
 
@@ -309,6 +317,7 @@ def propose_add_appointment_participant(
     professional_id: uuid.UUID,
     actor_user_id: uuid.UUID,
     correlation_id: uuid.UUID,
+    channel: str = "web",
     *,
     contact_id: str,
     appointment_id: str,
@@ -364,6 +373,7 @@ def propose_add_appointment_participant(
             {"entity_type": "appointment", "entity_id": appointment_id, "label": label},
         ],
         correlation_id=correlation_id,
+        channel=channel,
     )
     return _pending_result(candidate)
 
@@ -419,6 +429,7 @@ def propose_remove_appointment_participant(
     professional_id: uuid.UUID,
     actor_user_id: uuid.UUID,
     correlation_id: uuid.UUID,
+    channel: str = "web",
     *,
     contact_id: str,
     appointment_id: str,
@@ -469,6 +480,7 @@ def propose_remove_appointment_participant(
             {"entity_type": "appointment", "entity_id": appointment_id, "label": label},
         ],
         correlation_id=correlation_id,
+        channel=channel,
     )
     return _pending_result(candidate)
 
@@ -543,6 +555,7 @@ def propose_update_contact(
     professional_id: uuid.UUID,
     actor_user_id: uuid.UUID,
     correlation_id: uuid.UUID,
+    channel: str = "web",
     *,
     contact_id: str,
     changes: dict[str, Any],
@@ -578,6 +591,7 @@ def propose_update_contact(
             {"entity_type": "contact", "entity_id": contact_id, "label": contact.display_name}
         ],
         correlation_id=correlation_id,
+        channel=channel,
     )
     return _pending_result(candidate)
 
@@ -633,6 +647,7 @@ def propose_create_appointment(
     professional_id: uuid.UUID,
     actor_user_id: uuid.UUID,
     correlation_id: uuid.UUID,
+    channel: str = "web",
     *,
     contact_id: str,
     place_id: str,
@@ -640,6 +655,8 @@ def propose_create_appointment(
     end_at: str,
     service: str,
     billing_type: str = "billable",
+    idempotency_key: str | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     contact = (
         db.query(Contact)
@@ -697,6 +714,9 @@ def propose_create_appointment(
             {"entity_type": "place", "entity_id": place_id, "label": place.name},
         ],
         correlation_id=correlation_id,
+        channel=channel,
+        idempotency_key=idempotency_key,
+        commit=commit,
     )
     return _pending_result(candidate)
 
@@ -750,6 +770,7 @@ def propose_redeem_makeup_credit(
     professional_id: uuid.UUID,
     actor_user_id: uuid.UUID,
     correlation_id: uuid.UUID,
+    channel: str = "web",
     *,
     credit_id: str,
     place_id: str,
@@ -825,6 +846,7 @@ def propose_redeem_makeup_credit(
             {"entity_type": "makeup_credit", "entity_id": credit_id, "label": f"Crédito {credit.origin_occurrence_date.isoformat()}"},
         ],
         correlation_id=correlation_id,
+        channel=channel,
     )
     return _pending_result(candidate)
 
@@ -904,6 +926,7 @@ def propose_cancel_schedule(
     professional_id: uuid.UUID,
     actor_user_id: uuid.UUID,
     correlation_id: uuid.UUID,
+    channel: str = "web",
     *,
     target_type: str,
     target_id: str,
@@ -940,6 +963,7 @@ def propose_cancel_schedule(
             {"entity_type": target_type, "entity_id": target_id, "label": occurrence.source_label}
         ],
         correlation_id=correlation_id,
+        channel=channel,
     )
     return _pending_result(candidate)
 
@@ -1006,7 +1030,16 @@ def _execute_cancel_schedule(
                 source_channel=candidate.channel,
             )
 
-    return ExecutionResult(ok=True, summary=f"Ocorrência de {args['occurrence_date']} cancelada.")
+    summary = f"Ocorrência de {args['occurrence_date']} cancelada."
+    newly_matched = waitlist_service.mark_matches_for_date(db, professional_id, parsed_date)
+    if newly_matched:
+        names = ", ".join(
+            db.query(Contact.display_name).filter(Contact.id == entry.contact_id).scalar()
+            for entry in newly_matched
+        )
+        summary += f" {names} estava(m) na fila de espera e agora cabe(m) nesse horário."
+
+    return ExecutionResult(ok=True, summary=summary)
 
 
 # ---------------------------------------------------------------------------
@@ -1027,6 +1060,7 @@ def propose_note_participant_absence(
     professional_id: uuid.UUID,
     actor_user_id: uuid.UUID,
     correlation_id: uuid.UUID,
+    channel: str = "web",
     *,
     contact_id: str,
     recurring_slot_id: str,
@@ -1098,6 +1132,7 @@ def propose_note_participant_absence(
             },
         ],
         correlation_id=correlation_id,
+        channel=channel,
     )
     return _pending_result(candidate)
 
@@ -1177,6 +1212,7 @@ def propose_reschedule_occurrence(
     professional_id: uuid.UUID,
     actor_user_id: uuid.UUID,
     correlation_id: uuid.UUID,
+    channel: str = "web",
     *,
     target_type: str,
     target_id: str,
@@ -1184,6 +1220,8 @@ def propose_reschedule_occurrence(
     new_start_at: str,
     new_end_at: str,
     new_place_id: str | None = None,
+    idempotency_key: str | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     if target_type not in VALID_TARGET_TYPES:
         return {"error": f"target_type must be one of {VALID_TARGET_TYPES}"}
@@ -1241,6 +1279,9 @@ def propose_reschedule_occurrence(
             {"entity_type": target_type, "entity_id": target_id, "label": occurrence.source_label}
         ],
         correlation_id=correlation_id,
+        channel=channel,
+        idempotency_key=idempotency_key,
+        commit=commit,
     )
     return _pending_result(candidate)
 
@@ -1282,6 +1323,312 @@ def _execute_reschedule_occurrence(
     )
     return ExecutionResult(
         ok=True, summary=f"Ocorrência remarcada para {args['new_start_at']}."
+    )
+
+
+# ---------------------------------------------------------------------------
+# propose_add_waitlist_entry / propose_remove_waitlist_entry
+# (waitlist roadmap v0.1, Phase 1 — "Fila de Espera")
+# ---------------------------------------------------------------------------
+
+def propose_add_waitlist_entry(
+    db: Session,
+    professional_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    correlation_id: uuid.UUID,
+    channel: str = "web",
+    *,
+    contact_id: str,
+    desired_date: str,
+    desired_start_time: str,
+    desired_end_time: str,
+    place_id: str | None = None,
+    class_type: str | None = None,
+    duration_minutes: int | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    contact = (
+        db.query(Contact)
+        .filter(Contact.id == uuid.UUID(contact_id), Contact.professional_id == professional_id)
+        .first()
+    )
+    if contact is None:
+        return {"error": "Contact not found"}
+
+    place_name = None
+    if place_id is not None:
+        place = (
+            db.query(Place)
+            .filter(Place.id == uuid.UUID(place_id), Place.professional_id == professional_id)
+            .first()
+        )
+        if place is None:
+            return {"error": "Place not found"}
+        place_name = place.name
+
+    parsed_start = time.fromisoformat(desired_start_time)
+    parsed_end = time.fromisoformat(desired_end_time)
+    if parsed_end <= parsed_start:
+        return {"error": "desired_end_time must be after desired_start_time"}
+
+    local_date = date.fromisoformat(desired_date)
+    place_suffix = f", {place_name}" if place_name else ""
+    preview_text = (
+        f"Adicionar {contact.display_name} à fila de espera para "
+        f"{local_date.strftime('%d/%m/%Y')} das {parsed_start.strftime('%H:%M')} "
+        f"às {parsed_end.strftime('%H:%M')}{place_suffix}."
+    )
+    candidate = candidates.propose(
+        db,
+        professional_id,
+        actor_user_id,
+        tool_name="propose_add_waitlist_entry",
+        arguments={
+            "contact_id": contact_id,
+            "place_id": place_id,
+            "desired_date": desired_date,
+            "desired_start_time": desired_start_time,
+            "desired_end_time": desired_end_time,
+            "class_type": class_type,
+            "duration_minutes": duration_minutes,
+            "note": note,
+        },
+        preview_text=preview_text,
+        affected_entities=[
+            {"entity_type": "contact", "entity_id": contact_id, "label": contact.display_name},
+        ],
+        correlation_id=correlation_id,
+        channel=channel,
+    )
+    return _pending_result(candidate)
+
+
+def _execute_add_waitlist_entry(
+    db: Session, professional_id: uuid.UUID, candidate: OperatorActionCandidate
+) -> ExecutionResult:
+    args = candidate.resolved_arguments
+    try:
+        entry = waitlist_service.create_entry(
+            db,
+            professional_id,
+            contact_id=uuid.UUID(args["contact_id"]),
+            place_id=uuid.UUID(args["place_id"]) if args.get("place_id") else None,
+            desired_date=date.fromisoformat(args["desired_date"]),
+            desired_start_time=time.fromisoformat(args["desired_start_time"]),
+            desired_end_time=time.fromisoformat(args["desired_end_time"]),
+            class_type=args.get("class_type"),
+            duration_minutes=args.get("duration_minutes"),
+            note=args.get("note"),
+        )
+    except waitlist_service.WaitlistValidationError as exc:
+        raise ValueError(str(exc))
+
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type="waitlist.entry.added",
+        occurred_at=datetime.now(TIMEZONE),
+        actor_type="user",
+        actor_id=candidate.actor_user_id,
+        source_channel=candidate.channel,
+        entity_type="waitlist_entry",
+        entity_id=entry.id,
+        correlation_id=candidate.correlation_id,
+        operator_action_candidate_id=candidate.id,
+        payload={"contact_id": args["contact_id"], "desired_date": args["desired_date"]},
+        before_state=None,
+        after_state={"status": entry.status},
+    )
+    contact_name = db.query(Contact.display_name).filter(Contact.id == entry.contact_id).scalar()
+    return ExecutionResult(
+        ok=True,
+        summary=f"{contact_name} adicionado(a) à fila de espera para {args['desired_date']}.",
+    )
+
+
+def propose_remove_waitlist_entry(
+    db: Session,
+    professional_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    correlation_id: uuid.UUID,
+    channel: str = "web",
+    *,
+    waitlist_entry_id: str,
+) -> dict[str, Any]:
+    entry = waitlist_service.get_entry(db, professional_id, uuid.UUID(waitlist_entry_id))
+    if entry is None:
+        return {"error": "Waitlist entry not found"}
+    if entry.status not in ("open", "matched"):
+        return {"error": f"Entry is not cancellable (status={entry.status})"}
+
+    contact = db.query(Contact).filter(Contact.id == entry.contact_id).first()
+    contact_name = contact.display_name if contact else "Desconhecido"
+    preview_text = (
+        f"Remover {contact_name} da fila de espera "
+        f"({entry.desired_date.strftime('%d/%m/%Y')} das "
+        f"{entry.desired_start_time.strftime('%H:%M')} às "
+        f"{entry.desired_end_time.strftime('%H:%M')})."
+    )
+    candidate = candidates.propose(
+        db,
+        professional_id,
+        actor_user_id,
+        tool_name="propose_remove_waitlist_entry",
+        arguments={"waitlist_entry_id": waitlist_entry_id},
+        preview_text=preview_text,
+        affected_entities=[
+            {"entity_type": "contact", "entity_id": str(entry.contact_id), "label": contact_name},
+        ],
+        correlation_id=correlation_id,
+        channel=channel,
+    )
+    return _pending_result(candidate)
+
+
+def _execute_remove_waitlist_entry(
+    db: Session, professional_id: uuid.UUID, candidate: OperatorActionCandidate
+) -> ExecutionResult:
+    args = candidate.resolved_arguments
+    try:
+        entry = waitlist_service.cancel_entry(
+            db, professional_id, uuid.UUID(args["waitlist_entry_id"])
+        )
+    except waitlist_service.WaitlistValidationError as exc:
+        raise ValueError(str(exc))
+
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type="waitlist.entry.cancelled",
+        occurred_at=datetime.now(TIMEZONE),
+        actor_type="user",
+        actor_id=candidate.actor_user_id,
+        source_channel=candidate.channel,
+        entity_type="waitlist_entry",
+        entity_id=entry.id,
+        correlation_id=candidate.correlation_id,
+        operator_action_candidate_id=candidate.id,
+        payload={"waitlist_entry_id": args["waitlist_entry_id"]},
+        before_state={"status": "open"},
+        after_state={"status": "cancelled"},
+    )
+    contact_name = db.query(Contact.display_name).filter(Contact.id == entry.contact_id).scalar()
+    return ExecutionResult(ok=True, summary=f"{contact_name} removido(a) da fila de espera.")
+
+
+# ---------------------------------------------------------------------------
+# propose_create_event (instructor events roadmap v0.1, Phase 3)
+# ---------------------------------------------------------------------------
+
+def propose_create_event(
+    db: Session,
+    professional_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    correlation_id: uuid.UUID,
+    channel: str = "web",
+    *,
+    event_type: str,
+    start_at: str,
+    end_at: str,
+    place_id: str | None = None,
+    title: str | None = None,
+    income_cents: int | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    if event_type not in instructor_events_service.EVENT_TYPES:
+        return {"error": f"event_type must be one of {instructor_events_service.EVENT_TYPES}"}
+
+    parsed_start = _parse_datetime(start_at)
+    parsed_end = _parse_datetime(end_at)
+    if parsed_end <= parsed_start:
+        return {"error": "end_at must be after start_at"}
+
+    place_name = None
+    if place_id is not None:
+        place = (
+            db.query(Place)
+            .filter(Place.id == uuid.UUID(place_id), Place.professional_id == professional_id)
+            .first()
+        )
+        if place is None:
+            return {"error": "Place not found"}
+        place_name = place.name
+
+    try:
+        instructor_events_service.assert_no_event_conflict(
+            db, professional_id, start_at=parsed_start, end_at=parsed_end
+        )
+    except HTTPException as exc:
+        return {"error": exc.detail}
+
+    local_start = parsed_start.astimezone(TIMEZONE)
+    local_end = parsed_end.astimezone(TIMEZONE)
+    income_label = f" — R$ {income_cents / 100:.2f}".replace(".", ",") if income_cents else ""
+    place_suffix = f", {place_name}" if place_name else ""
+    preview_text = (
+        f"Criar evento ({event_type}) {title or ''} em "
+        f"{local_start.strftime('%d/%m/%Y %H:%M')}–{local_end.strftime('%H:%M')}"
+        f"{place_suffix}{income_label}."
+    )
+    candidate = candidates.propose(
+        db,
+        professional_id,
+        actor_user_id,
+        tool_name="propose_create_event",
+        arguments={
+            "event_type": event_type,
+            "start_at": parsed_start.isoformat(),
+            "end_at": parsed_end.isoformat(),
+            "place_id": place_id,
+            "title": title,
+            "income_cents": income_cents,
+            "note": note,
+        },
+        preview_text=preview_text,
+        affected_entities=[],
+        correlation_id=correlation_id,
+        channel=channel,
+    )
+    return _pending_result(candidate)
+
+
+def _execute_create_event(
+    db: Session, professional_id: uuid.UUID, candidate: OperatorActionCandidate
+) -> ExecutionResult:
+    args = candidate.resolved_arguments
+    try:
+        event = instructor_events_service.create_event(
+            db,
+            professional_id,
+            event_type=args["event_type"],
+            start_at=_parse_datetime(args["start_at"]),
+            end_at=_parse_datetime(args["end_at"]),
+            place_id=uuid.UUID(args["place_id"]) if args.get("place_id") else None,
+            title=args.get("title"),
+            income_cents=args.get("income_cents"),
+            note=args.get("note"),
+        )
+    except instructor_events_service.InstructorEventValidationError as exc:
+        raise ValueError(str(exc))
+
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type="instructor_event.created",
+        occurred_at=datetime.now(TIMEZONE),
+        actor_type="user",
+        actor_id=candidate.actor_user_id,
+        source_channel=candidate.channel,
+        entity_type="instructor_event",
+        entity_id=event.id,
+        correlation_id=candidate.correlation_id,
+        operator_action_candidate_id=candidate.id,
+        payload={"event_type": event.event_type, "start_at": args["start_at"]},
+        before_state=None,
+        after_state={"status": event.status},
+    )
+    return ExecutionResult(
+        ok=True, summary=f"Evento criado em {args['start_at']}."
     )
 
 
@@ -1474,6 +1821,65 @@ MUTATION_TOOL_SPECS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_add_waitlist_entry",
+            "description": "Propose adding a contact to the Fila de Espera (waitlist) for a specific date/time slot that doesn't exist yet — use when the instructor has no opening for a contact and wants to remember the request. Requires a specific date and time range, not a vague period. Requires explicit instructor confirmation before it takes effect.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "contact_id": {"type": "string"},
+                    "desired_date": {"type": "string", "description": "ISO date, e.g. 2026-08-15."},
+                    "desired_start_time": {"type": "string", "description": "ISO time, e.g. 19:00:00."},
+                    "desired_end_time": {"type": "string", "description": "ISO time, e.g. 20:00:00."},
+                    "place_id": {"type": "string", "description": "Optional — omit if any place works."},
+                    "class_type": {"type": "string", "enum": ["individual", "group"], "description": "Optional — omit if either works."},
+                    "duration_minutes": {"type": "integer", "minimum": 1, "description": "Optional — defaults to the desired time range's length."},
+                    "note": {"type": "string", "description": "Optional free-text note, e.g. preferences."},
+                },
+                "required": ["contact_id", "desired_date", "desired_start_time", "desired_end_time"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_remove_waitlist_entry",
+            "description": "Propose removing/cancelling a Fila de Espera (waitlist) entry — the contact is no longer waiting for that slot. Use list_waitlist_entries first to get a real waitlist_entry_id; never guess one. Requires explicit instructor confirmation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "waitlist_entry_id": {"type": "string"},
+                },
+                "required": ["waitlist_entry_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_create_event",
+            "description": "Propose creating an InstructorEvent — paid work with no client, not a class: refereeing a tournament, running a workshop or clinic. Use for things like 'amanha das 15 as 20h vou dar uma clinica, vou receber R$ 2000'. Requires explicit instructor confirmation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_type": {
+                        "type": "string",
+                        "enum": ["tournament_referee", "workshop", "clinic", "other"],
+                        "description": "tournament_referee for arbitragem/arbitrar; workshop for workshop/oficina; clinic for clinica; other otherwise.",
+                    },
+                    "start_at": {"type": "string", "description": "ISO 8601 datetime, e.g. 2026-08-10T15:00:00-03:00."},
+                    "end_at": {"type": "string", "description": "ISO 8601 datetime."},
+                    "place_id": {"type": "string", "description": "Optional — omit if not at a registered place."},
+                    "title": {"type": "string", "description": "Optional short label, e.g. 'Clínica de saque'."},
+                    "income_cents": {"type": "integer", "description": "Optional flat fee in cents, e.g. R$ 2000 -> 200000."},
+                    "note": {"type": "string"},
+                },
+                "required": ["event_type", "start_at", "end_at"],
+            },
+        },
+    },
 ]
 
 MUTATION_TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
@@ -1487,6 +1893,9 @@ MUTATION_TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
     "propose_reschedule_occurrence": propose_reschedule_occurrence,
     "propose_add_appointment_participant": propose_add_appointment_participant,
     "propose_remove_appointment_participant": propose_remove_appointment_participant,
+    "propose_add_waitlist_entry": propose_add_waitlist_entry,
+    "propose_remove_waitlist_entry": propose_remove_waitlist_entry,
+    "propose_create_event": propose_create_event,
 }
 
 candidates.MUTATION_EXECUTORS["propose_add_group_member"] = _execute_add_group_member
@@ -1505,3 +1914,6 @@ candidates.MUTATION_EXECUTORS[
     "propose_note_participant_absence"
 ] = _execute_note_participant_absence
 candidates.MUTATION_EXECUTORS["propose_reschedule_occurrence"] = _execute_reschedule_occurrence
+candidates.MUTATION_EXECUTORS["propose_add_waitlist_entry"] = _execute_add_waitlist_entry
+candidates.MUTATION_EXECUTORS["propose_remove_waitlist_entry"] = _execute_remove_waitlist_entry
+candidates.MUTATION_EXECUTORS["propose_create_event"] = _execute_create_event

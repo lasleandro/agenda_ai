@@ -95,9 +95,12 @@ convention this table can afford to gloss over.
 | `get_schedule(date_from, date_to)` | Appointments + recurring-class occurrences in an explicit date range (max 31 days), each with `is_past`/`class_type`/`billing_type` |
 | `get_next_session(contact_id)` | This contact's next scheduled occurrence, searching up to 90 days ahead |
 | `resolve_date_phrase(phrase)` | Resolve a Portuguese relative-date phrase ("amanha," "terca que vem," "sabado de manha") into a concrete ISO date and, if present, a period-of-day time window |
-| `find_instructor_openings(date, period?, duration_minutes?, place_id?)` | Prime/regular open slots (from the financial capacity module) — reflects only pre-declared recurring capacity windows, NOT a general "can I book this" check; see §4 |
+| `find_instructor_openings(date, period?, duration_minutes?, place_id?)` | The instructor's genuinely free windows on a date: declared Work Journey minus every booking. Each opening carries a `places` list (which places' recurring availability covers it — may be empty without making the window any less free); see §4 |
 | `recommend_makeup_slots(contact_id)` | Ranks open slots for a contact's make-up credits by cost + historical occupancy. Empty if the contact has no available credits |
 | `list_makeup_credits(contact_id)` | Lists a contact's *available* credits with their real `credit_id`s — the only way to discover a `credit_id`; must be called before `propose_redeem_makeup_credit` |
+| `list_waitlist_entries(status?, place_id?, contact_id?)` | List Fila de Espera entries — contacts who want a slot at a specific date/time that doesn't exist yet |
+| `find_waitlist_matches(date_from?, date_to?)` | Check open waitlist entries against current capacity (reuses `find_instructor_openings`'s free-range computation) and report which now have a fitting opening. Read-only — never books anything |
+| `list_events(date_from?, date_to?)` | List `InstructorEvent` rows (tournament refereeing, workshops, clinics — non-class paid work, no client) in an optional date range |
 
 There is no `find_students_by_group`, `get_contact_credits`, or
 `get_contact_detail` tool — group membership comes back as part of
@@ -123,6 +126,9 @@ and presents the candidate's deterministic preview to the user.
 | `propose_remove_group_member(contact_id, recurring_slot_id)` | Remove a student from a recurring class group's roster | `_execute_remove_group_member` |
 | `propose_update_contact(contact_id, changes)` | Update allow-listed contact fields (level, address, home place, ...) | `_execute_update_contact` |
 | `propose_redeem_makeup_credit(credit_id, place_id, start_at, end_at)` | Book a make-up class from a real `credit_id` (see `list_makeup_credits`), consuming it in the same transaction | `_execute_redeem_makeup_credit` |
+| `propose_add_waitlist_entry(contact_id, desired_date, desired_start_time, desired_end_time, place_id?, class_type?, duration_minutes?, note?)` | Add a contact to the Fila de Espera for a specific desired slot | `_execute_add_waitlist_entry` |
+| `propose_remove_waitlist_entry(waitlist_entry_id)` | Cancel a waitlist entry — use `list_waitlist_entries` first, never guess the ID | `_execute_remove_waitlist_entry` |
+| `propose_create_event(event_type, start_at, end_at, place_id?, title?, income_cents?, note?)` | Create an `InstructorEvent` — refereeing a tournament, running a workshop or clinic. Use instead of `propose_create_appointment` whenever there's no client involved | `_execute_create_event` |
 
 `target_type` above is always `"appointment"` or `"recurring_slot"`.
 Each executor re-validates inside a single SQL transaction, uses the same
@@ -166,6 +172,11 @@ Key behavioral rules from the system prompt:
 - `find_instructor_openings` is only for open-ended availability queries;
   for direct booking at a specific time, use `propose_create_appointment`
   directly.
+- An opening whose `places` list is empty is still a free window — the
+  agent must list it and ask which place to use, never report it as "no
+  availability". When `openings` comes back empty the result carries a
+  `note` saying *why* (no Work Journey configured for that weekday vs. the
+  day being fully booked); the agent relays that reason.
 - Always mention the place (quadra) when presenting results.
 
 ---

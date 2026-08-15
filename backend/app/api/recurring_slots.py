@@ -300,6 +300,8 @@ def update_recurring_slot(
     end_time = updates.get("end_time", slot.end_time)
     recurrence_type = updates.get("recurrence_type", slot.recurrence_type)
     scheduled_date = updates.get("scheduled_date", slot.scheduled_date)
+    if end_time <= start_time:
+        raise HTTPException(status_code=422, detail="End time must be after start time")
     if {
         "day_of_week",
         "start_time",

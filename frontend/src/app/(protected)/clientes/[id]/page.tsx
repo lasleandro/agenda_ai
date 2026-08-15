@@ -185,7 +185,7 @@ export default function ContactDetailPage() {
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="contact-level">Nível</Label>
           <select

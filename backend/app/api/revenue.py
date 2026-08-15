@@ -14,6 +14,7 @@ from app.schemas.financial import (
     RevenueCandidateList,
     RevenueOccurrenceCreate,
     RevenueOccurrenceDetail,
+    RevenuePreviewDetail,
     RevenueSummaryDetail,
 )
 from app.services.financial_audit import add_financial_audit
@@ -25,6 +26,7 @@ from app.services.revenue_occurrences import (
     create_revenue_occurrence,
     list_revenue_candidates,
     revenue_occurrence_detail,
+    preview_schedule_revenue,
 )
 
 router = APIRouter(prefix="/api/financial/revenue", tags=["financial-revenue"])
@@ -73,6 +75,26 @@ def get_revenue_candidates(
         offset=offset,
         candidates=candidates[offset : offset + limit],
     )
+
+
+@router.get(
+    "/preview",
+    response_model=RevenuePreviewDetail,
+    response_model_exclude_none=True,
+)
+def get_revenue_preview(
+    source_type: str = Query(pattern="^(appointment|recurring_slot)$"),
+    source_id: uuid.UUID = Query(...),
+    occurrence_date: date = Query(...),
+    db: Session = Depends(get_db),
+    professional_id: uuid.UUID = Depends(require_commercial_financials),
+):
+    try:
+        return preview_schedule_revenue(
+            db, professional_id, source_type, source_id, occurrence_date
+        )
+    except RevenueOccurrenceNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.post(

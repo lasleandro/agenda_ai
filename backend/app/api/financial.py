@@ -25,6 +25,7 @@ from app.schemas.financial import (
     FinancialConfigurationDetail,
     FinancialSettingsDetail,
     FinancialSettingsUpdate,
+    GenericPlaceRateMatrixDetail,
     GlobalRateDetail,
     GroupFinancialDetail,
     GroupParticipantFinancialDetail,
@@ -299,6 +300,36 @@ def _configuration_detail(
         (rate.place_id, rate.time_category, rate.participant_count): rate.hourly_rate_cents
         for rate in place_rate_rows
     }
+    generic_place_rates = {
+        tuple(key.split("-")): value
+        for key, value in (settings.generic_place_rates if settings else {}).items()
+    }
+    generic_rates = {
+        (category, int(participant_count)): rate
+        for (category, participant_count), rate in generic_place_rates.items()
+    }
+    generic_matrix_rates = []
+    for time_category in ("regular", "prime"):
+        for participant_count in range(1, 5):
+            explicit_rate = generic_rates.get((time_category, participant_count))
+            fallback_rate = global_rates.get(participant_count)
+            generic_matrix_rates.append(
+                PlaceRateDetail(
+                    time_category=time_category,
+                    participant_count=participant_count,
+                    hourly_rate_cents=explicit_rate,
+                    effective_hourly_rate_cents=(
+                        explicit_rate if explicit_rate is not None else fallback_rate
+                    ),
+                    source=(
+                        "generic"
+                        if explicit_rate is not None
+                        else "tenant"
+                        if fallback_rate is not None
+                        else "unset"
+                    ),
+                )
+            )
     places = (
         db.query(Place)
         .filter(Place.professional_id == professional_id)
@@ -341,6 +372,7 @@ def _configuration_detail(
 
     return FinancialConfigurationDetail(
         prime_time_windows=prime_windows,
+        generic_place=GenericPlaceRateMatrixDetail(rates=generic_matrix_rates),
         places=place_matrices,
     )
 
@@ -478,7 +510,7 @@ def quote_configured_price(
         )
         .first()
     )
-    if place_exists is None:
+    if body.place_id is not None and place_exists is None:
         raise HTTPException(status_code=404, detail="Place not found")
 
     configuration = _configuration_detail(db, professional_id)
@@ -515,6 +547,10 @@ def quote_configured_price(
             )
             .all()
         )
+    } if body.place_id is not None else {}
+    generic_rates = {
+        (rate.time_category, rate.participant_count): rate.hourly_rate_cents
+        for rate in configuration.generic_place.rates
     }
     segments = []
     ordered_boundaries = sorted(boundaries)
@@ -529,10 +565,19 @@ def quote_configured_price(
             else "regular"
         )
         explicit_rate = place_rates.get(category)
-        hourly_rate = explicit_rate if explicit_rate is not None else global_rate
+        generic_rate = generic_rates.get((category, body.participant_count))
+        hourly_rate = (
+            explicit_rate
+            if explicit_rate is not None
+            else generic_rate
+            if body.place_id is None and generic_rate is not None
+            else global_rate
+        )
         source = (
             "place"
             if explicit_rate is not None
+            else "generic"
+            if body.place_id is None and generic_rate is not None
             else "tenant"
             if global_rate is not None
             else "unset"
@@ -569,6 +614,47 @@ def quote_configured_price(
             else None
         ),
     )
+
+
+@router.put(
+    "/generic-place/rates",
+    response_model=GenericPlaceRateMatrixDetail,
+)
+def replace_generic_place_rates(
+    body: PlaceRatesReplace,
+    request: Request,
+    db: Session = Depends(get_db),
+    professional_id: uuid.UUID = Depends(require_commercial_financials),
+    user: dict = Depends(require_authenticated),
+):
+    settings = (
+        db.query(ProfessionalFinancialSettings)
+        .filter(ProfessionalFinancialSettings.professional_id == professional_id)
+        .first()
+    )
+    if settings is None:
+        settings = ProfessionalFinancialSettings(professional_id=professional_id)
+        db.add(settings)
+    previous = settings.generic_place_rates
+    settings.generic_place_rates = {
+        f"{rate.time_category}-{rate.participant_count}": rate.hourly_rate_cents
+        for rate in body.rates
+        if rate.hourly_rate_cents is not None
+    }
+    source_ip, user_agent = _request_origin(request)
+    add_financial_audit(
+        db,
+        professional_id=professional_id,
+        actor_user_id=uuid.UUID(user["user_id"]),
+        entity_type="generic_place_financial_rates",
+        entity_id=professional_id,
+        action="replace",
+        changes={"rates": {"before": previous, "after": settings.generic_place_rates}},
+        source_ip=source_ip,
+        user_agent=user_agent,
+    )
+    db.commit()
+    return _configuration_detail(db, professional_id).generic_place
 
 
 @router.put(

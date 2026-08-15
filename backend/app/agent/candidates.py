@@ -67,6 +67,7 @@ def propose(
     channel: str = "web",
     idempotency_key: str | None = None,
     ttl_minutes: int = DEFAULT_TTL_MINUTES,
+    commit: bool = True,
 ) -> OperatorActionCandidate:
     if idempotency_key is not None:
         existing = (
@@ -110,7 +111,8 @@ def propose(
         operator_action_candidate_id=candidate.id,
         payload={"tool_name": tool_name, "arguments": arguments},
     )
-    db.commit()
+    if commit:
+        db.commit()
     return candidate
 
 

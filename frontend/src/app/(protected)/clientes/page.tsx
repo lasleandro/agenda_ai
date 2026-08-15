@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
+  Clock,
   MapPin,
   Pencil,
   Phone,
@@ -16,16 +17,21 @@ import {
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AddToGroupDialog } from "@/components/ontology/add-to-group-dialog";
+import { AddToWaitlistDialog } from "@/components/ontology/add-to-waitlist-dialog";
+import { DetectedCandidatesTab } from "@/components/ontology/detected-candidates-tab";
 import { RecurringGroupDialog } from "@/components/ontology/recurring-group-dialog";
 import { GroupsTab } from "@/components/ontology/groups-tab";
 import {
   addSlotParticipant,
+  cancelWaitlistEntry,
+  createWaitlistEntry,
   fetchContacts,
   fetchPlaces,
   fetchRecurringSlots,
+  fetchWaitlistEntries,
 } from "@/lib/api";
 import { CONTACT_LEVEL_LABELS } from "@/lib/ontology-utils";
-import type { ContactSummary, Place, RecurringSlot } from "@/lib/types";
+import type { ContactSummary, Place, RecurringSlot, WaitlistEntry } from "@/lib/types";
 
 const PAGE_SIZE = 10;
 
@@ -33,36 +39,56 @@ export default function ClientesPage() {
   const router = useRouter();
   const [contacts, setContacts] = useState<ContactSummary[] | null>(null);
   const [groups, setGroups] = useState<RecurringSlot[] | null>(null);
-  const [activeTab, setActiveTab] = useState<"clients" | "groups">("clients");
+  const [activeTab, setActiveTab] = useState<"clients" | "groups" | "detected">("clients");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [places, setPlaces] = useState<Place[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [addToGroupContact, setAddToGroupContact] = useState<ContactSummary | null>(null);
+  const [waitlistEntries, setWaitlistEntries] = useState<WaitlistEntry[] | null>(null);
+  const [addToWaitlistContact, setAddToWaitlistContact] = useState<ContactSummary | null>(null);
+  const [waitlistFilter, setWaitlistFilter] = useState(false);
   const [notice, setNotice] = useState<{ message: string; error: boolean } | null>(null);
 
   useEffect(() => {
-    Promise.all([fetchContacts(), fetchPlaces(), fetchRecurringSlots()]).then(
-      ([contactRes, placeRes, slotRes]) => {
-        setContacts(contactRes.contacts);
-        setPlaces(placeRes.places);
-        setGroups(slotRes.slots.filter((slot) => slot.class_type === "group"));
-      }
-    );
+    Promise.all([
+      fetchContacts(),
+      fetchPlaces(),
+      fetchRecurringSlots(),
+      fetchWaitlistEntries(),
+    ]).then(([contactRes, placeRes, slotRes, waitlistRes]) => {
+      setContacts(contactRes.contacts);
+      setPlaces(placeRes.places);
+      setGroups(slotRes.slots.filter((slot) => slot.class_type === "group"));
+      setWaitlistEntries(
+        waitlistRes.entries.filter((entry) => entry.status === "open" || entry.status === "matched")
+      );
+    });
   }, []);
+
+  const waitlistedContactIds = useMemo(
+    () => new Set((waitlistEntries ?? []).map((entry) => entry.contact_id)),
+    [waitlistEntries]
+  );
 
   const filtered = useMemo(() => {
     if (!contacts) return [];
     const q = query.trim().toLowerCase();
-    if (!q) return contacts;
-    return contacts.filter(
-      (c) =>
-        c.display_name.toLowerCase().includes(q) ||
-        (c.phone ?? "").toLowerCase().includes(q) ||
-        (c.home_place_name ?? "").toLowerCase().includes(q)
-    );
-  }, [contacts, query]);
+    let result = contacts;
+    if (q) {
+      result = result.filter(
+        (c) =>
+          c.display_name.toLowerCase().includes(q) ||
+          (c.phone ?? "").toLowerCase().includes(q) ||
+          (c.home_place_name ?? "").toLowerCase().includes(q)
+      );
+    }
+    if (waitlistFilter) {
+      result = result.filter((c) => waitlistedContactIds.has(c.id));
+    }
+    return result;
+  }, [contacts, query, waitlistFilter, waitlistedContactIds]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const pageStart = (page - 1) * PAGE_SIZE;
@@ -115,6 +141,41 @@ export default function ClientesPage() {
     });
   }
 
+  function addContactToWaitlist(contact: ContactSummary, input: Parameters<typeof createWaitlistEntry>[0]) {
+    setAddToWaitlistContact(null);
+    void createWaitlistEntry(input)
+      .then((entry) => {
+        setWaitlistEntries((current) => (current ? [...current, entry] : [entry]));
+        setNotice({
+          message: `${contact.display_name} foi adicionado(a) à fila de espera.`,
+          error: false,
+        });
+      })
+      .catch((caught) => {
+        setNotice({
+          message:
+            caught instanceof Error
+              ? caught.message
+              : "Não foi possível adicionar à fila de espera.",
+          error: true,
+        });
+      });
+  }
+
+  function removeContactFromWaitlist(entry: WaitlistEntry) {
+    setWaitlistEntries((current) => current?.filter((item) => item.id !== entry.id) ?? null);
+    void cancelWaitlistEntry(entry.id).catch((caught) => {
+      setWaitlistEntries((current) => (current ? [...current, entry] : [entry]));
+      setNotice({
+        message:
+          caught instanceof Error
+            ? caught.message
+            : "Não foi possível remover da fila de espera.",
+        error: true,
+      });
+    });
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 md:p-6">
       <div>
@@ -160,22 +221,67 @@ export default function ClientesPage() {
             </span>
           )}
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "detected"}
+          onClick={() => setActiveTab("detected")}
+          className={`border-b-2 px-4 py-2 text-sm font-medium ${
+            activeTab === "detected"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Detectados
+        </button>
       </div>
+
+      {activeTab === "detected" && (
+        <DetectedCandidatesTab
+          places={places}
+          onWaitlistEntryCreated={(entry) =>
+            setWaitlistEntries((current) => (current ? [...current, entry] : [entry]))
+          }
+        />
+      )}
 
       {activeTab === "clients" ? (
         <>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="relative w-full max-w-sm">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full max-w-sm">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Buscar por nome, telefone ou local..."
+              className="pl-9"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setWaitlistFilter((current) => !current);
               setPage(1);
             }}
-            placeholder="Buscar por nome, telefone ou local..."
-            className="pl-9"
-          />
+            aria-pressed={waitlistFilter}
+            className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+              waitlistFilter
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Clock className="h-3.5 w-3.5" />
+            Fila de espera
+            {waitlistEntries && waitlistEntries.length > 0 && (
+              <span className="rounded-full bg-muted px-1.5 py-0.5">
+                {waitlistEntries.length}
+              </span>
+            )}
+          </button>
         </div>
         <Button
           type="button"
@@ -265,9 +371,43 @@ export default function ClientesPage() {
                       {contact.makeup_credits_available}
                     </span>
                   )}
+                  {waitlistedContactIds.has(contact.id) && (
+                    <span className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-slate-700">
+                      <Clock className="h-3 w-3" />
+                      Fila de espera
+                    </span>
+                  )}
                 </div>
               </button>
               <div className="flex shrink-0 items-center gap-1 pr-3">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => {
+                    if (waitlistedContactIds.has(contact.id)) {
+                      const entry = waitlistEntries?.find(
+                        (item) => item.contact_id === contact.id
+                      );
+                      if (entry) removeContactFromWaitlist(entry);
+                      return;
+                    }
+                    setAddToWaitlistContact(contact);
+                  }}
+                  title={
+                    waitlistedContactIds.has(contact.id)
+                      ? `Remover ${contact.display_name} da fila de espera`
+                      : `Adicionar ${contact.display_name} à fila de espera`
+                  }
+                  aria-label={
+                    waitlistedContactIds.has(contact.id)
+                      ? `Remover ${contact.display_name} da fila de espera`
+                      : `Adicionar ${contact.display_name} à fila de espera`
+                  }
+                  className={waitlistedContactIds.has(contact.id) ? "text-primary" : undefined}
+                >
+                  <Clock />
+                </Button>
                 <Button
                   type="button"
                   variant="ghost"
@@ -378,10 +518,20 @@ export default function ClientesPage() {
           onAdd={(group) => addContactToGroup(addToGroupContact, group)}
         />
       )}
-        </>
-      ) : (
-        <GroupsTab groups={groups} />
+      {addToWaitlistContact && (
+        <AddToWaitlistDialog
+          contact={addToWaitlistContact}
+          places={places}
+          onOpenChange={(open) => {
+            if (!open) setAddToWaitlistContact(null);
+          }}
+          onAdd={(input) => addContactToWaitlist(addToWaitlistContact, input)}
+        />
       )}
+        </>
+      ) : activeTab === "groups" ? (
+        <GroupsTab groups={groups} />
+      ) : null}
     </div>
   );
 }

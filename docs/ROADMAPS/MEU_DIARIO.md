@@ -34,7 +34,7 @@ joao@agenda.ai / agenda-dev-2026 — direct professional login (the existing "Jo
 
 
 
-- Pensar em construir uma tela de fila/demanda/clientes que querem entrar em algum horário que não tem liberado ainda.
+- Pensar em construir uma tela de fila/demanda/clientes que querem entrar em algum horário que não tem liberado ainda. (implementado! 2026-08-09)
 
 - Criar a "visão dinheiro" na Agenda, onde o user vê quanto dinheiro por slot tem alocado
 
@@ -42,19 +42,46 @@ joao@agenda.ai / agenda-dev-2026 — direct professional login (the existing "Jo
 2026-08-07
 
 
-- Criar um monitoramento de aulas canceladas para armazenar o número de reposições por aluno (precisa verificar se o aluno é fixo)
+- Criar um monitoramento de aulas canceladas para armazenar o número de reposições por aluno (precisa verificar se o aluno é fixo) (implementado! 2026-08-09)
 
 
 
 - Pensar em criar otimização de rota
 
 
-- Roadmap (ainda não implementado) de reposição de aula e aula cortesia: docs/ROADMAPS/makeup_class_credits_roadmap_v0.1_2026-08-07.md
+- Roadmap (ainda não implementado) de reposição de aula e aula cortesia: docs/ROADMAPS/makeup_class_credits_roadmap_v0.1_2026-08-07.md (implementado! 2026-08-09)
 
 
 
-- Implementado o docs/ROADMAPS/makeup_class_credits_roadmap_v0.1_2026-08-07.md
+- Implementado o docs/ROADMAPS/makeup_class_credits_roadmap_v0.1_2026-08-07.md (implementado! 2026-08-09)
 
 
 
-- Avaliando mover a parte de definição da carga horária diária, definição de tempo limite para cancelamento com reposição de aula etc para uma sessão dedicada tipo "Minhas Regras", ou então mudar o nome de "Financeiro" para "Minha Operação" ou "Meu Negócio"
+- Avaliando mover a parte de definição da carga horária diária, definição de tempo limite para cancelamento com reposição de aula etc para uma sessão dedicada tipo "Minhas Regras", ou então mudar o nome de "Financeiro" para "Minha Operação" ou "Meu Negócio". (implementado! 2026-08-09)
+
+
+
+- Acrescentar, paralelamente à aula, a categoria eventos (torneio, oficina etc), onde o valor pode ser inputado durante a criação do evento.
+
+
+2026-08-09
+
+- Sistema de notificação (plataforma + chat): "o aluino tal está procurando vaga desde xx. Tem alguma resposta pra ele?". "Vc ainda não respondeu o aluno tal." etc. Com a possibilidade do user cancelar a notificação para clientes específicos (ele pode nao querer responder um ou outro)
+
+
+
+
+- Modificar a definição de locais: o usuário não precisa definir de antemão o  tipo de aula (individual, grupo, nível) quando define um local. O local é mais um default para saber onde estará, um shadow card. O que define esses outros parâmetros é o evento em particular que acontecerá no slot.
+(pensar sobre)
+
+
+
+- Futura funcionalidade: "me lembra amanhã de falar com fulano" -- automação de lembretes
+
+
+
+
+
+2026-08-15
+- várias melhorias no simulador e na marcação de eventos na agenda
+- pré-implementação de docs/ROADMAPS/place_stays_and_schedule_overlay_roadmap_v0.1_2026-08-15.md

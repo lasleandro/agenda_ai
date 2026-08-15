@@ -309,6 +309,40 @@ These rules are enforced through the system prompt in `orchestrator.py`:
 - **Processing status:** Each message tracks `processing_status`
   (pending/processed/failed).
 
+### 8.1 Instructor Agent WhatsApp Channel
+
+Distinct from the passive-observer pipeline above — this is the *active*
+agent (Mode 1) reachable over WhatsApp on a separate number
+(`Professional.agent_phone`), not the customer-facing one
+(`Professional.assistant_phone`).
+
+- **Sender authorization:** Only messages whose sender matches
+  `Professional.assistant_phone` (the instructor's own known number) are
+  processed; anyone else messaging the agent number is silently dropped —
+  no reply, so an unauthorized sender can't even confirm the number is
+  live. Fails closed if `assistant_phone` isn't configured.
+- **Deterministic fast path:** `hoje`/`amanha`/`esta semana`/`proxima
+  aula` are answered directly against `Appointment`, no LLM call.
+- **Confirmation by reply keyword:** No buttons over WhatsApp — `sim` /
+  `confirmar` / `confirmo` / `confirma` / `ok` confirms, `nao` / `cancelar`
+  / `cancela` / `cancelo` rejects.
+- **Multi-proposal turns confirm together:** If one instructor message
+  produces more than one pending proposal (e.g. "cancela as duas aulas de
+  hoje" → two `propose_cancel_schedule` calls), a single `sim` confirms
+  *all* of them — resolved via the shared `correlation_id` every proposal
+  from one `run_agent_turn()` call carries, not just "the most recently
+  created candidate." (Getting this wrong was a real bug: only the last
+  proposal executed and the rest silently expired unconfirmed.)
+- **Conversation history is windowed, not unbounded:** `AgentChannelMessage`
+  rows replay through `AssistantSettings.memory_window_messages`, same
+  knob the web chat uses, **and** through an age bound
+  (`agent_channel.HISTORY_MAX_AGE`, 12h). The age bound exists because this
+  history — unlike the web chat's, which lives in the browser tab and dies
+  on reload — is persisted server-side forever: a count-only window let a
+  days-old turn saying "amanhã, dia 9 de agosto" make the model answer
+  today's "e amanhã?" for that stale date. Deterministic fast-path
+  exchanges are not recorded into this history.
+
 ---
 
 ## 9. Dashboard Validation Rules
@@ -336,3 +370,68 @@ These rules are enforced through the system prompt in `orchestrator.py`:
   - Its recurring slots (and their participants)
   - Appointment references become orphaned (place_id set to NULL, name
     snapshot retained in revenue occurrences)
+
+---
+
+## 10. Waitlist ("Fila de Espera") Rules
+
+- **Specific time only:** A `WaitlistEntry` always has a concrete desired
+  date + start/end time, never a vague "sometime this week" request —
+  deliberate scope decision so matching stays a direct extension of the
+  existing capacity-search math rather than a fuzzy-search engine.
+- **Status lifecycle:** `open` → `matched` (capacity now fits — set
+  automatically, see below, or via the on-demand `find_waitlist_matches`
+  agent tool) → `fulfilled` (booked, `fulfilled_appointment_id` set) or
+  back to `open`; `cancelled`/`expired` are terminal. Cancel/fulfill are
+  status transitions, not row deletes.
+- **Event-driven auto-matching:** Cancelling an occurrence
+  (`schedule_overrides.cancel_occurrence`, the only call site that
+  currently frees capacity) runs `waitlist.mark_matches_for_date()` in the
+  same transaction — never a separate commit, since it must roll back
+  together with the cancellation if anything downstream fails. Only
+  currently-`open` entries are affected; already-matched/fulfilled ones
+  are left alone.
+- **No new notification system:** A match is surfaced through the
+  existing confirmation-summary text the instructor already sees (web
+  chat or WhatsApp), not a separate alert — reusing plumbing rather than
+  inventing one.
+- **Not the same as commercial "waiting" status:** `Contact.commercial_status
+  == "waiting"` ("Em espera") is an unrelated paused-billing concept from
+  the financial module. Keep the two out of the same UI element.
+- **Passive-observer entries need review:** `SchedulingEvent.action ==
+  "waitlist_request"` becomes an `AppointmentCandidate`
+  (status=`detected`), never a `WaitlistEntry` directly — the instructor
+  completes/confirms it via the Clientes "Detectados" tab
+  (`POST /api/appointment-candidates/{id}/fulfill-waitlist`). If the
+  customer didn't state a specific time, the event still fires (flagged
+  with an ambiguity) rather than being dropped — the instructor fills the
+  gap during review, not the model guessing it.
+
+---
+
+## 11. Instructor Events Rules
+
+- **Not a class:** `InstructorEvent` is for paid work with no client —
+  refereeing a tournament, running a workshop or clinic. Never reuse
+  `Appointment` for this (`contact_id` is NOT NULL there) and never route
+  its income through the participant-priced `RevenueOccurrence` engine.
+- **Shared busy-time set:** An event and a class can't overlap, checked
+  symmetrically both ways (`services/appointments.py::has_event_overlap`,
+  `services/instructor_events.py::assert_no_event_conflict`). A
+  `cancelled` event or appointment never blocks — same convention as
+  `Appointment.status` filtering elsewhere. Confirmed events are also
+  subtracted from the agent's free-time and place-availability answers.
+- **Exempt from work-journey enforcement:** Unlike appointments, an event
+  can be created outside the professional's configured work journey — a
+  Saturday tournament is by definition outside normal teaching hours.
+- **Revenue integration is additive, not merged:** Confirmed events'
+  `income_cents` are summed into `RevenueSummaryDetail.event_income_cents`
+  (`GET /api/revenue/summary`) — surfaced alongside, never merged into,
+  `total_cents` or the participant-priced `by_place`/`by_customer`/
+  `by_group` breakdowns, which are specifically about billing clients. Not
+  added to the *projected*-revenue Financeiro dashboard
+  (`financial_analytics.py`) at all — that tool buckets capacity segments,
+  which an event isn't.
+- **No passive-observer extraction:** Unlike waitlist entries, there is no
+  `SchedulingEvent.action == "event"` — instructor events are dashboard
+  and active-agent (web chat + WhatsApp) only, by explicit decision.

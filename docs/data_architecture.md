@@ -7,7 +7,7 @@
 **Migrations:** Alembic, stored in `backend/migrations/versions/`.
 
 All models inherit from `Base` (declarative base) and are defined in
-`backend/app/models/`. There are **33 models** organized by domain (count
+`backend/app/models/`. There are **36 models** organized by domain (count
 drifts as features land — `ls backend/app/models/*.py` for the current
 number).
 
@@ -158,10 +158,29 @@ erDiagram
     uuid conversation_id FK_UK
     timestamp process_after
   }
+
+  Professional ||--o{ AgentChannelMessage : has
+
+  AgentChannelMessage {
+    uuid id PK
+    uuid professional_id FK
+    string role "user | assistant"
+    text content
+    timestamp created_at
+  }
 ```
 
 Messages arrive via WhatsApp webhook, are deduplicated by
 `provider_message_id`, and flow through the chat pipeline.
+
+`AgentChannelMessage` is a separate, lighter-weight log — it's the
+instructor↔agent WhatsApp conversation history (AI Agent Operations
+Roadmap v0.1, Phase 3), not customer↔instructor traffic. Deliberately not
+`Conversation`/`Message`: the interaction shape is a direct synchronous
+back-and-forth with the agent, not buffered batch extraction over a human
+conversation. Windowed the same way as the web chat
+(`AssistantSettings.memory_window_messages`) when replayed into the
+orchestrator.
 
 ---
 
@@ -217,12 +236,12 @@ erDiagram
     uuid professional_id FK
     uuid conversation_id FK
     uuid contact_id FK
-    string action "create | reschedule | cancel"
+    string action "create | confirm | reschedule | cancel | recurrence | waitlist_request | none"
     timestamp proposed_start_at
     timestamp proposed_end_at
     string service
     float confidence
-    string status "pending | confirmed | executed | ..."
+    string status "detected | dismissed | fulfilled"
     jsonb ambiguities
     string event_fingerprint "dedup key"
     string extraction_version
@@ -293,8 +312,16 @@ erDiagram
 ### Key Relationships
 
 - `AppointmentCandidate` is the **AI detection artifact**: messages are
-  analyzed, candidates are created, and confirmed candidates become
-  `Appointment` rows.
+  analyzed and candidates are created (status `detected`), reviewed by the
+  instructor via `app/api/appointment_candidates.py` (the "Detectados" tab
+  on Clientes). Today only `dismiss` (→ `dismissed`) and, for
+  `action="waitlist_request"` specifically, `fulfill-waitlist` (→
+  `fulfilled`, creates a real `WaitlistEntry`) are wired — the passive
+  observer never auto-creates an `Appointment` from a candidate for the
+  other action types; the instructor acts on those manually via the normal
+  dashboard flows. Auto-executing them is a distinct, larger future
+  initiative ("Auto-Propose from Passive Observation" in
+  `docs/ai_agent_modes.md`), not built yet.
 - `AppointmentEvidence` links candidates to the messages that support them.
 - `AppointmentTransition` is a per-appointment audit trail of status
   changes.
@@ -570,18 +597,23 @@ No revenue row is created here — revenue recognition is a separate,
 explicit, later step (see "Revenue Confirmation" below); it can't even
 run until the occurrence has already ended.
 
-### Cancel a Group Occurrence via the AI Agent (Web Chat)
+### Cancel a Group Occurrence via the AI Agent (Web Chat or WhatsApp)
 
 ```
-Instructor (web chat, NOT WhatsApp — that channel isn't wired up for the
-active agent yet): "cancela a aula de amanha da turma X"
-  → app/api/assistant.py → agent/orchestrator.py's tool loop
+Instructor (web chat via app/api/assistant.py, OR the WhatsApp agent
+number via app/chat/agent_channel.py — both share the same orchestrator
+and tool set as of the AI Agent Operations Roadmap v0.1):
+"cancela a aula de amanha da turma X"
+  → agent/orchestrator.py's tool loop
   → tools.py: get_schedule() resolves the date + occurrence
   → mutations.py: propose_cancel_schedule()
-    → candidates.propose() → INSERT operator_action_candidates (status=proposed)
+    → candidates.propose() → INSERT operator_action_candidates (status=proposed,
+      channel="web" or "whatsapp" depending on where the request came from)
     → agent replies with the deterministic preview text, e.g.
       "Cancelar Grupo em 15/08/2026 08:00 (Clube Harminia)."
-  → Instructor clicks Confirm → POST /api/assistant/candidates/{id}/confirm
+  → Instructor confirms — web chat: POST /api/assistant/candidates/{id}/confirm;
+    WhatsApp: replies "sim", resolved via the candidate's correlation_id so
+    every proposal from that turn confirms together, not just the latest
   → candidates.confirm() → mutations.py: _execute_cancel_schedule()
     → schedule_overrides.cancel_occurrence() → INSERT schedule_occurrence_overrides
     → record_event() → INSERT operational_events (schedule.occurrence.cancelled)
@@ -589,6 +621,11 @@ active agent yet): "cancela a aula de amanha da turma X"
       runs once per enrolled participant → INSERT makeup_class_credits for
       each one eligible (this cancels the WHOLE occurrence for everyone —
       see propose_note_participant_absence for the single-participant case)
+    → waitlist.mark_matches_for_date() checks open WaitlistEntry rows against
+      the now-freed capacity for that date (waitlist roadmap v0.1, Phase 5) —
+      any match flips status to "matched" and is mentioned in the same
+      confirmation summary the instructor already sees, e.g. "... Marcelo
+      estava na fila de espera e agora cabe nesse horário."
 ```
 
 ### Revenue Confirmation
@@ -604,3 +641,64 @@ POST /api/financial/revenue/occurrences
       revenue_occurrence_lines
     → Return the frozen detail — once inserted, these rows are immutable
 ```
+
+---
+
+## 12. Waitlist ("Fila de Espera")
+
+```mermaid
+erDiagram
+  Professional ||--o{ WaitlistEntry : owns
+  Contact ||--o{ WaitlistEntry : requests
+  Place ||--o{ WaitlistEntry : "at (optional)"
+  Appointment ||--o| WaitlistEntry : fulfills
+
+  WaitlistEntry {
+    uuid id PK
+    uuid professional_id FK
+    uuid contact_id FK
+    uuid place_id FK "nullable — any place is valid"
+    date desired_date
+    time desired_start_time
+    time desired_end_time
+    string class_type "individual | group, nullable"
+    int duration_minutes
+    string status "open | matched | fulfilled | cancelled | expired"
+    string note
+    timestamp matched_at
+    uuid fulfilled_appointment_id FK
+  }
+```
+
+A contact wants a slot at a *specific* date/time and none exists yet — deliberately not a vague "sometime this week" request (waitlist roadmap v0.1 scope decision), which keeps matching a direct extension of the existing capacity-search math (`financial_capacity.compute_free_ranges_by_place`, shared with `find_instructor_openings`) instead of a new fuzzy-search engine.
+
+Not to be confused with `Contact.commercial_status == "waiting"` ("Em espera") — an unrelated paused-billing status from the financial module.
+
+Populated two ways: directly (Clientes screen form, or the agent tools `propose_add_waitlist_entry`/`propose_remove_waitlist_entry`), or via the passive observer detecting a "no slot available" moment in an instructor↔customer conversation (`SchedulingEvent.action == "waitlist_request"` → reviewed as an `AppointmentCandidate` → instructor confirms into a real entry). Status transitions to `matched` automatically when a cancellation frees a slot that fits (see the cancellation flow above); `fulfilled` when the instructor books the contact in, either manually or via the Agenda screen's waitlist "ghost card" click-to-book shortcut.
+
+---
+
+## 13. Instructor Events
+
+```mermaid
+erDiagram
+  Professional ||--o{ InstructorEvent : owns
+  Place ||--o{ InstructorEvent : "at (optional)"
+
+  InstructorEvent {
+    uuid id PK
+    uuid professional_id FK
+    uuid place_id FK "nullable — may be off-site"
+    string event_type "tournament_referee | workshop | clinic | other"
+    string title
+    timestamp start_at
+    timestamp end_at
+    int income_cents "nullable flat fee"
+    string note
+    string status "confirmed | cancelled"
+  }
+```
+
+Non-class paid work with no client involved — refereeing a tournament, running a workshop or clinic (instructor events roadmap v0.1). Not a variant of `Appointment`: `Appointment.contact_id` is NOT NULL and the participant-priced revenue engine (`RevenueOccurrence`) doesn't fit a flat fee with no participants. Named `InstructorEvent`, not `Event`, to avoid confusion with `OperationalEvent` (the audit ledger).
+
+Occupies the instructor's calendar exactly like an `Appointment` — `services/appointments.py::assert_no_conflict` and `services/instructor_events.py::assert_no_event_conflict` cross-check both tables symmetrically, so a class can't be booked over a confirmed event and vice versa — but is deliberately **exempt from work-journey enforcement** (a Saturday tournament is outside normal teaching hours by definition). Confirmed events' `income_cents` are summed into `RevenueSummaryDetail.event_income_cents` (`GET /api/revenue/summary`), surfaced alongside — not merged into — the participant-priced revenue breakdowns, which don't apply to a one-off flat fee.

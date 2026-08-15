@@ -46,15 +46,25 @@ def process_due_conversations() -> int:
             if conversation is None:
                 continue
 
+            # Captured before process_conversation runs: db.commit() above
+            # expires every attribute on `conversation`, so referencing
+            # conversation.id after a failed flush forces a lazy reload —
+            # which raises PendingRollbackError on a session that still
+            # needs db.rollback(), crashing this except block itself (and
+            # with no try/except around run_forever()'s loop, the whole
+            # worker process).
+            conversation_id = conversation.id
+
             try:
                 candidates = process_conversation(db, conversation)
                 logger.info(
                     "conversation=%s extracted_candidates=%s",
-                    conversation.id, len(candidates),
+                    conversation_id, len(candidates),
                 )
                 processed += len(candidates)
             except Exception:
-                logger.exception("extraction failed for conversation=%s", conversation.id)
+                db.rollback()
+                logger.exception("extraction failed for conversation=%s", conversation_id)
     finally:
         db.close()
     return processed
@@ -63,7 +73,10 @@ def process_due_conversations() -> int:
 def run_forever():
     logger.info("candidate worker started, polling every %ss", POLL_INTERVAL_SECONDS)
     while True:
-        process_due_conversations()
+        try:
+            process_due_conversations()
+        except Exception:  # next poll safely retries; see passive_escalation_worker
+            logger.exception("candidate worker iteration failed")
         time.sleep(POLL_INTERVAL_SECONDS)
 
 

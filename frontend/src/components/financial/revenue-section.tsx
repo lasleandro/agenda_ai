@@ -6,6 +6,7 @@ import {
   CircleDollarSign,
   ClipboardCheck,
   ReceiptText,
+  Trophy,
   UsersRound,
 } from "lucide-react";
 import { RevenueLineChart } from "./analytics-charts";
@@ -41,6 +42,7 @@ const SOURCE_LABELS = {
   customer: "Cliente",
   group: "Grupo",
   place: "Local",
+  generic: "Local padrão",
   tenant: "Padrão",
   unset: "Sem preço",
 };
@@ -247,6 +249,12 @@ export function RevenueSection({
       value: String(summary.occurrence_count),
       helper: `${summary.participant_count} presença(s) registradas`,
       icon: UsersRound,
+    },
+    {
+      label: "Renda de eventos",
+      value: formatBrlFromCents(summary.event_income_cents),
+      helper: `${summary.event_count} evento(s) — arbitragem, workshops, clínicas`,
+      icon: Trophy,
     },
   ];
 

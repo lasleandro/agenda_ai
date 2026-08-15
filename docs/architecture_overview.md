@@ -56,7 +56,7 @@ directly.
 |        v                                                        |
 |  +----------------------------------------------------------+   |
 |  |               SQLAlchemy ORM (PostgreSQL)                  |   |
-|  |               33 models, Alembic migrations                 |   |
+|  |               36 models, Alembic migrations                 |   |
 |  +----------------------------------------------------------+   |
 +------------------------------------------------------------------+
         |
@@ -112,34 +112,43 @@ agenda_ai/
       api/               # REST API route handlers
         auth.py          # Login, logout, impersonation
         admin.py         # Platform admin (tenant toggles)
-        assistant.py     # Chat → agent interaction
+        assistant.py     # Chat → agent interaction (web)
+        appointment_candidates.py  # Passive-observer candidate review (list/dismiss/fulfill-waitlist)
         calendar.py      # Calendar query + appointment CRUD
         contacts.py      # Customer ontology
-        conversations.py # Dev-only conversation viewer (list + detail, via Swagger)
+        conversations.py # Dev-only conversation viewer (list + detail, via Swagger) — also
+                          # exports candidate_with_evidence(), reused by appointment_candidates.py
         places.py        # Locations
         recurring_slots.py  # Weekly schedule template
         financial.py     # Financial configuration
         financial_analytics.py  # Analytics endpoints
+        instructor_events.py  # Non-class calendar entries (refereeing, workshops, clinics)
         revenue.py       # Revenue confirmation flow
         rules.py         # Operational rules — work journey, make-up cancellation notice window (ungated)
-        whatsapp.py      # Inbound webhook handler
+        waitlist.py      # Fila de Espera CRUD (list/create/cancel/fulfill)
+        whatsapp.py      # Inbound webhook handler (routes to both the passive
+                          # pipeline and the active agent channel by receiving number)
         dev_mock.py      # Dev-only mock WhatsApp conversation
         dependencies.py  # Shared auth depends
 
       chat/              # WhatsApp pipeline
-        pipeline.py      # Message processing pipeline
-        ingestion.py     # Inbound message parsing + dedup
-        extraction.py    # Intent extraction from NL
+        pipeline.py      # Message processing pipeline (passive observer)
+        ingestion.py     # Inbound message parsing + dedup, routes to agent_channel
+                          # first when the receiving number is Professional.agent_phone
+        agent_channel.py # Active agent over WhatsApp — deterministic fast-path
+                          # commands, sim/nao confirmation, full orchestrator for
+                          # everything else (AI Agent Operations Roadmap v0.1)
+        extraction.py    # Intent extraction from NL (passive observer)
         candidate_worker.py  # Background candidate processing
         temporal.py      # Date/time NL extraction
         prompt.py        # LLM prompt templates
-        ycloud_provider.py   # YCloud provider for local dev
+        ycloud_provider.py   # YCloud provider (webhook verify + outbound send)
 
       core/
         security.py      # Password hashing, JWT creation/verify
 
       domain/            # Domain types and enums
-      models/            # SQLAlchemy ORM models (33 models)
+      models/            # SQLAlchemy ORM models (36 models)
       schemas/           # Pydantic request/response schemas
       services/          # Business logic layer
       repositories/      # (reserved for future data access patterns)
@@ -247,8 +256,30 @@ the instructor's configured rates:
   recommender -- see `docs/capacity_and_recommendations.md` for the full
   algorithm on both sides, verified against the shipped code.
 - `find_instructor_openings(...)` (defined in `app/agent/tools.py`, built
-  on top of this module) -- returns free slots of a given duration at a
-  given place on a given date, exposed as an agent read tool.
+  on top of this module) -- the agent read tool answering "when am I
+  free?". Computed from `compute_free_calendar_ranges(...)` (Work Journey
+  minus every booking), *not* from per-place capacity windows: those are a
+  revenue-projection concept, and using them as the availability answer
+  hides real calendar gaps at hours no place has configured. Each opening
+  is annotated with the places whose window covers it, so a place can still
+  be suggested -- but a missing window never removes an opening.
+- `compute_free_ranges_by_place(...)` -- unbooked capacity per place,
+  shared by that annotation, the Financeiro dashboard, and the waitlist
+  matcher (`app/services/waitlist.py::find_matches`).
+- `load_net_work_ranges(...)` -- a date's Work Journey (work minus breaks),
+  used to tell "no journey configured for this weekday" apart from
+  "journey fully booked" when there are no openings to report.
+
+### Waitlist Matching (`app/services/waitlist.py`)
+
+Fila de Espera ("waitlist") entries record a contact's demand for a
+specific date/time slot that doesn't exist yet. `find_matches(...)` reuses
+`compute_free_ranges_by_place` to check open entries against real
+capacity, on demand (agent tool `find_waitlist_matches`) or automatically
+right after a cancellation frees a slot (`mark_matches_for_date`, called
+from `_execute_cancel_schedule` in the same transaction — see §5.1).
+Surfaced through the existing confirmation-summary text, not a separate
+notification system.
 
 ### Revenue Occurrences (`app/services/revenue_occurrences.py`)
 

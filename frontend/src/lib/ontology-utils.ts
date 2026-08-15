@@ -12,6 +12,13 @@ export const CLASS_TYPE_LABELS: Record<string, string> = {
   group: "Grupo",
 };
 
+export const EVENT_TYPE_LABELS: Record<string, string> = {
+  tournament_referee: "Arbitragem de torneio",
+  workshop: "Workshop",
+  clinic: "Clínica",
+  other: "Outro",
+};
+
 export function formatTime(value: string): string {
   return value.slice(0, 5);
 }

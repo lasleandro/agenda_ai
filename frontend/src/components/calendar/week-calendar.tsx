@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Clock, RefreshCw } from "lucide-react";
 import FullCalendar from "@fullcalendar/react";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import dayGridPlugin from "@fullcalendar/daygrid";
+import listPlugin from "@fullcalendar/list";
 import interactionPlugin from "@fullcalendar/interaction";
 import type { DateClickArg } from "@fullcalendar/interaction";
 import type {
@@ -16,24 +17,31 @@ import type {
 } from "@fullcalendar/core";
 import {
   createAppointment,
+  createInstructorEvent,
   fetchCalendar,
   fetchContacts,
   fetchPlaces,
   fetchRecurringSlots,
+  fetchWaitlistEntries,
+  fulfillWaitlistEntry,
 } from "@/lib/api";
 import { AGENDA_REFRESH_EVENT } from "@/lib/agenda-events";
 import { Button } from "@/components/ui/button";
 import { STATUS_COLORS } from "@/lib/calendar-utils";
-import { CONTACT_LEVEL_LABELS } from "@/lib/ontology-utils";
+import { CONTACT_LEVEL_LABELS, EVENT_TYPE_LABELS } from "@/lib/ontology-utils";
 import type {
   AppointmentCreateInput,
   AppointmentSummary,
   ContactSummary,
+  InstructorEvent,
+  InstructorEventInput,
   Place,
   RecurringSlot,
+  WaitlistEntry,
 } from "@/lib/types";
 import { AppointmentFormDialog } from "./appointment-form-dialog";
 import { AppointmentPanel } from "./appointment-panel";
+import { InstructorEventPanel } from "./instructor-event-panel";
 import { GroupDetailsDialog } from "@/components/ontology/group-details-dialog";
 
 function toISODate(d: Date): string {
@@ -113,7 +121,46 @@ function appointmentToEvent(appointment: AppointmentSummary): EventInput {
       status: appointment.status,
       source: appointment.source,
       occurrenceDate: appointment.occurrence_date,
+      classType: appointment.class_type ?? "individual",
+      participantCount: appointment.participants?.length ?? 1,
     },
+  };
+}
+
+// Grey "ghost" card for a Fila de Espera entry — deliberately distinct from
+// every STATUS_COLORS entry so it reads unmistakably as "not a real
+// booking" (waitlist roadmap v0.1, Phase 3).
+function waitlistEntryToEvent(entry: WaitlistEntry): EventInput {
+  const placeLabel = entry.place_name ? ` · ${entry.place_name}` : "";
+  return {
+    id: `waitlist-${entry.id}`,
+    title: `Fila de espera · ${entry.contact_name}${placeLabel}`,
+    start: `${entry.desired_date}T${entry.desired_start_time}`,
+    end: `${entry.desired_date}T${entry.desired_end_time}`,
+    backgroundColor: "#e5e7eb",
+    borderColor: "#9ca3af",
+    textColor: "#374151",
+    classNames: ["agenda-waitlist-entry", "cursor-pointer"],
+    extendedProps: { kind: "waitlist_entry", entry },
+  };
+}
+
+// Non-class calendar occupant — refereeing, workshop, clinic (instructor
+// events roadmap v0.1). Distinct amber color, not confusable with
+// appointment-status colors or the grey waitlist ghost cards.
+function instructorEventToEvent(event: InstructorEvent): EventInput {
+  const typeLabel = EVENT_TYPE_LABELS[event.event_type] ?? event.event_type;
+  const placeLabel = event.place_name ? ` · ${event.place_name}` : "";
+  return {
+    id: `event-${event.id}`,
+    title: `${event.title || typeLabel}${placeLabel}`,
+    start: event.start_at,
+    end: event.end_at,
+    backgroundColor: "#f59e0b",
+    borderColor: "#b45309",
+    textColor: "#ffffff",
+    classNames: ["agenda-instructor-event"],
+    extendedProps: { kind: "instructor_event", event },
   };
 }
 
@@ -145,6 +192,8 @@ interface BookingSelection {
   start: Date;
   end: Date;
   suggestedPlaceId: string | null;
+  initialContactId?: string;
+  fulfillsWaitlistEntryId?: string;
 }
 
 export function WeekCalendar() {
@@ -152,16 +201,41 @@ export function WeekCalendar() {
   const [slots, setSlots] = useState<RecurringSlot[]>([]);
   const [places, setPlaces] = useState<Place[]>([]);
   const [contacts, setContacts] = useState<ContactSummary[]>([]);
+  const [waitlistEntries, setWaitlistEntries] = useState<WaitlistEntry[]>([]);
+  const [showWaitlist, setShowWaitlist] = useState(false);
+  const [showIncompleteGroups, setShowIncompleteGroups] = useState(false);
   const [bookingSelection, setBookingSelection] = useState<BookingSelection | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedOccurrenceDate, setSelectedOccurrenceDate] = useState<string | undefined>(
     undefined
   );
   const [panelOpen, setPanelOpen] = useState(false);
+  const [selectedInstructorEvent, setSelectedInstructorEvent] =
+    useState<InstructorEvent | null>(null);
+  const [instructorEventPanelOpen, setInstructorEventPanelOpen] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedGroupOccurrenceDate, setSelectedGroupOccurrenceDate] = useState<
+    string | undefined
+  >(undefined);
   const [groupPanelOpen, setGroupPanelOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches
+  );
   const calendarRef = useRef<FullCalendar | null>(null);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 767px)");
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    const api = calendarRef.current?.getApi();
+    if (!api) return;
+    api.changeView(isMobile ? "listWeek" : "timeGridWeek");
+  }, [isMobile]);
 
   const reloadSlots = useCallback(() => {
     return fetchRecurringSlots().then((res) => setSlots(res.slots));
@@ -171,6 +245,9 @@ export function WeekCalendar() {
     reloadSlots();
     fetchPlaces().then((res) => setPlaces(res.places));
     fetchContacts().then((res) => setContacts(res.contacts));
+    fetchWaitlistEntries().then((res) =>
+      setWaitlistEntries(res.entries.filter((entry) => entry.status === "open" || entry.status === "matched"))
+    );
   }, [reloadSlots]);
 
   const loadRange = useCallback(async (start: Date, end: Date) => {
@@ -178,7 +255,10 @@ export function WeekCalendar() {
     const endDate = toISODate(new Date(end.getTime() - 1));
     try {
       const data = await fetchCalendar(startDate, endDate);
-      const mapped = data.appointments.map(appointmentToEvent);
+      const mapped = [
+        ...data.appointments.map(appointmentToEvent),
+        ...data.events.map(instructorEventToEvent),
+      ];
       setEvents(mapped);
     } catch (err) {
       console.error("Failed to load calendar range", err);
@@ -205,6 +285,10 @@ export function WeekCalendar() {
     }
   }, [reloadSlots, loadRange]);
 
+  const handleToday = useCallback(() => {
+    calendarRef.current?.getApi().gotoDate(new Date());
+  }, []);
+
   useEffect(() => {
     window.addEventListener(AGENDA_REFRESH_EVENT, handleRefresh);
     return () => window.removeEventListener(AGENDA_REFRESH_EVENT, handleRefresh);
@@ -215,7 +299,24 @@ export function WeekCalendar() {
       const slot = arg.event.extendedProps.slot as RecurringSlot;
       if (slot.participant_count === 0) return;
       setSelectedGroupId(slot.id);
+      setSelectedGroupOccurrenceDate(arg.event.startStr.slice(0, 10));
       setGroupPanelOpen(true);
+      return;
+    }
+    if (arg.event.extendedProps.kind === "instructor_event") {
+      setSelectedInstructorEvent(arg.event.extendedProps.event as InstructorEvent);
+      setInstructorEventPanelOpen(true);
+      return;
+    }
+    if (arg.event.extendedProps.kind === "waitlist_entry") {
+      const entry = arg.event.extendedProps.entry as WaitlistEntry;
+      setBookingSelection({
+        start: new Date(`${entry.desired_date}T${entry.desired_start_time}`),
+        end: new Date(`${entry.desired_date}T${entry.desired_end_time}`),
+        suggestedPlaceId: entry.place_id,
+        initialContactId: entry.contact_id,
+        fulfillsWaitlistEntryId: entry.id,
+      });
       return;
     }
     setSelectedId(arg.event.id);
@@ -278,6 +379,11 @@ export function WeekCalendar() {
         status: "confirmed",
         source: "dashboard",
         recurrence_rule: input.is_recurring ? "FREQ=WEEKLY" : null,
+        class_type: input.class_type,
+        participants: input.contact_ids?.map((id) => ({
+          contact_id: id,
+          display_name: contacts.find((item) => item.id === id)?.display_name ?? "Cliente",
+        })),
         occurrence_date: input.start_at.slice(0, 10),
         billing_type: input.billing_type,
       });
@@ -296,12 +402,59 @@ export function WeekCalendar() {
           )
         );
         calendarRef.current?.getApi().unselect();
+
+        if (bookingSelection?.fulfillsWaitlistEntryId) {
+          const entryId = bookingSelection.fulfillsWaitlistEntryId;
+          const fulfilledEntry = waitlistEntries.find((entry) => entry.id === entryId);
+          setWaitlistEntries((current) => current.filter((entry) => entry.id !== entryId));
+          void fulfillWaitlistEntry(entryId, saved.id).catch((caught) => {
+            console.error("Failed to mark waitlist entry as fulfilled", caught);
+            if (fulfilledEntry) {
+              setWaitlistEntries((current) => [...current, fulfilledEntry]);
+            }
+          });
+        }
       } catch (requestError) {
         setEvents((current) => current.filter((event) => event.id !== temporaryId));
         throw requestError;
       }
     },
-    [contacts, places]
+    [contacts, places, bookingSelection, waitlistEntries]
+  );
+
+  const handleCreateEvent = useCallback(
+    async (input: InstructorEventInput) => {
+      const place = places.find((item) => item.id === input.place_id);
+      const temporaryId = `event-pending-${crypto.randomUUID()}`;
+      const optimistic = instructorEventToEvent({
+        id: temporaryId,
+        event_type: input.event_type,
+        title: input.title ?? null,
+        place_id: input.place_id ?? null,
+        place_name: place?.name ?? null,
+        start_at: input.start_at,
+        end_at: input.end_at,
+        income_cents: input.income_cents ?? null,
+        note: input.note ?? null,
+        status: "confirmed",
+        created_at: new Date().toISOString(),
+      });
+      setEvents((current) => [...current, optimistic]);
+
+      try {
+        const saved = await createInstructorEvent(input);
+        setEvents((current) =>
+          current.map((event) =>
+            event.id === optimistic.id ? instructorEventToEvent(saved) : event
+          )
+        );
+        calendarRef.current?.getApi().unselect();
+      } catch (requestError) {
+        setEvents((current) => current.filter((event) => event.id !== optimistic.id));
+        throw requestError;
+      }
+    },
+    [places]
   );
 
   const eventCountLabel = useMemo(
@@ -314,8 +467,30 @@ export function WeekCalendar() {
   );
 
   const calendarEvents: EventInput[] = useMemo(
-    () => [...events, ...slots.map(slotToEvent)],
-    [events, slots]
+    () => {
+      const allEvents = [
+        ...events,
+        ...slots.map(slotToEvent),
+        ...(showWaitlist ? waitlistEntries.map(waitlistEntryToEvent) : []),
+      ];
+      if (!showIncompleteGroups) return allEvents;
+      return allEvents.filter((event) => {
+        if (event.extendedProps?.kind === "recurring_slot") {
+          const slot = event.extendedProps.slot as RecurringSlot;
+          return (
+            slot.class_type === "group" &&
+            slot.participant_count > 0 &&
+            slot.participant_count < 4
+          );
+        }
+        return (
+          event.extendedProps?.classType === "group" &&
+          event.extendedProps?.participantCount > 0 &&
+          event.extendedProps?.participantCount < 4
+        );
+      });
+    },
+    [events, slots, showWaitlist, waitlistEntries, showIncompleteGroups]
   );
 
   return (
@@ -324,6 +499,36 @@ export function WeekCalendar() {
         <h1 className="text-xl font-semibold tracking-tight">Agenda</h1>
         <div className="flex items-center gap-3">
           <span className="text-sm text-muted-foreground">{eventCountLabel}</span>
+          <button
+            type="button"
+            onClick={() => setShowWaitlist((current) => !current)}
+            aria-pressed={showWaitlist}
+            className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+              showWaitlist
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Clock className="h-3.5 w-3.5" />
+            Fila de espera
+            {waitlistEntries.length > 0 && (
+              <span className="rounded-full bg-muted px-1.5 py-0.5">
+                {waitlistEntries.length}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowIncompleteGroups((current) => !current)}
+            aria-pressed={showIncompleteGroups}
+            className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+              showIncompleteGroups
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Grupos incompletos
+          </button>
           <Button
             variant="ghost"
             size="icon-sm"
@@ -340,12 +545,22 @@ export function WeekCalendar() {
       <div className="flex-1 min-h-0 bg-[var(--bg-surface)] rounded-xl p-3 shadow-sm border border-[var(--border-subtle)]">
         <FullCalendar
           ref={calendarRef}
-          plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
-          initialView="timeGridWeek"
-          headerToolbar={{
-            left: "prev,next today",
-            center: "title",
-            right: "timeGridWeek,timeGridDay,dayGridMonth",
+          plugins={[timeGridPlugin, dayGridPlugin, listPlugin, interactionPlugin]}
+          initialView={isMobile ? "listWeek" : "timeGridWeek"}
+          headerToolbar={
+            isMobile
+              ? { left: "prev,next goToday", center: "", right: "title" }
+              : {
+                  left: "prev,next goToday",
+                  center: "title",
+                  right: "timeGridWeek,timeGridDay,dayGridMonth",
+                }
+          }
+          customButtons={{
+            goToday: {
+              text: "Hoje",
+              click: handleToday,
+            },
           }}
           locale="pt-br"
           firstDay={1}
@@ -367,7 +582,6 @@ export function WeekCalendar() {
           eventDidMount={handleEventMount}
           datesSet={handleDatesSet}
           buttonText={{
-            today: "Hoje",
             week: "Semana",
             day: "Dia",
             month: "Mês",
@@ -382,8 +596,15 @@ export function WeekCalendar() {
         onOpenChange={setPanelOpen}
       />
 
+      <InstructorEventPanel
+        event={selectedInstructorEvent}
+        open={instructorEventPanelOpen}
+        onOpenChange={setInstructorEventPanelOpen}
+      />
+
       <GroupDetailsDialog
         groupId={selectedGroupId}
+        occurrenceDate={selectedGroupOccurrenceDate}
         open={groupPanelOpen}
         onOpenChange={setGroupPanelOpen}
       />
@@ -398,12 +619,14 @@ export function WeekCalendar() {
           start={bookingSelection.start}
           end={bookingSelection.end}
           suggestedPlaceId={bookingSelection.suggestedPlaceId}
+          initialContactId={bookingSelection.initialContactId}
           contacts={contacts}
           places={places}
           onPlaceCreated={(place) =>
             setPlaces((current) => [...current, place])
           }
           onCreate={handleCreateBooking}
+          onCreateEvent={handleCreateEvent}
         />
       )}
 

@@ -16,6 +16,7 @@ from app.database import SessionLocal
 from app.main import app
 from app.models import (
     Appointment,
+    AppointmentParticipant,
     AppointmentTransition,
     Contact,
     EntityAlias,
@@ -59,6 +60,13 @@ def _login_new_tenant(db):
 def _cleanup(db, *, professionals, users):
     professional_ids = [p.id for p in professionals]
     if professional_ids:
+        db.query(AppointmentParticipant).filter(
+            AppointmentParticipant.appointment_id.in_(
+                db.query(Appointment.id).filter(
+                    Appointment.professional_id.in_(professional_ids)
+                )
+            )
+        ).delete(synchronize_session=False)
         db.query(EntityAlias).filter(
             EntityAlias.professional_id.in_(professional_ids)
         ).delete(synchronize_session=False)
@@ -205,6 +213,77 @@ def test_recurring_slot_overlap_is_rejected() -> None:
         db.close()
 
 
+def test_recurring_slot_rejects_end_time_not_after_start_time() -> None:
+    """A slot with end_time <= start_time (e.g. a midnight-end 00:00 picked
+    without meaning "end of day") silently drops out of every downstream
+    interval computation (compute_free_ranges_by_place, capacity segments,
+    waitlist matching) instead of erroring — reject it at creation instead."""
+    db = SessionLocal()
+    professional, user, cookies = _login_new_tenant(db)
+    try:
+        place_res = client.post("/api/places", json={"name": "Clube"}, cookies=cookies)
+        place_id = place_res.json()["id"]
+
+        inverted = client.post(
+            "/api/recurring-slots",
+            json={
+                "place_id": place_id,
+                "day_of_week": 1,
+                "start_time": "08:00:00",
+                "end_time": "00:00:00",
+            },
+            cookies=cookies,
+        )
+        assert inverted.status_code == 422
+
+        equal = client.post(
+            "/api/recurring-slots",
+            json={
+                "place_id": place_id,
+                "day_of_week": 1,
+                "start_time": "08:00:00",
+                "end_time": "08:00:00",
+            },
+            cookies=cookies,
+        )
+        assert equal.status_code == 422
+
+        bulk_inverted = client.post(
+            "/api/recurring-slots/bulk",
+            json={
+                "place_id": place_id,
+                "days_of_week": [1, 2],
+                "start_time": "08:00:00",
+                "end_time": "00:00:00",
+            },
+            cookies=cookies,
+        )
+        assert bulk_inverted.status_code == 422
+
+        created = client.post(
+            "/api/recurring-slots",
+            json={
+                "place_id": place_id,
+                "day_of_week": 1,
+                "start_time": "08:00:00",
+                "end_time": "09:00:00",
+            },
+            cookies=cookies,
+        )
+        assert created.status_code == 201
+        slot_id = created.json()["id"]
+
+        update_inverted = client.patch(
+            f"/api/recurring-slots/{slot_id}",
+            json={"end_time": "07:00:00"},
+            cookies=cookies,
+        )
+        assert update_inverted.status_code == 422
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
 def test_recurring_slot_bulk_create_is_atomic() -> None:
     db = SessionLocal()
     professional, user, cookies = _login_new_tenant(db)
@@ -244,6 +323,77 @@ def test_recurring_slot_bulk_create_is_atomic() -> None:
             .all()
         }
         assert saved_days == {0, 2, 4}
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_dashboard_can_create_incomplete_group_with_one_to_four_contacts() -> None:
+    db = SessionLocal()
+    professional, user, cookies = _login_new_tenant(db)
+    try:
+        place = Place(
+            professional_id=professional.id,
+            name="Clube",
+            normalized_name="clube",
+        )
+        contacts = [
+            Contact(
+                professional_id=professional.id,
+                phone=_random_phone(),
+                display_name=f"Aluno {index}",
+                normalized_name=f"aluno {index}",
+            )
+            for index in range(1, 3)
+        ]
+        db.add(place)
+        db.add_all(contacts)
+        db.commit()
+
+        one_person_group = client.post(
+            "/api/appointments",
+            json={
+                "contact_id": str(contacts[0].id),
+                "contact_ids": [str(contacts[0].id)],
+                "place_id": str(place.id),
+                "service": "Grupo iniciante",
+                "start_at": "2026-08-10T08:00:00-03:00",
+                "end_at": "2026-08-10T09:00:00-03:00",
+                "class_type": "group",
+            },
+            cookies=cookies,
+        )
+        assert one_person_group.status_code == 201
+        assert one_person_group.json()["class_type"] == "group"
+        assert len(one_person_group.json()["participants"]) == 1
+
+        two_person_group = client.post(
+            "/api/appointments",
+            json={
+                "contact_id": str(contacts[0].id),
+                "contact_ids": [str(contact.id) for contact in contacts],
+                "place_id": str(place.id),
+                "service": "Grupo intermediário",
+                "start_at": "2026-08-10T09:00:00-03:00",
+                "end_at": "2026-08-10T10:00:00-03:00",
+                "class_type": "group",
+            },
+            cookies=cookies,
+        )
+        assert two_person_group.status_code == 201
+        assert two_person_group.json()["class_type"] == "group"
+        assert len(two_person_group.json()["participants"]) == 2
+
+        calendar = client.get(
+            "/api/calendar?start_date=2026-08-10&end_date=2026-08-10",
+            cookies=cookies,
+        )
+        assert calendar.status_code == 200
+        assert [row["class_type"] for row in calendar.json()["appointments"]] == [
+            "group",
+            "group",
+        ]
+        assert [len(row["participants"]) for row in calendar.json()["appointments"]] == [1, 2]
     finally:
         _cleanup(db, professionals=[professional], users=[user])
         db.close()

@@ -46,6 +46,9 @@ EVENT_TYPES = (
     "makeup_credit.redeemed",
     "makeup_credit.expired",
     "schedule.participant.absence_noted",
+    "waitlist.entry.added",
+    "waitlist.entry.cancelled",
+    "instructor_event.created",
 )
 
 

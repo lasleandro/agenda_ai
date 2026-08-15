@@ -23,7 +23,10 @@ from app.schemas.api import (
     AppointmentSummary,
     CalendarResponse,
 )
+from app.api.instructor_events import _detail_for as _instructor_event_detail
+from app.services import instructor_events as instructor_events_service
 from app.services import scheduling
+from app.services.appointment_participants import add_participant
 from app.services.appointments import create_appointment as create_appointment_service
 
 router = APIRouter(prefix="/api", tags=["calendar"])
@@ -93,7 +96,18 @@ def list_appointments(
         for occurrence in occurrences
     ]
 
-    return CalendarResponse(appointments=appointments)
+    events = instructor_events_service.list_events(
+        db,
+        professional_id,
+        date_from=datetime.combine(start_date, datetime.min.time(), tzinfo=TZ_SP),
+        date_to=datetime.combine(end_date, datetime.max.time(), tzinfo=TZ_SP),
+        status="confirmed",
+    )
+
+    return CalendarResponse(
+        appointments=appointments,
+        events=[_instructor_event_detail(db, event) for event in events],
+    )
 
 
 @router.post("/appointments", response_model=AppointmentDetail, status_code=201)
@@ -105,13 +119,19 @@ def create_appointment(
 ):
     """Create a confirmed booking; recurring place slots are availability
     context and intentionally do not participate in overlap validation."""
-    contact = (
+    participant_ids = body.contact_ids or [body.contact_id]
+    contacts = (
         db.query(Contact)
-        .filter(Contact.id == body.contact_id, Contact.professional_id == professional_id)
-        .first()
+        .filter(
+            Contact.professional_id == professional_id,
+            Contact.id.in_(participant_ids),
+        )
+        .all()
     )
-    if contact is None:
+    if len(contacts) != len(participant_ids):
         raise HTTPException(status_code=404, detail="Contact not found")
+    contacts_by_id = {contact.id: contact for contact in contacts}
+    contact = contacts_by_id[body.contact_id]
 
     place = (
         db.query(Place)
@@ -130,10 +150,19 @@ def create_appointment(
         start_at=body.start_at,
         end_at=body.end_at,
         is_recurring=body.is_recurring,
+        class_type=body.class_type,
         source="dashboard",
         actor=f"user:{user['user_id']}",
         billing_type=body.billing_type,
     )
+    for participant_id in participant_ids:
+        if participant_id != contact.id:
+            add_participant(
+                db,
+                professional_id,
+                appointment,
+                contacts_by_id[participant_id],
+            )
     db.commit()
 
     return AppointmentDetail(
@@ -152,11 +181,7 @@ def create_appointment(
         recurrence_rule=appointment.recurrence_rule,
         class_type=appointment.class_type,
         billing_type=appointment.billing_type,
-        participants=[
-            AppointmentParticipantSummary(
-                contact_id=contact.id, display_name=contact.display_name
-            )
-        ],
+        participants=_load_participants(db, appointment),
         created_at=appointment.created_at,
         updated_at=appointment.updated_at,
     )

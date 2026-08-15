@@ -2,7 +2,7 @@
 
 Runs every fixture in labeled_conversations.json through the extraction
 pipeline, compares actual vs. expected, and reports:
-  - accuracy per category (action match, temporal match)
+  - accuracy per category (operation/confirmation match, temporal match)
   - a confidence-vs-correctness table to calibrate the thresholds in
     brief Section 15 (0.90 / 0.70 defaults).
 
@@ -34,12 +34,15 @@ def evaluate_fixture(fixture: dict) -> dict:
     window = fixture_to_conversation_window(fixture)
     result = run_extraction(window)
 
-    action_correct = result["action"] == fixture["expected_action"]
+    operation_correct = result["operation"] == fixture["expected_operation"]
+    confirmation_correct = (
+        result["confirmation_status"] == fixture["expected_confirmation_status"]
+    )
 
-    # Temporal correctness: skip for cancel/none actions where start_at is not meaningful.
-    expected_action = fixture["expected_action"]
-    if expected_action in ("cancel", "none"):
-        temporal_correct = True  # temporal not applicable — only action matters
+    # Temporal correctness: skip for cancel/none operations where start_at is not meaningful.
+    expected_operation = fixture["expected_operation"]
+    if expected_operation in ("cancel", "none"):
+        temporal_correct = True  # temporal not applicable — only operation matters
     else:
         expected_start = _parse_expected_dt(fixture.get("expected_start_at"))
         actual_start = _parse_expected_dt(result.get("start_at"))
@@ -50,17 +53,20 @@ def evaluate_fixture(fixture: dict) -> dict:
         else:
             temporal_correct = expected_start == actual_start
 
-    overall_correct = action_correct and temporal_correct
+    overall_correct = operation_correct and confirmation_correct and temporal_correct
 
     return {
         "id": fixture["id"],
         "category": fixture["category"],
         "confidence": result["confidence"],
-        "action_correct": action_correct,
+        "operation_correct": operation_correct,
+        "confirmation_correct": confirmation_correct,
         "temporal_correct": temporal_correct,
         "overall_correct": overall_correct,
-        "expected_action": fixture["expected_action"],
-        "actual_action": result["action"],
+        "expected_operation": fixture["expected_operation"],
+        "actual_operation": result["operation"],
+        "expected_confirmation_status": fixture["expected_confirmation_status"],
+        "actual_confirmation_status": result["confirmation_status"],
     }
 
 
@@ -111,8 +117,11 @@ def main():
         print(f"\nFailures ({len(failures)}):")
         for r in failures:
             print(
-                f"  {r['id']}: expected={r['expected_action']} "
-                f"actual={r['actual_action']} confidence={r['confidence']:.2f}"
+                f"  {r['id']}: expected_operation={r['expected_operation']} "
+                f"actual_operation={r['actual_operation']} "
+                f"expected_confirmation={r['expected_confirmation_status']} "
+                f"actual_confirmation={r['actual_confirmation_status']} "
+                f"confidence={r['confidence']:.2f}"
             )
 
 

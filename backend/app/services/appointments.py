@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     Appointment,
     AppointmentTransition,
+    InstructorEvent,
     RecurringSlot,
     RecurringSlotParticipant,
     WorkJourneyInterval,
@@ -180,6 +181,29 @@ def assert_within_work_journey(
         raise HTTPException(status_code=409, detail="This time overlaps a configured break")
 
 
+def has_event_overlap(
+    db: Session,
+    professional_id: uuid.UUID,
+    *,
+    start_at: datetime,
+    end_at: datetime,
+) -> bool:
+    """InstructorEvent never recurs, so this is a plain interval overlap —
+    no weekday/recurrence-rule handling needed, unlike the two checks
+    above (instructor events roadmap v0.1)."""
+    return (
+        db.query(InstructorEvent)
+        .filter(
+            InstructorEvent.professional_id == professional_id,
+            InstructorEvent.status == "confirmed",
+            InstructorEvent.start_at < end_at,
+            InstructorEvent.end_at > start_at,
+        )
+        .first()
+        is not None
+    )
+
+
 def assert_no_conflict(
     db: Session,
     professional_id: uuid.UUID,
@@ -193,6 +217,8 @@ def assert_no_conflict(
         db, professional_id, start_at=start_at, end_at=end_at, is_recurring=is_recurring
     ):
         raise HTTPException(status_code=409, detail="This time overlaps another appointment")
+    if has_event_overlap(db, professional_id, start_at=start_at, end_at=end_at):
+        raise HTTPException(status_code=409, detail="This time overlaps an instructor event")
     if has_scheduled_class_overlap(
         db, professional_id, start_at=start_at, end_at=end_at, is_recurring=is_recurring
     ):
@@ -209,6 +235,7 @@ def create_appointment(
     start_at: datetime,
     end_at: datetime,
     is_recurring: bool = False,
+    class_type: str = "individual",
     source: str = "dashboard",
     actor: str = "system",
     billing_type: str = "billable",
@@ -227,6 +254,7 @@ def create_appointment(
         status="confirmed",
         source=source,
         recurrence_rule="FREQ=WEEKLY" if is_recurring else None,
+        class_type=class_type,
         billing_type=billing_type,
     )
     db.add(appointment)

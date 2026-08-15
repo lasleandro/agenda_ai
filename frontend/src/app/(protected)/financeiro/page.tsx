@@ -10,6 +10,7 @@ import {
   Settings2,
 } from "lucide-react";
 import { FinancialDashboardSection } from "@/components/financial/financial-dashboard-section";
+import { FinancialMonthSummary } from "@/components/financial/financial-month-summary";
 import { FinancialSimulator } from "@/components/financial/financial-simulator";
 import { GlobalRatesSection } from "@/components/financial/global-rates-section";
 import { PlaceRatesSection } from "@/components/financial/place-rates-section";
@@ -25,6 +26,7 @@ import { fetchSession, sessionHasFeature } from "@/lib/auth";
 import type {
   FinancialConfigurationDetail,
   FinancialDashboardDetail,
+  GenericPlaceRateMatrixDetail,
   FinancialScenarioDetail,
   FinancialSettingsDetail,
   PlaceRateMatrixDetail,
@@ -61,6 +63,8 @@ export default function FinanceiroPage() {
     useState<FinancialConfigurationDetail | null>(null);
   const [dashboard, setDashboard] =
     useState<FinancialDashboardDetail | null>(null);
+  const [monthDashboard, setMonthDashboard] =
+    useState<FinancialDashboardDetail | null>(null);
   const [scenarios, setScenarios] = useState<FinancialScenarioDetail[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -90,6 +94,7 @@ export default function FinanceiroPage() {
         setSettings(settingsResult);
         setConfiguration(configurationResult);
         setDashboard(dashboardResult);
+        setMonthDashboard(dashboardResult);
         setScenarios(scenariosResult.scenarios);
       } catch (caught) {
         if (active) {
@@ -145,6 +150,12 @@ export default function FinanceiroPage() {
     );
   }
 
+  function updateGenericPlace(matrix: GenericPlaceRateMatrixDetail) {
+    setConfiguration((current) =>
+      current ? { ...current, generic_place: matrix } : current
+    );
+  }
+
   if (error && (!settings || !configuration || !dashboard)) {
     return <div className="p-6 text-sm text-destructive">{error}</div>;
   }
@@ -177,6 +188,8 @@ export default function FinanceiroPage() {
       </div>
 
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-5">
+        {monthDashboard && <FinancialMonthSummary monthDashboard={monthDashboard} />}
+
         <div
           className="flex w-fit gap-1 rounded-lg border bg-muted/30 p-1"
           role="tablist"
@@ -253,8 +266,10 @@ export default function FinanceiroPage() {
               }
             />
             <PlaceRatesSection
+              genericPlace={configuration.generic_place}
               places={configuration.places}
               onSaved={updatePlace}
+              onGenericSaved={updateGenericPlace}
             />
           </>
         )}

@@ -2,7 +2,7 @@
 
 import uuid
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, time
 from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy.orm import Session
@@ -15,10 +15,12 @@ from app.schemas.financial import (
     FinancialScenarioInput,
     FinancialScenarioMetric,
     FinancialScenarioResult,
+    FinancialScenarioScheduleEvent,
     FinancialTimeSeriesPoint,
     FinancialTradeoffDetail,
     ParticipantMixItem,
 )
+from app.services.scenario_customer_demand import estimate_customer_range
 from app.services.financial_capacity import (
     PART_OF_DAY_RANGES,
     BookingOccurrence,
@@ -26,6 +28,7 @@ from app.services.financial_capacity import (
     PricingRules,
     assert_all_places_found,
     build_capacity_segments,
+    build_uncovered_capacity_segments,
     build_uncovered_capacity_minutes,
     iter_dates,
     load_booking_occurrences,
@@ -62,6 +65,7 @@ class AnalyticsContext:
     prime_ranges: dict[int, list[tuple[int, int]]]
     pricing: PricingRules
     capacity: list[CapacitySegment]
+    simulation_capacity: list[CapacitySegment]
     bookings: list[BookingOccurrence]
     uncovered_minutes: dict[str, int]
 
@@ -130,18 +134,32 @@ def _load_context(
         if place_ids is None
         else {"regular": 0, "prime": 0}
     )
-    return AnalyticsContext(
-        places=places,
-        prime_ranges=prime_ranges,
-        pricing=load_pricing_rules(db, professional_id),
-        capacity=build_capacity_segments(
+    capacity = build_capacity_segments(
+        db,
+        professional_id,
+        date_from,
+        date_to,
+        places,
+        prime_ranges,
+    )
+    uncovered_capacity = (
+        build_uncovered_capacity_segments(
             db,
             professional_id,
             date_from,
             date_to,
             places,
             prime_ranges,
-        ),
+        )
+        if place_ids is None
+        else []
+    )
+    return AnalyticsContext(
+        places=places,
+        prime_ranges=prime_ranges,
+        pricing=load_pricing_rules(db, professional_id),
+        capacity=capacity,
+        simulation_capacity=[*capacity, *uncovered_capacity],
         bookings=load_booking_occurrences(
             db,
             professional_id,
@@ -268,15 +286,23 @@ def _resolve_rate(
 def _potential_metric(
     capacity: list[CapacitySegment],
     pricing: PricingRules,
-    mix: list[ParticipantMixItem],
+    mixes: dict[str, list[ParticipantMixItem]],
     occupancy_pct: float,
     overrides: dict[tuple[str, int], int] | None = None,
     uncovered_minutes: dict[str, int] | None = None,
 ) -> FinancialScenarioMetric:
     occupancy = Decimal(str(occupancy_pct)) / Decimal(100)
     revenue = Decimal(0)
+    participant_minutes = Decimal(0)
     for segment in capacity:
-        for item in mix:
+        for item in mixes[segment.time_category]:
+            participant_minutes += (
+                Decimal(item.participant_count)
+                * Decimal(segment.duration_minutes)
+                * Decimal(str(item.percentage))
+                / Decimal(100)
+                * occupancy
+            )
             rate = _resolve_rate(
                 pricing,
                 segment,
@@ -300,7 +326,14 @@ def _potential_metric(
     for category, minutes in (uncovered_minutes or {}).items():
         if minutes <= 0:
             continue
-        for item in mix:
+        for item in mixes[category]:
+            participant_minutes += (
+                Decimal(item.participant_count)
+                * Decimal(minutes)
+                * Decimal(str(item.percentage))
+                / Decimal(100)
+                * occupancy
+            )
             rate = None
             if overrides is not None:
                 rate = overrides.get((category, item.participant_count))
@@ -326,17 +359,11 @@ def _potential_metric(
             rounding=ROUND_HALF_UP,
         )
     )
-    average_participants = sum(
-        item.participant_count * item.percentage / 100 for item in mix
-    )
     return FinancialScenarioMetric(
         available_minutes=available,
         utilized_minutes=utilized,
         occupancy_pct=occupancy_pct,
-        participant_hours=round(
-            utilized / 60 * average_participants,
-            2,
-        ),
+        participant_hours=round(float(participant_minutes / Decimal(60)), 2),
         projected_revenue_cents=_round_cents(revenue),
     )
 
@@ -372,7 +399,7 @@ def _capacity_presets(
             _potential_metric(
                 context.capacity,
                 context.pricing,
-                mix,
+                {"regular": mix, "prime": mix},
                 100,
                 uncovered_minutes=context.uncovered_minutes,
             )
@@ -533,17 +560,23 @@ def build_financial_dashboard(
     )
 
 
-def _scenario_mix(
+def _scenario_mixes(
     body: FinancialScenarioInput,
     observed_mix: list[ParticipantMixItem],
-) -> list[ParticipantMixItem]:
+) -> dict[str, list[ParticipantMixItem]]:
+    individual = [ParticipantMixItem(participant_count=1, percentage=100)]
+    groups = [ParticipantMixItem(participant_count=4, percentage=100)]
     if body.mode == "all_individual":
-        return [ParticipantMixItem(participant_count=1, percentage=100)]
+        return {"regular": individual, "prime": individual}
     if body.mode == "full_groups":
-        return [ParticipantMixItem(participant_count=4, percentage=100)]
+        return {"regular": groups, "prime": groups}
+    if body.mode == "individual_regular_groups_prime":
+        return {"regular": individual, "prime": groups}
+    if body.mode == "groups_regular_individual_prime":
+        return {"regular": groups, "prime": individual}
     if body.mode == "custom":
-        return body.participant_mix or []
-    return observed_mix
+        return {"regular": body.participant_mix or [], "prime": body.participant_mix or []}
+    return {"regular": observed_mix, "prime": observed_mix}
 
 
 def _tradeoffs(
@@ -595,6 +628,118 @@ def _tradeoffs(
     return tradeoffs
 
 
+def _minutes_to_time(value: int) -> time:
+    return time(hour=value // 60, minute=value % 60)
+
+
+def _hourly_capacity_slots(
+    capacity: list[CapacitySegment],
+) -> list[tuple[CapacitySegment, int]]:
+    return [
+        (segment, start_minute)
+        for segment in capacity
+        for start_minute in range(
+            segment.start_minute,
+            segment.start_minute + (segment.duration_minutes // 60) * 60,
+            60,
+        )
+    ]
+
+
+def _evenly_selected_slots(
+    slots: list[tuple[CapacitySegment, int]],
+    occupancy_pct: float,
+) -> list[tuple[CapacitySegment, int]]:
+    target = round(len(slots) * occupancy_pct / 100)
+    if target == 0:
+        return []
+    return [slots[index * len(slots) // target] for index in range(target)]
+
+
+def _participant_counts(
+    mix: list[ParticipantMixItem],
+    slot_count: int,
+) -> list[int]:
+    quantities = [
+        int(slot_count * item.percentage // 100)
+        for item in mix
+    ]
+    remaining = slot_count - sum(quantities)
+    ranked = sorted(
+        range(len(mix)),
+        key=lambda index: (
+            slot_count * mix[index].percentage / 100 - quantities[index],
+            -mix[index].participant_count,
+        ),
+        reverse=True,
+    )
+    for index in ranked[:remaining]:
+        quantities[index] += 1
+    return [
+        item.participant_count
+        for item, quantity in zip(mix, quantities)
+        for _ in range(quantity)
+    ]
+
+
+def _simulated_schedule(
+    capacity: list[CapacitySegment],
+    mixes: dict[str, list[ParticipantMixItem]],
+    occupancy_pct: float,
+    pricing: PricingRules,
+    overrides: dict[tuple[str, int], int],
+) -> list[FinancialScenarioScheduleEvent]:
+    """Allocate capacity to complete, evenly spread, one-hour class blocks."""
+    events: list[FinancialScenarioScheduleEvent] = []
+    slots_by_category = {"regular": [], "prime": []}
+    for slot in _hourly_capacity_slots(capacity):
+        slots_by_category[slot[0].time_category].append(slot)
+    for category, slots in slots_by_category.items():
+        selected = _evenly_selected_slots(slots, occupancy_pct)
+        counts = _participant_counts(mixes[category], len(selected))
+        for index, ((segment, start_minute), participant_count) in enumerate(
+            zip(selected, counts)
+        ):
+            rate = _resolve_rate(pricing, segment, participant_count, overrides)
+            events.append(
+                FinancialScenarioScheduleEvent(
+                    id=(
+                        f"{segment.local_date.isoformat()}-{segment.place_id}-"
+                        f"{start_minute}-{index}"
+                    ),
+                    local_date=segment.local_date,
+                    place_name=segment.place_name,
+                    start_time=_minutes_to_time(start_minute),
+                    end_time=_minutes_to_time(start_minute + 60),
+                    participant_count=participant_count,
+                    time_category=segment.time_category,
+                    hourly_rate_cents=rate,
+                    total_revenue_cents=(
+                        rate * participant_count if rate is not None else None
+                    ),
+                )
+            )
+    return events
+
+
+def _scenario_metric_from_schedule(
+    capacity: list[CapacitySegment],
+    schedule: list[FinancialScenarioScheduleEvent],
+) -> FinancialScenarioMetric:
+    available_minutes = len(_hourly_capacity_slots(capacity)) * 60
+    projected_revenue_cents = sum(
+        event.total_revenue_cents or 0 for event in schedule
+    )
+    participant_hours = sum(event.participant_count for event in schedule)
+    return FinancialScenarioMetric(
+        available_minutes=available_minutes,
+        utilized_minutes=len(schedule) * 60,
+        occupancy_pct=_percentage(len(schedule), available_minutes / 60),
+        participant_hours=participant_hours,
+        projected_revenue_cents=projected_revenue_cents,
+    )
+
+
 def evaluate_financial_scenario(
     db: Session,
     professional_id: uuid.UUID,
@@ -614,18 +759,28 @@ def evaluate_financial_scenario(
         body.date_to,
         body.place_ids,
     )
-    mix = _scenario_mix(body, dashboard.observed_participant_mix)
+    mixes = _scenario_mixes(body, dashboard.observed_participant_mix)
     overrides = {
         (rate.time_category, rate.participant_count): rate.hourly_rate_cents
         for rate in body.rate_overrides
     }
-    scenario = _potential_metric(
-        context.capacity,
-        context.pricing,
-        mix,
+    schedule = _simulated_schedule(
+        context.simulation_capacity,
+        mixes,
         body.occupancy_pct,
+        context.pricing,
         overrides,
-        uncovered_minutes=context.uncovered_minutes,
+    )
+    scenario = _scenario_metric_from_schedule(context.simulation_capacity, schedule)
+    mix = _normalize_mix(
+        {
+            participant_count: sum(
+                1
+                for event in schedule
+                if event.participant_count == participant_count
+            )
+            for participant_count in range(1, 5)
+        }
     )
     baseline = FinancialScenarioMetric(
         available_minutes=dashboard.available_minutes,
@@ -652,5 +807,11 @@ def evaluate_financial_scenario(
             context.capacity,
             context.pricing,
             overrides,
+        ),
+        simulated_schedule=schedule,
+        customer_estimate=estimate_customer_range(
+            scenario.participant_hours,
+            body.date_from,
+            body.date_to,
         ),
     )

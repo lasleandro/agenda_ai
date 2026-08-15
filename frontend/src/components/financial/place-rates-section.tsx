@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -11,7 +12,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { replacePlaceRates } from "@/lib/api";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { replaceGenericPlaceRates, replacePlaceRates } from "@/lib/api";
 import {
   centsToRateInput,
   formatBrlFromCents,
@@ -19,6 +25,7 @@ import {
 } from "@/lib/financial-utils";
 import type {
   FinancialTimeCategory,
+  GenericPlaceRateMatrixDetail,
   PlaceRateMatrixDetail,
 } from "@/lib/types";
 
@@ -26,7 +33,9 @@ function ruleKey(category: FinancialTimeCategory, participantCount: number): str
   return `${category}-${participantCount}`;
 }
 
-function initialDraft(matrix: PlaceRateMatrixDetail): Record<string, string> {
+function initialDraft(
+  matrix: Pick<PlaceRateMatrixDetail, "rates">
+): Record<string, string> {
   return Object.fromEntries(
     matrix.rates.map((rate) => [
       ruleKey(rate.time_category, rate.participant_count),
@@ -35,12 +44,20 @@ function initialDraft(matrix: PlaceRateMatrixDetail): Record<string, string> {
   );
 }
 
-export function PlaceRateEditor({
+function RatesEditor({
   matrix,
-  onSaved,
+  onSave,
+  savedMessage,
+  valueLabel,
 }: {
-  matrix: PlaceRateMatrixDetail;
-  onSaved: (matrix: PlaceRateMatrixDetail) => void;
+  matrix: Pick<PlaceRateMatrixDetail, "rates">;
+  onSave: (rates: {
+    time_category: FinancialTimeCategory;
+    participant_count: number;
+    hourly_rate_cents: number | null;
+  }[]) => Promise<void>;
+  savedMessage: string;
+  valueLabel: string;
 }) {
   const [draft, setDraft] = useState<Record<string, string>>(() =>
     initialDraft(matrix)
@@ -62,12 +79,12 @@ export function PlaceRateEditor({
         }))
       );
       setSaving(true);
-      setNotice({ text: "Valores do local salvos.", error: false });
-      onSaved(await replacePlaceRates(matrix.place_id, rates));
+      await onSave(rates);
+      setNotice({ text: savedMessage, error: false });
     } catch (caught) {
       setDraft(initialDraft(matrix));
       setNotice({
-        text: caught instanceof Error ? caught.message : "Falha ao salvar local",
+          text: caught instanceof Error ? caught.message : "Falha ao salvar valores",
         error: true,
       });
     } finally {
@@ -79,7 +96,22 @@ export function PlaceRateEditor({
     <>
       <div className="overflow-x-auto rounded-lg border border-border">
         <div className="grid min-w-[620px] grid-cols-[160px_repeat(4,1fr)]">
-          <div className="bg-muted/40 p-3 text-xs font-medium">Período</div>
+          <div className="flex items-center gap-1.5 bg-muted/40 p-3 text-xs font-medium">
+            Período
+            <Tooltip>
+              <TooltipTrigger
+                className="text-muted-foreground"
+                aria-label="Como o valor por participante é cobrado"
+              >
+                <Info className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipContent>
+                O valor de cada coluna é por participante, não o total da
+                aula. Uma aula de 2 pessoas a R$ 180/h cobra R$ 180 de cada
+                uma — R$ 360/h no total.
+              </TooltipContent>
+            </Tooltip>
+          </div>
           {[1, 2, 3, 4].map((count) => (
             <div key={count} className="bg-muted/40 p-3 text-xs font-medium">
               {count === 1 ? "Individual" : `${count} pessoas`}
@@ -119,7 +151,7 @@ export function PlaceRateEditor({
                         ? `Herda ${formatBrlFromCents(
                             rate.effective_hourly_rate_cents
                           )}`
-                        : "Valor do local"}
+                        : valueLabel}
                     </p>
                   </div>
                 );
@@ -135,21 +167,59 @@ export function PlaceRateEditor({
       )}
       <CardFooter className="-mx-4 -mb-4 justify-end">
         <Button onClick={handleSave} disabled={saving}>
-          {saving ? "Salvando..." : "Salvar valores do local"}
+          {saving ? "Salvando..." : savedMessage}
         </Button>
       </CardFooter>
     </>
   );
 }
 
-export function PlaceRatesSection({
-  places,
+export function PlaceRateEditor({
+  matrix,
   onSaved,
 }: {
-  places: PlaceRateMatrixDetail[];
+  matrix: PlaceRateMatrixDetail;
   onSaved: (matrix: PlaceRateMatrixDetail) => void;
 }) {
-  const [selectedPlaceId, setSelectedPlaceId] = useState(places[0]?.place_id ?? "");
+  return (
+    <RatesEditor
+      matrix={matrix}
+      savedMessage="Salvar valores do local"
+      valueLabel="Valor do local"
+      onSave={async (rates) => onSaved(await replacePlaceRates(matrix.place_id, rates))}
+    />
+  );
+}
+
+function GenericPlaceRateEditor({
+  matrix,
+  onSaved,
+}: {
+  matrix: GenericPlaceRateMatrixDetail;
+  onSaved: (matrix: GenericPlaceRateMatrixDetail) => void;
+}) {
+  return (
+    <RatesEditor
+      matrix={matrix}
+      savedMessage="Salvar valores padrão"
+      valueLabel="Valor padrão"
+      onSave={async (rates) => onSaved(await replaceGenericPlaceRates(rates))}
+    />
+  );
+}
+
+export function PlaceRatesSection({
+  genericPlace,
+  places,
+  onSaved,
+  onGenericSaved,
+}: {
+  genericPlace: GenericPlaceRateMatrixDetail;
+  places: PlaceRateMatrixDetail[];
+  onSaved: (matrix: PlaceRateMatrixDetail) => void;
+  onGenericSaved: (matrix: GenericPlaceRateMatrixDetail) => void;
+}) {
+  const [selectedPlaceId, setSelectedPlaceId] = useState("");
   const selected = places.find((place) => place.place_id === selectedPlaceId) ?? null;
 
   return (
@@ -157,36 +227,38 @@ export function PlaceRatesSection({
       <CardHeader>
         <CardTitle>Valores por local</CardTitle>
         <CardDescription>
-          Campos vazios herdam a tabela global. Regular e nobre são independentes.
+          Defina os valores padrão para compromissos sem local ou valores específicos
+          para cada local. Campos vazios herdam a tabela global.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {places.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Cadastre um local para configurar valores específicos.
-          </p>
-        ) : (
-          <>
-            <select
+        <>
+          <select
               value={selectedPlaceId}
               onChange={(event) => setSelectedPlaceId(event.target.value)}
               className="h-9 w-full max-w-sm rounded-md border border-input bg-transparent px-3 text-sm"
-            >
+          >
+            <option value="">Padrão — sem local definido</option>
               {places.map((place) => (
                 <option key={place.place_id} value={place.place_id}>
                   {place.place_name}
                 </option>
               ))}
-            </select>
-            {selected && (
+          </select>
+          {selectedPlaceId === "" ? (
+            <GenericPlaceRateEditor
+              key="generic-place"
+              matrix={genericPlace}
+              onSaved={onGenericSaved}
+            />
+          ) : selected ? (
               <PlaceRateEditor
                 key={selected.place_id}
                 matrix={selected}
                 onSaved={onSaved}
               />
-            )}
-          </>
-        )}
+          ) : null}
+        </>
       </CardContent>
     </Card>
   );

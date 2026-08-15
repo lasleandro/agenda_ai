@@ -4,9 +4,11 @@ API response schemas for the Phase 4 web calendar.
 
 import uuid
 from datetime import date, datetime
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.schemas.instructor_events import InstructorEventDetail
 
 
 class AppointmentCreate(BaseModel):
@@ -18,6 +20,8 @@ class AppointmentCreate(BaseModel):
     start_at: datetime
     end_at: datetime
     is_recurring: bool = False
+    class_type: Literal["individual", "group"] = "individual"
+    contact_ids: list[uuid.UUID] = Field(default_factory=list)
     billing_type: str = Field(default="billable", pattern=r"^(billable|courtesy)$")
 
     @field_validator("service")
@@ -34,6 +38,15 @@ class AppointmentCreate(BaseModel):
             raise ValueError("Appointment times must include a timezone")
         if self.end_at <= self.start_at:
             raise ValueError("Appointment end must be after its start")
+        participant_ids = self.contact_ids or [self.contact_id]
+        if len(participant_ids) > 4:
+            raise ValueError("A group can have at most four contacts")
+        if len(participant_ids) != len(set(participant_ids)):
+            raise ValueError("Appointment contacts must be unique")
+        if self.contact_id not in participant_ids:
+            raise ValueError("The primary contact must be a participant")
+        if self.class_type == "individual" and len(participant_ids) != 1:
+            raise ValueError("An individual class must have one contact")
         return self
 
 
@@ -102,6 +115,7 @@ class CalendarResponse(BaseModel):
     """Response for GET /api/calendar."""
 
     appointments: list[AppointmentSummary]
+    events: list[InstructorEventDetail] = []
 
 
 class ConversationSummary(BaseModel):
@@ -148,11 +162,21 @@ class CandidateDetail(BaseModel):
 
     id: uuid.UUID
     action: str
+    operation: str | None
+    confirmation_status: str | None
+    existing_appointment_id: uuid.UUID | None
+    resulting_appointment_id: uuid.UUID | None
+    operator_action_candidate_id: uuid.UUID | None
+    suggested_place_id: uuid.UUID | None
+    contact_id: uuid.UUID | None
+    contact_name: str | None
     proposed_start_at: datetime | None
     proposed_end_at: datetime | None
     service: str | None
     confidence: float | None
     status: str
+    escalation_status: str | None = None
+    escalation_delivery_status: str | None = None
     ambiguities: list[dict]
     created_at: datetime
     evidence: list[CandidateEvidenceItem]

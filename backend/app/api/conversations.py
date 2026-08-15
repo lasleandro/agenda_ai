@@ -123,14 +123,33 @@ def candidate_with_evidence(db: Session, candidate: AppointmentCandidate) -> Can
         )
         for ev, msg in rows
     ]
+    contact = (
+        db.query(Contact).filter(Contact.id == candidate.contact_id).first()
+        if candidate.contact_id
+        else None
+    )
     return CandidateDetail(
         id=candidate.id,
         action=candidate.action,
+        operation=candidate.operation,
+        confirmation_status=candidate.confirmation_status,
+        existing_appointment_id=candidate.existing_appointment_id,
+        resulting_appointment_id=candidate.resulting_appointment_id,
+        operator_action_candidate_id=candidate.operator_action_candidate_id,
+        suggested_place_id=contact.home_place_id if contact else None,
+        contact_id=candidate.contact_id,
+        contact_name=contact.display_name if contact else None,
         proposed_start_at=candidate.proposed_start_at,
         proposed_end_at=candidate.proposed_end_at,
         service=candidate.service,
         confidence=candidate.confidence,
         status=candidate.status,
+        escalation_status=(
+            candidate.operator_action_candidate.status
+            if candidate.operator_action_candidate is not None
+            else None
+        ),
+        escalation_delivery_status=(candidate.escalation.status if candidate.escalation else None),
         ambiguities=candidate.ambiguities or [],
         created_at=candidate.created_at,
         evidence=evidence,

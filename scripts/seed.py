@@ -76,6 +76,7 @@ def seed():
         # ── Professional ──────────────────────────────────────────────────
         pro = db.get(Professional, PROFESSIONAL_ID)
         if pro is None:
+            agent_number = os.getenv("AGENT_WHATSAPP_NUMBER")
             pro = Professional(
                 id=PROFESSIONAL_ID,
                 name="Joao",
@@ -83,6 +84,7 @@ def seed():
                 default_service="tennis_lesson",
                 default_duration_minutes=60,
                 assistant_phone="+5511949408816",
+                agent_phone=f"+{agent_number}" if agent_number else None,
             )
             db.add(pro)
             db.flush()

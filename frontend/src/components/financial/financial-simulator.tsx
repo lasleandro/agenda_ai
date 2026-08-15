@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Calculator, Save, SlidersHorizontal } from "lucide-react";
+import { Calculator, Info, Pencil, Save, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -11,6 +11,11 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   evaluateFinancialScenario,
   saveFinancialScenario,
@@ -31,6 +36,7 @@ import type {
   FinancialTimeCategory,
 } from "@/lib/types";
 import { ScenarioResults } from "./scenario-results";
+import { SimulatedAgenda } from "./simulated-agenda";
 
 const MODE_OPTIONS: {
   value: FinancialScenarioMode;
@@ -51,6 +57,16 @@ const MODE_OPTIONS: {
     value: "full_groups",
     label: "Todos grupos de quatro",
     helper: "Simula todos os horários com quatro pessoas.",
+  },
+  {
+    value: "individual_regular_groups_prime",
+    label: "Individuais no regular, grupos no nobre",
+    helper: "Reserva grupos de quatro para horários nobres.",
+  },
+  {
+    value: "groups_regular_individual_prime",
+    label: "Grupos no regular, individuais no nobre",
+    helper: "Reserva aulas individuais para horários nobres.",
   },
   {
     value: "custom",
@@ -97,6 +113,7 @@ export function FinancialSimulator({
     4: observedMix[4] ?? 0,
   });
   const [rateInputs, setRateInputs] = useState<Record<string, string>>({});
+  const [editingRates, setEditingRates] = useState(false);
   const [result, setResult] = useState<FinancialScenarioResult | null>(null);
   const [scenarios, setScenarios] =
     useState<FinancialScenarioDetail[]>(initialScenarios);
@@ -119,6 +136,12 @@ export function FinancialSimulator({
       );
       if (rate) return rate.effective_hourly_rate_cents;
     }
+    const genericRate = configuration.generic_place.rates.find(
+      (item) =>
+        item.time_category === category &&
+        item.participant_count === participantCount
+    );
+    if (genericRate) return genericRate.effective_hourly_rate_cents;
     return (
       settings.rates.find(
         (item) => item.participant_count === participantCount
@@ -139,7 +162,8 @@ export function FinancialSimulator({
     ) {
       throw new Error("No mix personalizado, os percentuais devem somar 100%");
     }
-    const rateOverrides = (
+    const rateOverrides = editingRates
+      ? (
       ["regular", "prime"] as FinancialTimeCategory[]
     ).flatMap((category) =>
       [1, 2, 3, 4].flatMap((participantCount) => {
@@ -155,7 +179,8 @@ export function FinancialSimulator({
               },
             ];
       })
-    );
+    )
+      : [];
     return {
       name: name.trim() || "Cenário sem nome",
       date_from: dateFrom,
@@ -225,20 +250,40 @@ export function FinancialSimulator({
     0
   );
 
+  function enableRateEditing() {
+    setRateInputs(
+      Object.fromEntries(
+        (["regular", "prime"] as FinancialTimeCategory[]).flatMap((category) =>
+          [1, 2, 3, 4].map((participantCount) => [
+            rateKey(category, participantCount),
+            centsToRateInput(configuredRate(category, participantCount)),
+          ])
+        )
+      )
+    );
+    setEditingRates(true);
+  }
+
+  function resetRateEditing() {
+    setRateInputs({});
+    setEditingRates(false);
+  }
+
   return (
     <div className="space-y-5">
-      <div className="grid gap-5 xl:grid-cols-[0.9fr_1.4fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <SlidersHorizontal className="size-4 text-primary" />
-              Premissas
-            </CardTitle>
-            <CardDescription>
-              O cenário não altera preços nem compromissos da agenda.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <SlidersHorizontal className="size-4 text-primary" />
+            Premissas
+          </CardTitle>
+          <CardDescription>
+            O cenário não altera preços nem compromissos da agenda.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid gap-5 xl:grid-cols-[0.9fr_1.4fr]">
+            <div className="space-y-5">
             <label className="grid gap-1.5 text-xs font-medium">
               Nome do cenário
               <Input
@@ -333,18 +378,43 @@ export function FinancialSimulator({
                   )?.place_name
                 : "todos os locais"}
             </div>
-          </CardContent>
-        </Card>
+            </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Teste de preços R$/aluno/h</CardTitle>
-            <CardDescription>
-              Deixe vazio para preservar a regra configurada. Um valor
-              informado substitui a categoria em todos os locais do recorte.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
+            <section className="border-t pt-5 xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="flex items-center gap-1.5 font-medium">
+              Teste de preços R$/aluno/h
+              <Tooltip>
+                <TooltipTrigger
+                  className="text-muted-foreground"
+                  aria-label="Como o valor por participante é cobrado"
+                >
+                  <Info className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  O valor é por participante, não o total da aula. Uma aula
+                  de 2 pessoas a R$ 180/h cobra R$ 180 de cada uma — R$ 360/h
+                  no total.
+                </TooltipContent>
+              </Tooltip>
+                  </h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Valores configurados para o recorte. Altere somente se quiser testar outra regra.
+                  </p>
+                </div>
+                {editingRates ? (
+                  <Button variant="ghost" size="sm" onClick={resetRateEditing}>
+                    Usar valores configurados
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={enableRateEditing}>
+                    <Pencil className="size-3.5" />
+                    Editar preços
+                  </Button>
+                )}
+              </div>
+              <div className="mt-4 overflow-x-auto">
             <table className="w-full min-w-[560px] text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-muted-foreground">
@@ -364,22 +434,28 @@ export function FinancialSimulator({
                     {(["regular", "prime"] as FinancialTimeCategory[]).map(
                       (category) => {
                         const key = rateKey(category, participantCount);
+                        const configured = centsToRateInput(
+                          configuredRate(category, participantCount)
+                        );
                         return (
                           <td key={category} className="py-3 pr-3">
-                            <Input
-                              inputMode="decimal"
-                              placeholder={centsToRateInput(
-                                configuredRate(category, participantCount)
-                              )}
-                              value={rateInputs[key] ?? ""}
-                              onChange={(event) =>
-                                setRateInputs((current) => ({
-                                  ...current,
-                                  [key]: event.target.value,
-                                }))
-                              }
-                              aria-label={`Novo preço ${category}, ${participantCount} pessoas`}
-                            />
+                            {editingRates ? (
+                              <Input
+                                inputMode="decimal"
+                                value={rateInputs[key] ?? configured}
+                                onChange={(event) =>
+                                  setRateInputs((current) => ({
+                                    ...current,
+                                    [key]: event.target.value,
+                                  }))
+                                }
+                                aria-label={`Preço ${category}, ${participantCount} pessoas`}
+                              />
+                            ) : (
+                              <span className="text-muted-foreground">
+                                R$ {configured || "não definido"}
+                              </span>
+                            )}
                           </td>
                         );
                       }
@@ -388,6 +464,9 @@ export function FinancialSimulator({
                 ))}
               </tbody>
             </table>
+              </div>
+            </section>
+          </div>
             <div className="mt-4 flex flex-wrap gap-2">
               <Button onClick={evaluate} disabled={evaluating}>
                 <Calculator className="size-4" />
@@ -403,12 +482,18 @@ export function FinancialSimulator({
               </Button>
             </div>
             {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
-          </CardContent>
-        </Card>
-      </div>
+        </CardContent>
+      </Card>
 
       {result ? (
-        <ScenarioResults result={result} />
+        <>
+          <ScenarioResults result={result} />
+          <SimulatedAgenda
+            events={result.simulated_schedule}
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+          />
+        </>
       ) : (
         <Card>
           <CardContent className="py-10 text-center text-sm text-muted-foreground">

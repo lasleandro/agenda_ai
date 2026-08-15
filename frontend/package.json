@@ -12,6 +12,7 @@
     "@base-ui/react": "^1.7.0",
     "@fullcalendar/daygrid": "^6.1.21",
     "@fullcalendar/interaction": "^6.1.21",
+    "@fullcalendar/list": "^6.1.21",
     "@fullcalendar/react": "^6.1.21",
     "@fullcalendar/timegrid": "^6.1.21",
     "class-variance-authority": "^0.7.1",

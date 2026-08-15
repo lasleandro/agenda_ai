@@ -25,11 +25,14 @@ a detail page for editing individual contact profiles.
 | `GroupsTab` | `components/ontology/groups-tab.tsx` | Groups tab showing all recurring groups |
 | `RecurringGroupDialog` | `components/ontology/recurring-group-dialog.tsx` | Form to create a new group with selected contacts |
 | `AddToGroupDialog` | `components/ontology/add-to-group-dialog.tsx` | Per-contact dialog to add to existing group |
+| `AddToWaitlistDialog` | `components/ontology/add-to-waitlist-dialog.tsx` | Per-contact dialog to add to the Fila de Espera (waitlist roadmap v0.1) |
+| `DetectedCandidatesTab` | `components/ontology/detected-candidates-tab.tsx` | Review surface for passive-observer-detected scheduling events |
 
-### Two-Tab Layout
+### Three-Tab Layout
 
-- **Clientes tab:** Search/filter list, multi-select for group creation
+- **Clientes tab:** Search/filter list, multi-select for group creation, Fila de Espera filter chip
 - **Grupos tab:** All group-type recurring slots, with participant management
+- **Detectados tab:** `AppointmentCandidate` rows (status `detected`) from the passive observer — dismiss, or for `waitlist_request` candidates, complete/confirm into a real waitlist entry
 
 ### Data Sources
 
@@ -38,6 +41,8 @@ a detail page for editing individual contact profiles.
 | Contacts | `GET /api/contacts` |
 | Places | `GET /api/places` |
 | Recurring slots | `GET /api/recurring-slots` |
+| Waitlist entries (open + matched) | `GET /api/waitlist-entries` |
+| Detected candidates | `GET /api/appointment-candidates?status=detected` |
 
 ### User Actions
 
@@ -48,11 +53,15 @@ a detail page for editing individual contact profiles.
 | Add to group | Per-row `UserPlus` button → select group in dialog |
 | Navigate to detail | Click row → `/clientes/[id]` |
 | Call contact | Per-row `Phone` button |
+| Filter to waitlisted contacts | "Fila de espera" chip next to search |
+| Add/remove from waitlist | Per-row `Clock` button — toggles based on current state, opens `AddToWaitlistDialog` |
+| Review a detected event | Detectados tab → dismiss, or (waitlist_request only) "Adicionar à fila de espera" |
 
 ### Visual Design
 
 - Each row: display name, phone, home place (MapPin icon), level badge,
-  makeup credits badge (blue, shows count)
+  makeup credits badge (blue, shows count), Fila de Espera badge (grey,
+  clock icon) when the contact has an open/matched waitlist entry
 - Client-side pagination, 10 per page
 - Search filters in real-time as user types
 

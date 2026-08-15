@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Calendar, Clock, GraduationCap, MapPin, Repeat, Users } from "lucide-react";
+import {
+  Calendar,
+  CircleDollarSign,
+  CircleHelp,
+  Clock,
+  GraduationCap,
+  MapPin,
+  Repeat,
+  Users,
+} from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -10,8 +19,14 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   fetchGroupFinancials,
   fetchRecurringGroup,
+  fetchRevenuePreview,
   updateGroupFinancials,
 } from "@/lib/api";
 import { fetchSession, sessionHasFeature } from "@/lib/auth";
@@ -30,6 +45,7 @@ import type {
   CommercialOverrideInput,
   GroupFinancialDetail,
   RecurringGroupDetail,
+  RevenuePreviewDetail,
 } from "@/lib/types";
 
 function scheduleLabel(group: RecurringGroupDetail): string {
@@ -46,10 +62,12 @@ function scheduleLabel(group: RecurringGroupDetail): string {
 
 export function GroupDetailsDialog({
   groupId,
+  occurrenceDate,
   open,
   onOpenChange,
 }: {
   groupId: string | null;
+  occurrenceDate?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -67,6 +85,11 @@ export function GroupDetailsDialog({
     detail: GroupFinancialDetail | null;
   } | null>(null);
   const [financialError, setFinancialError] = useState<string | null>(null);
+  const [revenuePreview, setRevenuePreview] = useState<{
+    groupId: string;
+    occurrenceDate: string;
+    detail: RevenuePreviewDetail;
+  } | null>(null);
 
   useEffect(() => {
     if (!groupId || !open) return;
@@ -90,6 +113,17 @@ export function GroupDetailsDialog({
       const enabled = sessionHasFeature(user, "commercial_financials");
       setFinancialCapability({ groupId, enabled });
       if (!enabled) return;
+      if (occurrenceDate) {
+        fetchRevenuePreview("recurring_slot", groupId, occurrenceDate)
+          .then((detail) => {
+            if (active) {
+              setRevenuePreview({ groupId, occurrenceDate, detail });
+            }
+          })
+          .catch(() => {
+            // The financial preview must not block the group details panel.
+          });
+      }
       fetchGroupFinancials(groupId)
         .then((detail) => {
           if (active) setFinancialResult({ groupId, detail });
@@ -107,7 +141,7 @@ export function GroupDetailsDialog({
     return () => {
       active = false;
     };
-  }, [groupId, open]);
+  }, [groupId, occurrenceDate, open]);
 
   const currentResult = result?.groupId === groupId ? result : null;
   const detail = currentResult?.detail ?? null;
@@ -116,6 +150,11 @@ export function GroupDetailsDialog({
     financialCapability?.groupId === groupId && financialCapability.enabled;
   const financial =
     financialResult?.groupId === groupId ? financialResult.detail : null;
+  const currentRevenue =
+    revenuePreview?.groupId === groupId &&
+    revenuePreview.occurrenceDate === occurrenceDate
+      ? revenuePreview.detail
+      : null;
 
   async function handleFinancialSave(input: CommercialOverrideInput) {
     if (!groupId || !financial) return;
@@ -218,6 +257,53 @@ export function GroupDetailsDialog({
             </div>
 
             <Separator />
+
+            {currentRevenue && (
+              <div className="space-y-3 text-sm">
+                <div className="flex items-center gap-3">
+                  <CircleDollarSign className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span>
+                    Receita corrente: {" "}
+                    {formatBrlFromCents(currentRevenue.estimated_revenue_cents)}
+                  </span>
+                  <Tooltip>
+                    <TooltipTrigger
+                      className="text-muted-foreground"
+                      aria-label="Como a receita corrente é calculada"
+                    >
+                      <CircleHelp className="h-3.5 w-3.5" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Receita estimada com os participantes atualmente atribuídos
+                      a este grupo.
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                {currentRevenue.capacity_revenue_cents !== undefined && (
+                  <div className="flex items-center gap-3">
+                    <CircleDollarSign className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span>
+                      Capacidade total de receita: {" "}
+                      {formatBrlFromCents(currentRevenue.capacity_revenue_cents)}
+                    </span>
+                    <Tooltip>
+                      <TooltipTrigger
+                        className="text-muted-foreground"
+                        aria-label="Como a capacidade total de receita é calculada"
+                      >
+                        <CircleHelp className="h-3.5 w-3.5" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Receita estimada para esta mesma aula com quatro clientes,
+                        usando as regras de preço do horário e local.
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {currentRevenue && <Separator />}
 
             {financialEnabled && financial && (
               <>

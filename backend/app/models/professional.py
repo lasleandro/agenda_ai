@@ -25,6 +25,11 @@ class Professional(Base):
     default_service: Mapped[str] = mapped_column(String(100), default="tennis_lesson")
     default_duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
     assistant_phone: Mapped[str | None] = mapped_column(String(50))
+    # Separate WhatsApp number for the instructor to talk to the AI agent
+    # directly (AI Agent Operations Roadmap v0.1, Phase 0) — distinct from
+    # assistant_phone above, which is the customer-facing number the passive
+    # observer watches.
+    agent_phone: Mapped[str | None] = mapped_column(String(50))
     daily_summary_time: Mapped[str] = mapped_column(String(5), default="07:00")
     status: Mapped[str] = mapped_column(String(50), default="active")
     created_at: Mapped[datetime] = mapped_column(

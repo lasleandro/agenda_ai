@@ -51,6 +51,13 @@ suficientes, diga isso claramente.
 - Para qualquer expressão de data relativa ("hoje", "amanhã", "terça que \
 vem", "de tarde" etc.), sempre chame a ferramenta resolve_date_phrase — \
 nunca calcule datas por conta própria.
+- Expressões que cobrem uma semana inteira ("essa semana", "próxima \
+semana", "semana que vem") fazem resolve_date_phrase retornar date_from/ \
+date_to (segunda a domingo) em vez de date — nesse caso use date_from/ \
+date_to diretamente em get_schedule. find_instructor_openings só aceita uma \
+data por chamada; se o professor pedir horários vagos da semana toda, chame \
+find_instructor_openings uma vez para cada dia do intervalo (no máximo 7 \
+dias) e combine os resultados.
 - Cada item retornado por get_schedule/get_next_session traz o campo \
 booleano is_past (verdadeiro se o horário já terminou em relação à hora \
 atual informada acima) — use esse campo em vez de calcular você mesmo. Ao \
@@ -64,14 +71,24 @@ a ferramenta retornar essa informação — não omita o local por padrão.
 - Ao buscar um contato, local ou grupo por nome, se a busca retornar zero \
 ou mais de um resultado, peça esclarecimento ao professor em vez de \
 adivinhar.
-- find_instructor_openings reflete apenas janelas de disponibilidade \
-recorrente pré-cadastradas por local (usadas no módulo financeiro para \
-projeção de receita) — NÃO é o critério de "posso marcar isso". Quando o \
-professor pedir para marcar um compromisso avulso em uma data/hora \
-específica, chame propose_create_appointment diretamente (ela valida \
-jornada de trabalho e conflitos de verdade); só use find_instructor_openings \
-quando o professor perguntar de forma aberta quando está livre, sem já ter \
-dado um horário.
+- find_instructor_openings retorna os horários realmente livres do dia: a \
+jornada de trabalho do professor menos todos os compromissos já marcados. \
+Use-a quando o professor perguntar de forma aberta quando está livre. \
+Quando ele já der uma data/hora específica para marcar, chame \
+propose_create_appointment diretamente (ela valida jornada e conflitos de \
+verdade).
+- find_instructor_openings quase sempre retorna VÁRIAS janelas livres no \
+mesmo dia — liste TODAS elas na resposta, nunca apenas a primeira ou a \
+maior.
+- Cada janela de find_instructor_openings traz uma lista "places" com os \
+locais cuja disponibilidade recorrente cobre aquele horário. Essa lista pode \
+vir vazia: o horário continua livre e válido para agendar — apenas nenhum \
+local tem janela cadastrada nele, então pergunte ao professor qual local usar \
+antes de propor. NUNCA trate "places" vazio como ausência de horário livre.
+- Se find_instructor_openings retornar "openings" vazio, a resposta traz uma \
+"note" explicando o motivo (sem jornada de trabalho cadastrada para aquele \
+dia da semana, ou dia totalmente ocupado) — repasse esse motivo ao professor \
+em vez de dizer genericamente que não há horários.
 - propose_create_appointment exige um local (place_id). Se o professor não \
 especificou o local e o contato não tem local padrão, pergunte qual local \
 antes de propor — nunca conclua que não há disponibilidade só porque o \
@@ -104,6 +121,25 @@ com o credit_id, local e horário escolhidos.
 billing_type="courtesy" em propose_create_appointment — reconheça pedidos \
 como "aula teste", "cortesia", "de graça", "sem cobrar" mesmo que o \
 professor não use a palavra exata "cortesia".
+- Quando o professor não tiver horário disponível para um contato e quiser \
+guardar esse pedido ("bota ela na fila", "avisa quando abrir horário"), \
+use propose_add_waitlist_entry (Fila de Espera) — sempre com uma data e \
+horário específicos informados pelo professor, nunca um pedido vago como \
+"qualquer manhã"; se a data/horário não estiver clara, pergunte antes de \
+propor. Para remover alguém da fila, primeiro chame list_waitlist_entries \
+para obter o waitlist_entry_id real, nunca invente um. Fila de Espera é \
+sobre demanda de agendamento — não confundir com o status comercial \
+"Em espera" de um contato (assuntos financeiros, não de agenda).
+- Quando o professor mencionar um compromisso que NÃO é uma aula com um \
+cliente — arbitrar um torneio, dar um workshop ou clínica — use \
+propose_create_event, nunca propose_create_appointment (que exige um \
+cliente). Exemplo: "amanhã das 15 às 20h vou dar uma clínica, vou receber \
+R$ 2000" → event_type="clinic", start_at/end_at conforme informado, \
+income_cents=200000. Infira event_type pelo vocabulário: "arbitrar"/ \
+"arbitragem"/"árbitro" → tournament_referee; "workshop"/"oficina" → \
+workshop; "clínica" → clinic; caso contrário → other. income_cents e \
+place_id são opcionais — só inclua o que o professor efetivamente disse, \
+nunca invente um valor.
 - Responda sempre em português, de forma direta e concisa."""
 
 
@@ -151,6 +187,7 @@ def _execute_tool_call(
     correlation_id: uuid.UUID,
     tool_name: str,
     arguments: dict[str, Any],
+    channel: str,
 ) -> dict[str, Any]:
     read_implementation = TOOL_DISPATCH.get(tool_name)
     if read_implementation is not None:
@@ -159,7 +196,7 @@ def _execute_tool_call(
     mutation_implementation = MUTATION_TOOL_DISPATCH.get(tool_name)
     if mutation_implementation is not None:
         return mutation_implementation(
-            db, professional_id, actor_user_id, correlation_id, **arguments
+            db, professional_id, actor_user_id, correlation_id, channel=channel, **arguments
         )
 
     return {"error": f"Unknown tool '{tool_name}'"}
@@ -170,6 +207,7 @@ def run_agent_turn(
     professional_id: uuid.UUID,
     actor_user_id: uuid.UUID,
     messages: list[dict[str, str]],
+    channel: str = "web",
 ) -> AgentResponse:
     """Run one instructor turn: `messages` is the prior conversation
     (role/content pairs, oldest first, no system message — this function
@@ -227,7 +265,7 @@ def run_agent_turn(
 
             try:
                 result = _execute_tool_call(
-                    db, professional_id, actor_user_id, correlation_id, tool_name, arguments
+                    db, professional_id, actor_user_id, correlation_id, tool_name, arguments, channel
                 )
             except Exception as exc:  # noqa: BLE001 — surface as a tool error, not a crash
                 result = {"error": f"Tool execution failed: {exc}"}

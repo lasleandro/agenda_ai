@@ -38,6 +38,16 @@ def _random_email() -> str:
     return f"financial_{uuid.uuid4().hex[:10]}@agenda.ai"
 
 
+def _minutes_between(start: str, end: str) -> int:
+    start_hour, start_minute, *_ = start.split(":")
+    end_hour, end_minute, *_ = end.split(":")
+    return (
+        int(end_hour) * 60
+        + int(end_minute)
+        - int(start_hour) * 60
+        - int(start_minute)
+    )
+
 def _create_tenant(db, *, enabled: bool):
     professional = Professional(
         name="Tenant Financeiro",
@@ -431,6 +441,51 @@ def test_financial_configuration_prime_place_and_journey() -> None:
         )
         assert global_rates.status_code == 200
 
+        generic_rates = client.put(
+            "/api/financial/generic-place/rates",
+            json={
+                "rates": [
+                    {
+                        "time_category": "regular",
+                        "participant_count": 1,
+                        "hourly_rate_cents": 4500,
+                    },
+                    {
+                        "time_category": "prime",
+                        "participant_count": 1,
+                        "hourly_rate_cents": 5500,
+                    },
+                ]
+            },
+            cookies=cookies,
+        )
+        assert generic_rates.status_code == 200
+        generic_matrix = {
+            (rate["time_category"], rate["participant_count"]): rate
+            for rate in generic_rates.json()["rates"]
+        }
+        assert generic_matrix[("regular", 1)]["source"] == "generic"
+        assert generic_matrix[("regular", 1)]["effective_hourly_rate_cents"] == 4500
+
+        generic_quote = client.post(
+            "/api/financial/quote",
+            json={
+                "day_of_week": 0,
+                "start_time": "07:30:00",
+                "end_time": "08:30:00",
+                "participant_count": 1,
+            },
+            cookies=cookies,
+        )
+        assert generic_quote.status_code == 200
+        assert [
+            (segment["time_category"], segment["hourly_rate_cents"], segment["source"])
+            for segment in generic_quote.json()["segments"]
+        ] == [
+            ("prime", 5500, "generic"),
+            ("regular", 4500, "generic"),
+        ]
+
         place_rates = client.put(
             f"/api/financial/places/{place.id}/rates",
             json={
@@ -723,6 +778,22 @@ def test_financial_dashboard_capacity_scenarios_and_tenant_scope() -> None:
         assert presets["all_individual"]["projected_revenue_cents"] == 4000
         assert presets["full_groups"]["projected_revenue_cents"] == 9600
 
+        group_preview = client.get(
+            "/api/financial/revenue/preview",
+            params={
+                "source_type": "recurring_slot",
+                "source_id": str(group.id),
+                "occurrence_date": "2026-08-10",
+            },
+            cookies=cookies,
+        )
+        assert group_preview.status_code == 200
+        assert group_preview.json() == {
+            "estimated_revenue_cents": 1600,
+            "participant_count": 2,
+            "capacity_revenue_cents": 2400,
+        }
+
         scenario_input = {
             "name": "Preço e mix alternativos",
             "date_from": "2026-08-10",
@@ -752,15 +823,55 @@ def test_financial_dashboard_capacity_scenarios_and_tenant_scope() -> None:
         assert evaluated.status_code == 200
         result = evaluated.json()
         assert result["scenario"]["available_minutes"] == 240
-        assert result["scenario"]["utilized_minutes"] == 192
-        assert result["scenario"]["participant_hours"] == 8
-        assert result["scenario"]["projected_revenue_cents"] == 6400
-        assert result["incremental_revenue_cents"] == 4800
+        assert result["scenario"]["utilized_minutes"] == 180
+        assert result["scenario"]["participant_hours"] == 6
+        assert result["scenario"]["projected_revenue_cents"] == 6000
+        assert result["incremental_revenue_cents"] == 4400
+        assert result["customer_estimate"] == {
+            "calendar_weeks": 1,
+            "weekly_participant_hours": 6,
+            "minimum_customers": 2,
+            "maximum_customers": 6,
+        }
+        simulated_schedule = result["simulated_schedule"]
+        assert sum(
+            _minutes_between(item["start_time"], item["end_time"])
+            for item in simulated_schedule
+        ) == 180
+        assert {item["participant_count"] for item in simulated_schedule} == {1, 4}
+        assert {item["place_name"] for item in simulated_schedule} == {
+            "Arena principal"
+        }
+        assert all(item["hourly_rate_cents"] is not None for item in simulated_schedule)
+        assert sum(item["total_revenue_cents"] for item in simulated_schedule) == 6000
         group_tradeoff = next(
             item for item in result["tradeoffs"] if item["participant_count"] == 4
         )
         assert group_tradeoff["full_class_revenue_cents"] == 2000
         assert group_tradeoff["break_even_occupancy_pct"] == 100
+
+        prime_groups = client.post(
+            "/api/financial/scenarios/evaluate",
+            json={
+                **scenario_input,
+                "mode": "individual_regular_groups_prime",
+                "occupancy_pct": 100,
+                "participant_mix": None,
+            },
+            cookies=cookies,
+        )
+        assert prime_groups.status_code == 200
+        assert prime_groups.json()["scenario"] == {
+            "available_minutes": 240,
+            "utilized_minutes": 240,
+            "occupancy_pct": 100,
+            "participant_hours": 7,
+            "projected_revenue_cents": 8000,
+        }
+        assert {
+            (event["time_category"], event["participant_count"])
+            for event in prime_groups.json()["simulated_schedule"]
+        } == {("regular", 1), ("prime", 4)}
 
         saved = client.post(
             "/api/financial/scenarios",
@@ -902,6 +1013,21 @@ def test_financial_dashboard_top_line_uses_work_journey_not_recurring_slots() ->
         assert body["occupancy_pct"] == 25.0
         assert body["projected_revenue_cents"] == 1000
 
+        preview = client.get(
+            "/api/financial/revenue/preview",
+            params={
+                "source_type": "appointment",
+                "source_id": str(appointment.id),
+                "occurrence_date": "2026-08-10",
+            },
+            cookies=cookies,
+        )
+        assert preview.status_code == 200
+        assert preview.json() == {
+            "estimated_revenue_cents": 1000,
+            "participant_count": 1,
+        }
+
         # The by-place breakdown still correctly reports zero — it needs an
         # explicit RecurringSlot to attribute hours to that place.
         assert all(row["available_minutes"] == 0 for row in body["by_place"])
@@ -915,6 +1041,30 @@ def test_financial_dashboard_top_line_uses_work_journey_not_recurring_slots() ->
             if preset["key"] == "all_individual"
         )
         assert all_individual["projected_revenue_cents"] == 4000
+
+        scenario = client.post(
+            "/api/financial/scenarios/evaluate",
+            json={
+                "name": "Jornada sem local",
+                "date_from": "2026-08-10",
+                "date_to": "2026-08-10",
+                "mode": "all_individual",
+                "occupancy_pct": 100,
+                "rate_overrides": [],
+            },
+            cookies=cookies,
+        )
+        assert scenario.status_code == 200
+        assert scenario.json()["scenario"] == {
+            "available_minutes": 240,
+            "utilized_minutes": 240,
+            "occupancy_pct": 100,
+            "participant_hours": 4,
+            "projected_revenue_cents": 4000,
+        }
+        assert {event["place_name"] for event in scenario.json()["simulated_schedule"]} == {
+            "Sem local definido"
+        }
 
         # With a place filter applied, top-line figures must fall back to
         # the place-scoped (RecurringSlot-based) accounting — otherwise

@@ -9,6 +9,7 @@ result as an AppointmentCandidate with its supporting evidence — including
 
 import os
 import uuid
+import logging
 from hashlib import sha256
 import json
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,7 @@ from app.models import (
     Message,
     PendingProcessing,
     Professional,
+    User,
 )
 from app.schemas.conversation import (
     ContactContext,
@@ -36,6 +38,9 @@ from app.schemas.conversation import (
 from app.schemas.extraction import SchedulingEvent
 from app.chat.extraction import extract_scheduling_events
 from app.chat.temporal import validate_temporal
+from app.services.candidate_execution import CreateCandidateInput, confirm_create_candidate
+from app.services.candidate_resolution import resolve_candidate
+from app.services.passive_escalation import queue_if_eligible
 
 # How many recent messages to include in the extraction window (brief 12.2:
 # "the new message; recent messages from the same conversation").
@@ -44,6 +49,8 @@ WINDOW_MESSAGE_COUNT = 20
 # Debounce window: wait this long after the last message before processing
 # (brief 12.2: "20-60 seconds... configurable").
 DEBOUNCE_SECONDS = int(os.getenv("PIPELINE_DEBOUNCE_SECONDS", "30"))
+
+logger = logging.getLogger(__name__)
 
 
 def schedule_processing(db: Session, conversation_id: uuid.UUID) -> None:
@@ -112,17 +119,62 @@ def build_conversation_window(db: Session, conversation: Conversation) -> Conver
 
 
 def event_fingerprint(event: SchedulingEvent) -> str:
-    """Create a stable identity for an extracted event across repeated runs."""
+    """Create a stable identity for an operation across extraction windows.
+
+    Confirmation state and evidence deliberately do not participate: a later
+    instructor message can advance the same proposal to confirmed without
+    creating a second candidate.
+    """
     payload = {
-        "action": event.action,
+        "operation": event.operation,
         "start_at": event.start_at.isoformat() if event.start_at else None,
         "end_at": event.end_at.isoformat() if event.end_at else None,
         "service": event.service,
         "existing_appointment_id": event.existing_appointment_id,
         "recurrence_rule": event.recurrence_rule,
-        "evidence_message_ids": sorted(event.evidence_message_ids),
     }
     return sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def _auto_execute_authoritative_create(
+    db: Session, candidate: AppointmentCandidate
+) -> bool:
+    """Execute a fully resolved instructor-confirmed create exactly once.
+
+    Failures intentionally leave the evidence candidate in ``detected`` for
+    platform review. The nested transaction prevents a schedule conflict from
+    losing the extraction itself.
+    """
+    if candidate.status != "detected" or candidate.confirmation_status not in {
+        "instructor_confirmed",
+        "mutually_confirmed",
+    }:
+        return False
+    resolution = resolve_candidate(db, candidate)
+    if resolution.operation != "create" or not resolution.is_resolved:
+        return False
+    actor = (
+        db.query(User)
+        .filter(User.professional_id == candidate.professional_id, User.role == "professional")
+        .order_by(User.created_at.asc())
+        .first()
+    )
+    if actor is None:
+        return False
+    try:
+        with db.begin_nested():
+            confirm_create_candidate(
+                db,
+                candidate,
+                actor_user_id=actor.id,
+                input=CreateCandidateInput(),
+                source_channel="passive_observer",
+                automatic=True,
+            )
+        return True
+    except Exception:  # preserve a reviewable candidate when execution cannot proceed
+        logger.exception("Automatic execution failed for passive candidate %s", candidate.id)
+        return False
 
 
 def process_conversation(db: Session, conversation: Conversation) -> list[AppointmentCandidate]:
@@ -141,38 +193,66 @@ def process_conversation(db: Session, conversation: Conversation) -> list[Appoin
             )
             .first()
         )
-        if candidate is not None:
-            candidates.append(candidate)
-            continue
-
-        candidate = AppointmentCandidate(
-            professional_id=conversation.professional_id,
-            conversation_id=conversation.id,
+        if candidate is None:
+            candidate = AppointmentCandidate(
+                professional_id=conversation.professional_id,
+                conversation_id=conversation.id,
             contact_id=conversation.contact_id,
-            action=event.action,
-            proposed_start_at=event.start_at,
-            proposed_end_at=event.end_at,
-            service=event.service,
-            confidence=event.confidence,
-            status="detected",
-            ambiguities=[a.model_dump() for a in event.ambiguities],
-            event_fingerprint=fingerprint,
-            extraction_version="v0.1",
+            action=event.operation,
+            existing_appointment_id=(
+                uuid.UUID(event.existing_appointment_id)
+                if event.existing_appointment_id
+                else None
+            ),
+                status="detected",
+                event_fingerprint=fingerprint,
+            )
+            db.add(candidate)
+            db.flush()
+
+        candidate.action = event.operation
+        candidate.operation = event.operation
+        candidate.confirmation_status = event.confirmation_status
+        candidate.existing_appointment_id = (
+            uuid.UUID(event.existing_appointment_id)
+            if event.existing_appointment_id
+            else None
         )
-        db.add(candidate)
-        db.flush()
+        candidate.proposed_start_at = event.start_at
+        candidate.proposed_end_at = event.end_at
+        candidate.service = event.service
+        candidate.confidence = event.confidence
+        candidate.ambiguities = [a.model_dump() for a in event.ambiguities]
+        candidate.extraction_version = "v0.2"
 
         evidence_message_ids = set(event.evidence_message_ids)
-        for sequence, msg in enumerate(window.messages):
-            if msg.id in evidence_message_ids:
-                db.add(
-                    AppointmentEvidence(
-                        appointment_candidate_id=candidate.id,
-                        message_id=msg.id,
-                        evidence_role="supporting",
-                        sequence=sequence,
-                    )
-                )
+        evidence_rows = [
+            {
+                "appointment_candidate_id": candidate.id,
+                "message_id": msg.id,
+                "evidence_role": "supporting",
+                "sequence": sequence,
+            }
+            for sequence, msg in enumerate(window.messages)
+            if msg.id in evidence_message_ids
+        ]
+        if evidence_rows:
+            # ON CONFLICT DO NOTHING instead of a pre-check SELECT: a
+            # reprocessed conversation (debounce reset by a new inbound
+            # message) can re-extract the same event for the same
+            # candidate, and a plain SELECT-then-INSERT is a TOCTOU race
+            # against a concurrent run — it crashed the worker in
+            # production with a duplicate-key IntegrityError.
+            stmt = pg_insert(AppointmentEvidence).values(evidence_rows)
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=[
+                    AppointmentEvidence.appointment_candidate_id,
+                    AppointmentEvidence.message_id,
+                ]
+            )
+            db.execute(stmt)
+        _auto_execute_authoritative_create(db, candidate)
+        queue_if_eligible(db, candidate)
         candidates.append(candidate)
 
     db.commit()

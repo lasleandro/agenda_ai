@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Contact, Conversation, Message, Professional
+from app.chat import agent_channel
 from app.chat.pipeline import schedule_processing
 from app.chat.ycloud_provider import NormalizedMessage, normalize_event
 from app.services.text_normalization import normalize_name
@@ -114,8 +115,12 @@ def ingest_normalized_message(db: Session, normalized: NormalizedMessage) -> Mes
 
 def ingest_event(db: Session, event: dict) -> Message | None:
     """Normalize a raw provider event and ingest it. Returns None if the event
-    type isn't tracked, or if it was a duplicate."""
+    type isn't tracked, if it was a duplicate, or if it was routed to the
+    agent channel (Professional.agent_phone) instead of the customer-facing
+    passive-observer pipeline below."""
     normalized = normalize_event(event)
     if normalized is None:
+        return None
+    if agent_channel.try_handle(db, normalized):
         return None
     return ingest_normalized_message(db, normalized)

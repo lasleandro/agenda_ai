@@ -83,6 +83,12 @@ class RecurringSlotCreate(BaseModel):
     valid_from: date | None = None
     valid_until: date | None = None
 
+    @model_validator(mode="after")
+    def validate_time_range(self) -> "RecurringSlotCreate":
+        if self.end_time <= self.start_time:
+            raise ValueError("End time must be after start time")
+        return self
+
 
 class RecurringSlotBulkCreate(BaseModel):
     place_id: uuid.UUID
@@ -108,6 +114,12 @@ class RecurringSlotBulkCreate(BaseModel):
         if len(days) != len(set(days)):
             raise ValueError("Days of week must not contain duplicates")
         return sorted(days)
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> "RecurringSlotBulkCreate":
+        if self.end_time <= self.start_time:
+            raise ValueError("End time must be after start time")
+        return self
 
 
 class RecurringSlotUpdate(BaseModel):
@@ -275,3 +287,34 @@ class ContactDetail(ContactSummary):
 
 class ContactListResponse(BaseModel):
     contacts: list[ContactSummary]
+
+
+class WaitlistEntryCreate(BaseModel):
+    contact_id: uuid.UUID
+    place_id: uuid.UUID | None = None
+    desired_date: date
+    desired_start_time: time
+    desired_end_time: time
+    class_type: str | None = None  # "individual" | "group", None if either works
+    duration_minutes: int | None = None  # defaults to (end - start) if omitted
+    note: str | None = None
+
+
+class WaitlistEntryDetail(BaseModel):
+    id: uuid.UUID
+    contact_id: uuid.UUID
+    contact_name: str
+    place_id: uuid.UUID | None
+    place_name: str | None
+    desired_date: date
+    desired_start_time: time
+    desired_end_time: time
+    class_type: str | None
+    duration_minutes: int
+    status: str
+    note: str | None
+    created_at: datetime
+
+
+class WaitlistEntryListResponse(BaseModel):
+    entries: list[WaitlistEntryDetail]

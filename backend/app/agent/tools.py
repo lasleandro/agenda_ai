@@ -17,12 +17,14 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from app.agent import entity_resolution, temporal
-from app.models import Place, Professional, RecurringSlot
+from app.models import Contact, Place, Professional, RecurringSlot
 from app.services import (
     financial_capacity,
+    instructor_events,
     makeup_credits,
     makeup_recommender,
     scheduling,
+    waitlist,
 )
 
 MAX_SCHEDULE_SPAN_DAYS = 31
@@ -174,6 +176,10 @@ def get_next_session(
     return {"next_session": None}
 
 
+def _format_minutes(minute: int) -> str:
+    return f"{minute // 60:02d}:{minute % 60:02d}"
+
+
 def find_instructor_openings(
     db: Session,
     professional_id: uuid.UUID,
@@ -183,6 +189,16 @@ def find_instructor_openings(
     duration_minutes: int | None = None,
     place_id: str | None = None,
 ) -> dict[str, Any]:
+    """Real free time on a date: the declared Work Journey minus every
+    booking, across all places.
+
+    Deliberately *not* based on per-place recurring availability windows
+    (`RecurringSlot`, the financial module's capacity config): those exist
+    for revenue projection, and treating them as the answer to "when am I
+    free?" hides genuinely open calendar gaps at any hour no place happens
+    to have configured. Each opening still carries the places whose
+    configured window covers it, so the agent can suggest a place — but a
+    place without a window never removes an opening."""
     target_date = date_cls.fromisoformat(date)
 
     professional = (
@@ -191,23 +207,6 @@ def find_instructor_openings(
     if professional is None:
         return {"error": "Professional not found"}
     duration = duration_minutes or professional.default_duration_minutes
-
-    place_ids = [uuid.UUID(place_id)] if place_id else None
-    places = financial_capacity.load_places(db, professional_id, place_ids)
-    if not places:
-        return {
-            "openings": [],
-            "note": "No places found for this professional; "
-            "the platform lacks enough availability data to answer.",
-        }
-
-    prime_ranges = financial_capacity.load_prime_ranges(db, professional_id)
-    segments = financial_capacity.build_capacity_segments(
-        db, professional_id, target_date, target_date, places, prime_ranges
-    )
-    bookings = financial_capacity.load_booking_occurrences(
-        db, professional_id, target_date, target_date, places
-    )
 
     period_window: tuple[int, int] | None = None
     if period is not None:
@@ -219,37 +218,83 @@ def find_instructor_openings(
             return {"error": f"Unknown period '{period}'"}
         period_window = matching[0]
 
+    place_ids = [uuid.UUID(place_id)] if place_id else None
+    places = financial_capacity.load_places(db, professional_id, place_ids)
+    free_by_place = (
+        financial_capacity.compute_free_ranges_by_place(
+            db, professional_id, target_date, places
+        )
+        if places
+        else {}
+    )
+
+    free_ranges = financial_capacity.compute_free_calendar_ranges(
+        db, professional_id, target_date
+    )
+    if period_window is not None:
+        free_ranges = scheduling.intersect_ranges(free_ranges, [period_window])
+    if place_id is not None:
+        # An explicit place filter means "when can I use this place?" —
+        # narrow the calendar gaps to that place's configured window.
+        free_ranges = scheduling.intersect_ranges(
+            free_ranges, free_by_place.get(uuid.UUID(place_id), [])
+        )
+
     openings: list[dict[str, Any]] = []
-    for place in places:
-        place_ranges = [
-            (segment.start_minute, segment.end_minute)
-            for segment in segments
-            if segment.place_id == place.id
-        ]
-        if period_window is not None:
-            place_ranges = scheduling.intersect_ranges(place_ranges, [period_window])
-        place_ranges = scheduling.merge_ranges(place_ranges)
-
-        booked_ranges = [
-            (b.start_minute, b.end_minute)
-            for b in bookings
-            if b.place_id == place.id and b.local_date == target_date
-        ]
-        free_ranges = scheduling.subtract_ranges(place_ranges, booked_ranges)
-
-        for start_minute, end_minute in free_ranges:
-            if end_minute - start_minute < duration:
-                continue
-            openings.append(
-                {
-                    "place_id": str(place.id),
-                    "place_name": place.name,
-                    "start_time": f"{start_minute // 60:02d}:{start_minute % 60:02d}",
-                    "end_time": f"{end_minute // 60:02d}:{end_minute % 60:02d}",
-                }
+    for start_minute, end_minute in free_ranges:
+        if end_minute - start_minute < duration:
+            continue
+        covering_places = [
+            {
+                "place_id": str(place.id),
+                "place_name": place.name,
+                "start_time": _format_minutes(place_start),
+                "end_time": _format_minutes(place_end),
+            }
+            for place in places
+            for place_start, place_end in scheduling.intersect_ranges(
+                free_by_place.get(place.id, []), [(start_minute, end_minute)]
             )
+            if place_end - place_start >= duration
+        ]
+        openings.append(
+            {
+                "start_time": _format_minutes(start_minute),
+                "end_time": _format_minutes(end_minute),
+                "places": covering_places,
+            }
+        )
 
-    return {"date": target_date.isoformat(), "duration_minutes": duration, "openings": openings}
+    result: dict[str, Any] = {
+        "date": target_date.isoformat(),
+        "duration_minutes": duration,
+        "openings": openings,
+    }
+
+    if openings:
+        if any(not opening["places"] for opening in openings):
+            result["note"] = (
+                "Os horários acima são os intervalos realmente livres da jornada de "
+                "trabalho do professor. Alguns vêm com a lista 'places' vazia: são "
+                "horários livres em que nenhum local tem janela de disponibilidade "
+                "recorrente cadastrada — continuam válidos para agendar, mas pergunte "
+                "ao professor qual local usar antes de propor."
+            )
+        return result
+
+    if not financial_capacity.load_net_work_ranges(db, professional_id, target_date):
+        result["note"] = (
+            "O professor não tem jornada de trabalho cadastrada para este dia da "
+            "semana — por isso não há horários livres a reportar. Diga isso ao "
+            "professor (não diga apenas que a agenda está cheia)."
+        )
+    else:
+        result["note"] = (
+            "A jornada de trabalho deste dia não tem nenhum intervalo livre de pelo "
+            f"menos {duration} minutos — está totalmente ocupada pelos compromissos "
+            "já marcados."
+        )
+    return result
 
 
 def resolve_date_phrase(
@@ -271,6 +316,12 @@ def resolve_date_phrase(
     return {
         "recognized": True,
         "date": resolution.resolved_date.isoformat() if resolution.resolved_date else None,
+        "date_from": (
+            resolution.resolved_date_from.isoformat() if resolution.resolved_date_from else None
+        ),
+        "date_to": (
+            resolution.resolved_date_to.isoformat() if resolution.resolved_date_to else None
+        ),
         "period_start_time": resolution.period[0].isoformat() if resolution.period else None,
         "period_end_time": resolution.period[1].isoformat() if resolution.period else None,
     }
@@ -338,6 +389,131 @@ def recommend_makeup_slots(
             if recommendations
             else "No available make-up credits for this contact, or no suitable slots found in the lookahead window."
         ),
+    }
+
+
+def list_waitlist_entries(
+    db: Session,
+    professional_id: uuid.UUID,
+    *,
+    status: str | None = None,
+    place_id: str | None = None,
+    contact_id: str | None = None,
+) -> dict[str, Any]:
+    """List Fila de Espera (waitlist) entries — contacts wanting a specific
+    slot that doesn't exist yet. Defaults to no status filter; pass
+    status="open" to see only unresolved requests."""
+    entries = waitlist.list_entries(
+        db,
+        professional_id,
+        status=status,
+        place_id=uuid.UUID(place_id) if place_id else None,
+        contact_id=uuid.UUID(contact_id) if contact_id else None,
+    )
+    contact_names = {
+        contact.id: contact.display_name
+        for contact in db.query(Contact).filter(
+            Contact.id.in_([e.contact_id for e in entries])
+        )
+    } if entries else {}
+    place_names = {
+        place.id: place.name
+        for place in db.query(Place).filter(
+            Place.id.in_([e.place_id for e in entries if e.place_id])
+        )
+    } if entries else {}
+    return {
+        "entries": [
+            {
+                "waitlist_entry_id": str(entry.id),
+                "contact_id": str(entry.contact_id),
+                "contact_name": contact_names.get(entry.contact_id, ""),
+                "place_id": _uuid_str(entry.place_id),
+                "place_name": place_names.get(entry.place_id) if entry.place_id else None,
+                "desired_date": entry.desired_date.isoformat(),
+                "desired_start_time": entry.desired_start_time.isoformat(),
+                "desired_end_time": entry.desired_end_time.isoformat(),
+                "class_type": entry.class_type,
+                "status": entry.status,
+                "note": entry.note,
+            }
+            for entry in entries
+        ]
+    }
+
+
+def find_waitlist_matches(
+    db: Session,
+    professional_id: uuid.UUID,
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict[str, Any]:
+    """Check open Fila de Espera (waitlist) entries against current
+    capacity and report which ones now have a matching opening — reuses the
+    same free-capacity computation as find_instructor_openings. Read-only;
+    does not book or change anything. Use propose_create_appointment (or
+    propose_redeem_makeup_credit if the contact has a credit) to actually
+    book a match the instructor wants to fill, then
+    propose_remove_waitlist_entry to take the contact off the list."""
+    matches = waitlist.find_matches(
+        db,
+        professional_id,
+        date_from=date_cls.fromisoformat(date_from) if date_from else None,
+        date_to=date_cls.fromisoformat(date_to) if date_to else None,
+    )
+    contact_names = {
+        contact.id: contact.display_name
+        for contact in db.query(Contact).filter(
+            Contact.id.in_([m["entry"].contact_id for m in matches])
+        )
+    } if matches else {}
+    return {
+        "matches": [
+            {
+                "waitlist_entry_id": str(m["entry"].id),
+                "contact_id": str(m["entry"].contact_id),
+                "contact_name": contact_names.get(m["entry"].contact_id, ""),
+                "desired_date": m["entry"].desired_date.isoformat(),
+                "desired_start_time": m["entry"].desired_start_time.isoformat(),
+                "desired_end_time": m["entry"].desired_end_time.isoformat(),
+                "place_id": str(m["place_id"]),
+                "place_name": m["place_name"],
+            }
+            for m in matches
+        ]
+    }
+
+
+def list_events(
+    db: Session,
+    professional_id: uuid.UUID,
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict[str, Any]:
+    """List InstructorEvent rows (tournaments refereed, workshops, clinics
+    — non-class paid work with no client) in an optional date range."""
+    events = instructor_events.list_events(
+        db,
+        professional_id,
+        date_from=datetime.fromisoformat(date_from) if date_from else None,
+        date_to=datetime.fromisoformat(date_to) if date_to else None,
+    )
+    return {
+        "events": [
+            {
+                "event_id": str(event.id),
+                "event_type": event.event_type,
+                "title": event.title,
+                "place_id": _uuid_str(event.place_id),
+                "start_at": event.start_at.isoformat(),
+                "end_at": event.end_at.isoformat(),
+                "income_cents": event.income_cents,
+                "status": event.status,
+            }
+            for event in events
+        ]
     }
 
 
@@ -433,7 +609,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "find_instructor_openings",
-            "description": "Find open (unbooked) instructor time windows on a given date, optionally filtered by period of day (morning/afternoon/evening), minimum duration, and place.",
+            "description": "Find the instructor's genuinely free time windows on a given date: the declared work journey minus every booking. Each opening lists, in 'places', the places whose recurring availability window covers it (may be empty — the window is still free). Optionally filtered by period of day (morning/afternoon/evening), minimum duration, and place.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -474,6 +650,52 @@ TOOL_SPECS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_waitlist_entries",
+            "description": "List Fila de Espera (waitlist) entries — contacts who want a slot at a specific date/time that doesn't exist yet. Call before propose_add_waitlist_entry/propose_remove_waitlist_entry to check existing entries or find a waitlist_entry_id; never guess an ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["open", "matched", "fulfilled", "cancelled", "expired"], "description": "Optional — omit to list all statuses."},
+                    "place_id": {"type": "string"},
+                    "contact_id": {"type": "string"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_waitlist_matches",
+            "description": "Check open Fila de Espera (waitlist) entries against current capacity and report which ones now have a matching opening (e.g. after a cancellation). Read-only — does not book anything. Follow up with propose_create_appointment to book a match, then propose_remove_waitlist_entry.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date_from": {"type": "string", "description": "Optional ISO date — omit to check all open entries regardless of date."},
+                    "date_to": {"type": "string", "description": "Optional ISO date."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_events",
+            "description": "List InstructorEvent rows — non-class paid work with no client (refereeing a tournament, running a workshop or clinic). Optional date range filter.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date_from": {"type": "string", "description": "Optional ISO datetime."},
+                    "date_to": {"type": "string", "description": "Optional ISO datetime."},
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
@@ -486,4 +708,7 @@ TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
     "find_instructor_openings": find_instructor_openings,
     "recommend_makeup_slots": recommend_makeup_slots,
     "list_makeup_credits": list_makeup_credits,
+    "list_waitlist_entries": list_waitlist_entries,
+    "find_waitlist_matches": find_waitlist_matches,
+    "list_events": list_events,
 }
