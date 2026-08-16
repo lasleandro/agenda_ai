@@ -26,7 +26,7 @@ export function ConfirmAppointmentCandidateDialog({
   onOpenChange: (open: boolean) => void;
   onConfirm: (input: { place_id: string | null; start_at: string | null; end_at: string | null; service: string | null }) => Promise<void>;
 }) {
-  const [placeId, setPlaceId] = useState(candidate.suggested_place_id ?? "");
+  const [placeId, setPlaceId] = useState(candidate.resolved_place_id ?? "");
   const [startAt, setStartAt] = useState(localDateTime(candidate.proposed_start_at));
   const [endAt, setEndAt] = useState(localDateTime(candidate.proposed_end_at));
   const [service, setService] = useState(candidate.service ?? "");
@@ -76,6 +76,16 @@ export function ConfirmAppointmentCandidateDialog({
             </div>
           </div>
           <SchedulerPlaceSelect id="candidate-place" places={places} value={placeId} onChange={setPlaceId} />
+          {candidate.place_resolution === "uncovered" && (
+            <p className="text-xs text-amber-700">
+              Este horário não possui uma permanência configurada. O local escolhido será salvo como exceção explícita.
+            </p>
+          )}
+          {candidate.place_resolution === "ambiguous" && (
+            <p className="text-xs text-amber-700">
+              Há mais de uma permanência cobrindo este horário. Escolha o local correto.
+            </p>
+          )}
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
         <DialogFooter>

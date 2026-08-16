@@ -186,6 +186,20 @@ orchestrator.
 
 ## 5. Appointments & Scheduling
 
+### Scheduling vocabulary
+
+- **Place stay:** a `RecurringSlot` with `slot_kind="availability"`; it
+  attributes the professional's normal presence to a place.
+- **Calendar item:** an appointment, recurring class, or instructor event
+  that occupies time on the Agenda.
+- **Recurring class:** a `RecurringSlot` with `slot_kind="class"`, with its
+  own format and roster.
+- **Instructor event:** a non-class `InstructorEvent`, such as a clinic,
+  workshop, or tournament.
+
+The place-stay roadmap uses these terms to keep venue presence distinct from
+the calendar items that occur within it.
+
 ```mermaid
 erDiagram
   Professional ||--o{ Appointment : owns
@@ -254,6 +268,17 @@ erDiagram
     int sequence
   }
 
+  PassiveEscalation {
+    uuid id PK
+    uuid appointment_candidate_id FK "unique"
+    uuid professional_id FK
+    string status "queued | needs_place_review | sent | failed | expired"
+    int attempt_count
+    timestamp next_attempt_at
+    string last_error
+    timestamp sent_at
+  }
+
   AppointmentTransition {
     uuid id PK
     uuid appointment_id FK
@@ -311,17 +336,14 @@ erDiagram
 
 ### Key Relationships
 
-- `AppointmentCandidate` is the **AI detection artifact**: messages are
-  analyzed and candidates are created (status `detected`), reviewed by the
-  instructor via `app/api/appointment_candidates.py` (the "Detectados" tab
-  on Clientes). Today only `dismiss` (→ `dismissed`) and, for
-  `action="waitlist_request"` specifically, `fulfill-waitlist` (→
-  `fulfilled`, creates a real `WaitlistEntry`) are wired — the passive
-  observer never auto-creates an `Appointment` from a candidate for the
-  other action types; the instructor acts on those manually via the normal
-  dashboard flows. Auto-executing them is a distinct, larger future
-  initiative ("Auto-Propose from Passive Observation" in
-  `docs/ai_agent_modes.md`), not built yet.
+- `AppointmentCandidate` is the **AI detection artifact**. It is reviewed in
+  Clientes > Detectados and can be dismissed, converted into a waitlist entry,
+  or confirmed into an appointment. Authoritative creates may autoexecute
+  only after full place-stay resolution; unclear but resolved requests can use
+  a private agent confirmation.
+- `PassiveEscalation` tracks private confirmation delivery. A candidate whose
+  only missing field is place context enters `needs_place_review` instead of
+  retrying; a place-stay change requeues it only after unique resolution.
 - `AppointmentEvidence` links candidates to the messages that support them.
 - `AppointmentTransition` is a per-appointment audit trail of status
   changes.

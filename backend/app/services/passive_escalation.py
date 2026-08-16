@@ -24,7 +24,9 @@ def queue_if_eligible(db: Session, candidate: AppointmentCandidate) -> PassiveEs
     if candidate.operator_action_candidate_id is not None:
         return None
     resolution = resolve_candidate(db, candidate)
-    if not resolution.is_resolved or resolution.operation not in {"create", "reschedule"}:
+    if resolution.operation not in {"create", "reschedule"}:
+        return None
+    if not resolution.is_resolved and resolution.missing_fields != ["place_id"]:
         return None
     professional = db.get(Professional, candidate.professional_id)
     actor = db.query(User).filter(User.professional_id == candidate.professional_id, User.role == "professional").first()
@@ -41,6 +43,34 @@ def queue_if_eligible(db: Session, candidate: AppointmentCandidate) -> PassiveEs
     db.add(escalation)
     db.flush()
     return escalation
+
+
+def reactivate_place_review_escalations(
+    db: Session, professional_id: uuid.UUID
+) -> int:
+    """Queue candidates that became resolvable after a place-stay change."""
+    db.flush()
+    rows = (
+        db.query(PassiveEscalation)
+        .join(AppointmentCandidate)
+        .filter(
+            PassiveEscalation.professional_id == professional_id,
+            PassiveEscalation.status == "needs_place_review",
+            AppointmentCandidate.status == "detected",
+        )
+        .all()
+    )
+    now = datetime.now(TIMEZONE)
+    reactivated = 0
+    for escalation in rows:
+        resolution = resolve_candidate(db, escalation.appointment_candidate)
+        if not resolution.is_resolved:
+            continue
+        escalation.status = "queued"
+        escalation.next_attempt_at = now
+        escalation.last_error = None
+        reactivated += 1
+    return reactivated
 
 
 def _has_unrelated_pending(db: Session, escalation: PassiveEscalation) -> bool:
@@ -65,7 +95,11 @@ def deliver(escalation: PassiveEscalation, db: Session) -> bool:
         return False
     resolution = resolve_candidate(db, candidate)
     if not resolution.is_resolved:
-        escalation.status = "expired"
+        # A venue can be supplied by the instructor in the review screen or a
+        # stay can be corrected later. Keep this durable candidate queued;
+        # expiring it would discard a safely resolvable scheduling request.
+        escalation.status = "needs_place_review"
+        escalation.last_error = "Place context requires instructor review"
         return False
     professional = db.get(Professional, escalation.professional_id)
     actor = db.query(User).filter(User.professional_id == escalation.professional_id, User.role == "professional").first()

@@ -117,21 +117,27 @@ their customer on WhatsApp and detects scheduling intent automatically.
    actions (create/reschedule/cancel).
 5. Temporal validation (`chat/temporal.py`) resolves date expressions
    against the instructor's timezone.
-6. An `AppointmentCandidate` is created with status `pending`, linked to
+6. An `AppointmentCandidate` is created with status `detected`, linked to
    the supporting messages via `AppointmentEvidence`.
-7. The instructor sees a notification or dashboard alert: "Possible
-   scheduling intent detected from conversation with Maria."
-8. The instructor can review and act on the candidate, or dismiss it.
+7. The candidate resolves its location only when exactly one place stay covers
+   the full interval. A customer's home place can break a tie between valid
+   stays, but never proves availability.
+8. An authoritative, fully resolved create can be recorded automatically;
+   an unclear but resolved create/reschedule is sent to the instructor's
+   private agent for confirmation. Missing or ambiguous place context remains
+   in Detectados for explicit review.
 
 ### Autonomy Level
 
-The passive observer has **zero autonomy** beyond detection. It never:
-- Proposes an `OperatorActionCandidate` on its own
-- Executes any mutation
-- Sends any message to the customer or instructor
+The passive observer has deliberately bounded autonomy:
 
-It only surfaces what it detects. The instructor always initiates the
-action.
+- It autoexecutes only authoritative creates with a reproducible covering
+  place stay and revalidates before writing.
+- It may create a private `OperatorActionCandidate` confirmation for unclear,
+  fully resolved requests.
+- It never autoexecutes a candidate with no covering stay or multiple matching
+  stays. Those candidates require an instructor-selected place in Detectados.
+- It never sends messages to customers.
 
 ### Technical Distinction
 
@@ -139,8 +145,8 @@ action.
 |---|---|---|
 | Trigger | Instructor messages assistant | Customer messages instructor |
 | LLM Call | Agent orchestrator (manual tool loop) | Instructor structured extraction |
-| Output | Agent reply + PendingCandidate (proposed) | AppointmentCandidate (pending) |
-| Write access | Can propose mutations (requires confirm) | None — detection only |
+| Output | Agent reply + PendingCandidate (proposed) | AppointmentCandidate (detected), optionally a private confirmation |
+| Write access | Can propose mutations (requires confirm) | Limited to authoritative, uniquely place-resolved creates |
 | UI surface | Chat UI + confirmation cards | Dashboard notification / candidate list |
 
 ---
@@ -157,22 +163,15 @@ The two modes are designed to work together in a typical day:
    questions ("quem tenho amanha?"), look up information, and initiate
    actions directly.
 
-3. **They don't currently converge.** `AppointmentCandidate` (passive
-   extraction) and `OperatorActionCandidate` (active-agent proposals) are
-   two separate state machines with no code path linking one to the
-   other — an instructor reviewing a detected `AppointmentCandidate`
-   today acts on it through the dashboard's own review flow, not through
-   the active agent's confirm/reject. Sharing one lifecycle is a
-   plausible future direction (see the auto-propose idea below), not
-   current behavior.
+3. **They converge only for safe passive escalations.** A passive candidate
+can create a private `OperatorActionCandidate` after full resolution, while
+manual Detectados review remains the path for place ambiguity and explicit
+exceptions.
 
 ---
 
-## Future: Auto-Propose from Passive Observation
+## Guardrail: Place Review
 
-The architecture supports a future enhancement where high-confidence
-passive observations (e.g., a customer clearly says "vou na quinta as 15h"
-and the slot is open) automatically flow into the propose step, presenting
-a confirmation directly without the instructor needing to manually review
-the candidate first. This requires a confidence threshold and the
-`candidate_worker.py` background process is already designed to support it.
+Candidates missing only location context transition to
+`needs_place_review` and do not poll the delivery worker. A change to place
+stays reevaluates them and requeues only those that now resolve uniquely.

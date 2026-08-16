@@ -15,7 +15,17 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_professional_id
 from app.database import SessionLocal
-from app.models import Contact, Place, RecurringSlot, RecurringSlotParticipant
+from app.models import (
+    Appointment,
+    Contact,
+    InstructorEvent,
+    Place,
+    PlaceFinancialRate,
+    RecurringSlot,
+    RecurringSlotParticipant,
+    ScheduleOccurrenceOverride,
+    WaitlistEntry,
+)
 from app.schemas.ontology import PlaceCreate, PlaceDetail, PlaceListResponse, PlaceUpdate
 from app.services.text_normalization import normalize_name
 
@@ -103,14 +113,43 @@ def delete_place(
     db: Session = Depends(get_db),
     professional_id: uuid.UUID = Depends(require_professional_id),
 ):
-    """Deleting a place cascades to its recurring slots (and their
-    participant assignments) — matches the confirmation copy shown in the
-    frontend. Contacts that had this as their home_place are unaffected
-    beyond losing that reference."""
+    """Delete a place only when no calendar/history item still references it."""
     place = _get_place_or_404(db, place_id, professional_id)
 
+    has_calendar_reference = any(
+        (
+            db.query(RecurringSlot.id)
+            .filter(
+                RecurringSlot.place_id == place_id,
+                RecurringSlot.slot_kind == "class",
+            )
+            .first(),
+            db.query(Appointment.id).filter(Appointment.place_id == place_id).first(),
+            db.query(InstructorEvent.id)
+            .filter(InstructorEvent.place_id == place_id)
+            .first(),
+            db.query(ScheduleOccurrenceOverride.id)
+            .filter(ScheduleOccurrenceOverride.replacement_place_id == place_id)
+            .first(),
+            db.query(WaitlistEntry.id).filter(WaitlistEntry.place_id == place_id).first(),
+        )
+    )
+    if has_calendar_reference:
+        raise HTTPException(
+            status_code=409,
+            detail="This place is referenced by calendar items or pending demand and cannot be removed",
+        )
+
     slot_ids = [
-        row[0] for row in db.query(RecurringSlot.id).filter(RecurringSlot.place_id == place_id).all()
+        row[0]
+        for row in (
+            db.query(RecurringSlot.id)
+            .filter(
+                RecurringSlot.place_id == place_id,
+                RecurringSlot.slot_kind == "availability",
+            )
+            .all()
+        )
     ]
     if slot_ids:
         db.query(RecurringSlotParticipant).filter(
@@ -122,6 +161,9 @@ def delete_place(
 
     db.query(Contact).filter(Contact.home_place_id == place_id).update(
         {"home_place_id": None}, synchronize_session=False
+    )
+    db.query(PlaceFinancialRate).filter(PlaceFinancialRate.place_id == place_id).delete(
+        synchronize_session=False
     )
 
     db.delete(place)

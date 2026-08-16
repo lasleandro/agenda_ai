@@ -12,7 +12,9 @@ slot_kind (operational ontology roadmap v0.2, Phase 0) is an explicit,
 persisted axis independent of class_type:
 - "availability": the instructor is available at the place during this
   interval. Availability rows must not have RecurringSlotParticipant rows
-  (enforced at the service/API layer, not by a single-table CHECK).
+  and use neutral legacy class-field values. The row-level values are enforced
+  by database and service constraints; participant ownership is enforced by
+  the service layer.
 - "class": the interval is a scheduled individual or group class; class_type
   distinguishes individual vs group only when slot_kind == "class".
 Participant count must never be used to infer this meaning going forward.
@@ -66,6 +68,19 @@ class RecurringSlot(Base):
         CheckConstraint(
             "slot_kind IN ('availability', 'class')",
             name="ck_recurring_slots_slot_kind",
+        ),
+        CheckConstraint(
+            "class_type IN ('individual', 'group')",
+            name="ck_recurring_slots_class_type",
+        ),
+        CheckConstraint(
+            "max_participants BETWEEN 1 AND 4",
+            name="ck_recurring_slots_max_participants",
+        ),
+        CheckConstraint(
+            "slot_kind = 'class' OR (class_type = 'individual' "
+            "AND max_participants = 1 AND level IS NULL AND group_name IS NULL)",
+            name="ck_recurring_slots_availability_neutral",
         ),
         CheckConstraint(
             "valid_from IS NULL OR valid_until IS NULL OR valid_until >= valid_from",

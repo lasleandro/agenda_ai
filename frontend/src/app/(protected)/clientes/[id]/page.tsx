@@ -285,9 +285,9 @@ export default function ContactDetailPage() {
       )}
 
       <div className="space-y-2">
-        <Label>Horários fixos</Label>
+        <Label>Aulas recorrentes</Label>
         {contact.fixed_slots.length === 0 && (
-          <p className="text-sm text-muted-foreground">Nenhum horário fixo atribuído.</p>
+          <p className="text-sm text-muted-foreground">Nenhuma aula recorrente atribuída.</p>
         )}
         <div className="space-y-2">
           {contact.fixed_slots.map((slot) => (
@@ -324,7 +324,7 @@ export default function ContactDetailPage() {
             size="sm"
             onClick={() => setAssignDialogOpen(true)}
           >
-            Atribuir horário fixo...
+            Adicionar a aula recorrente...
           </Button>
         </div>
       </div>

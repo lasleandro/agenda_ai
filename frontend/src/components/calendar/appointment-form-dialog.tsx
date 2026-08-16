@@ -64,7 +64,7 @@ export function AppointmentFormDialog({
   const [groupContactIds, setGroupContactIds] = useState<string[]>(
     initialContactId ? [initialContactId] : []
   );
-  const [placeId, setPlaceId] = useState(suggestedPlaceId ?? places[0]?.id ?? "");
+  const [placeId, setPlaceId] = useState(suggestedPlaceId ?? "");
   const [service, setService] = useState("Aula de tênis");
   const [isRecurring, setIsRecurring] = useState(false);
   const [isCourtesy, setIsCourtesy] = useState(false);
@@ -273,6 +273,16 @@ export function AppointmentFormDialog({
                 onChange={setPlaceId}
                 onPlaceCreated={onPlaceCreated}
               />
+              {suggestedPlaceId && placeId === suggestedPlaceId ? (
+                <p className="text-xs text-muted-foreground">
+                  Local preenchido pela permanência que cobre todo este horário.
+                </p>
+              ) : (
+                <p className="text-xs text-amber-700">
+                  Não há uma única permanência para este horário. Confirme o local
+                  selecionado como exceção.
+                </p>
+              )}
 
               <div className="space-y-1.5">
                 <Label htmlFor="booking-service">Serviço</Label>

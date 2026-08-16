@@ -25,6 +25,7 @@ from app.models import (
     OperatorActionCandidate,
     Place,
     Professional,
+    RecurringSlot,
     ScheduleOccurrenceOverride,
     User,
     WorkJourneyInterval,
@@ -169,6 +170,63 @@ def test_propose_create_appointment_full_cycle() -> None:
         )
         assert event is not None
     finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_propose_create_appointment_inherits_stay_for_group() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        primary = _make_contact(db, professional.id, "Marcelo")
+        extra = _make_contact(db, professional.id, "Larissa")
+        db.add(
+            RecurringSlot(
+                professional_id=professional.id,
+                place_id=place.id,
+                day_of_week=MONDAY.weekday(),
+                start_time=time(10, 0),
+                end_time=time(12, 0),
+                slot_kind="availability",
+            )
+        )
+        db.commit()
+        start_at = datetime.combine(MONDAY, time(10, 0), tzinfo=TIMEZONE)
+
+        result = mutations.propose_create_appointment(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            contact_id=str(primary.id),
+            contact_ids=[str(primary.id), str(extra.id)],
+            class_type="group",
+            start_at=start_at.isoformat(),
+            end_at=(start_at + timedelta(hours=1)).isoformat(),
+            service="Grupo iniciante",
+        )
+
+        assert result["requires_confirmation"] is True
+        assert "local inferido pela permanência" in result["preview_text"]
+        assert candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        ).ok is True
+
+        appointment = db.query(Appointment).filter_by(professional_id=professional.id).one()
+        assert appointment.place_id == place.id
+        assert appointment.class_type == "group"
+        assert (
+            db.query(AppointmentParticipant)
+            .filter(AppointmentParticipant.appointment_id == appointment.id)
+            .count()
+            == 1
+        )
+    finally:
+        db.query(RecurringSlot).filter(
+            RecurringSlot.professional_id == professional.id
+        ).delete(synchronize_session=False)
+        db.commit()
         _cleanup(db, professionals=[professional], users=[user])
         db.close()
 
@@ -483,6 +541,7 @@ def test_propose_reschedule_occurrence_full_cycle() -> None:
             occurrence_date=MONDAY.isoformat(),
             new_start_at=new_start.isoformat(),
             new_end_at=(new_start + timedelta(hours=1)).isoformat(),
+            new_place_id=str(place.id),
         )
         assert result["requires_confirmation"] is True
 
@@ -674,6 +733,7 @@ def test_propose_reschedule_occurrence_confirm_fails_on_race_condition() -> None
             occurrence_date=MONDAY.isoformat(),
             new_start_at=new_start.isoformat(),
             new_end_at=(new_start + timedelta(hours=1)).isoformat(),
+            new_place_id=str(place.id),
         )
         assert result["requires_confirmation"] is True
 
@@ -777,6 +837,7 @@ def test_propose_add_appointment_participant_turns_individual_into_group() -> No
         )
         assert result["requires_confirmation"] is True
         assert "Larissa" in result["preview_text"]
+        assert "individual para grupo" in result["preview_text"]
 
         exec_result = candidates.confirm(
             db, professional.id, user.id, uuid.UUID(result["candidate_id"])
@@ -804,6 +865,9 @@ def test_propose_add_appointment_participant_turns_individual_into_group() -> No
             .first()
         )
         assert event is not None
+        assert event.payload["class_type_changed"] is True
+        assert event.before_state == {"class_type": "individual"}
+        assert event.after_state == {"class_type": "group", "contact_id": str(extra.id)}
     finally:
         _cleanup(db, professionals=[professional], users=[user])
         db.close()
@@ -875,6 +939,7 @@ def test_propose_remove_appointment_participant_reverts_to_individual() -> None:
             appointment_id=str(appointment.id),
         )
         assert result["requires_confirmation"] is True
+        assert "grupo para individual" in result["preview_text"]
 
         exec_result = candidates.confirm(
             db, professional.id, user.id, uuid.UUID(result["candidate_id"])
@@ -889,6 +954,17 @@ def test_propose_remove_appointment_participant_reverts_to_individual() -> None:
             .count()
             == 0
         )
+        event = (
+            db.query(OperationalEvent)
+            .filter(
+                OperationalEvent.event_type == "schedule.participant.removed",
+                OperationalEvent.entity_id == appointment.id,
+            )
+            .one()
+        )
+        assert event.payload["class_type_changed"] is True
+        assert event.before_state == {"contact_id": str(extra.id), "class_type": "group"}
+        assert event.after_state == {"class_type": "individual"}
     finally:
         _cleanup(db, professionals=[professional], users=[user])
         db.close()

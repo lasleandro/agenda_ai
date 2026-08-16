@@ -8,8 +8,8 @@
 ## Overview
 
 The Agenda is the primary landing page and main scheduling interface.
-It displays a weekly calendar with all appointments, recurring group
-slots, and availability blocks.
+It displays a weekly calendar with calendar items (appointments, recurring
+classes, and instructor events) over place-stay background blocks.
 
 ---
 
@@ -61,8 +61,9 @@ slots, and availability blocks.
 
 ## Visual Design
 
-- **Recurring slots** (no participants): Light indigo background blocks
-- **Recurring slots** (with participants): Purple scheduled-group events
+- **Place stays** (`slot_kind="availability"`): Light indigo background blocks
+- **Recurring classes** (`slot_kind="class"`): Purple scheduled-class events;
+  roster size never determines their calendar meaning
 - **Appointments**: Color-coded by status (confirmed=blue, cancelled=gray,
   completed=green)
 - **Courtesy appointments**: Title includes "(Cortesia)" suffix

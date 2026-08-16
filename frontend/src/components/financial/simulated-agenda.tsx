@@ -45,7 +45,11 @@ function durationMinutes(event: FinancialScenarioScheduleEvent) {
 }
 
 function realSlotEvent(slot: RecurringSlot): EventInput | null {
-  if (slot.status !== "active" || slot.participant_count === 0) return null;
+  if (
+    slot.status !== "active" ||
+    slot.slot_kind !== "class" ||
+    slot.participant_count === 0
+  ) return null;
   const title = `${slot.label || (slot.class_type === "group" ? "Grupo" : "Aula")} · ${slot.place_name}`;
   if (slot.recurrence_type === "once" && slot.scheduled_date) {
     return {

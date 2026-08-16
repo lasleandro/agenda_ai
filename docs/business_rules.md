@@ -360,16 +360,21 @@ agent (Mode 1) reachable over WhatsApp on a separate number
 - Single slot: validated for overlap with existing slots.
 - Bulk creation: same slot copied to multiple days, each validated
   independently.
-- Slot kind: `availability` (open time block) or `class` (enrolled group).
-- Adding a participant to an `availability` slot auto-promotes it to
-  `class`.
+- Slot kind: `availability` (a place stay) or `class` (a recurring class).
+- An `availability` row is neutral: it has no roster, group name, level, or
+  class capacity. Its stored legacy fields are `class_type="individual"` and
+  `max_participants=1`.
+- Participants can be assigned only to an explicitly created `class`; an
+  availability row is never converted into a class.
 
 ### 9.3 Place Deletion
 
-- Deleting a place cascades to:
-  - Its recurring slots (and their participants)
-  - Appointment references become orphaned (place_id set to NULL, name
-    snapshot retained in revenue occurrences)
+- Deletion removes only neutral place stays and place-specific rate settings,
+  and clears matching customer home-place preferences.
+- A place referenced by a recurring class, appointment, instructor event,
+  occurrence reschedule, or waitlist entry cannot be removed. Resolve or move
+  those records first; historical and scheduled items are never silently
+  rewritten.
 
 ---
 
@@ -406,6 +411,22 @@ agent (Mode 1) reachable over WhatsApp on a separate number
   customer didn't state a specific time, the event still fires (flagged
   with an ambiguity) rather than being dropped — the instructor fills the
   gap during review, not the model guessing it.
+
+### 10.4 Passive candidates and place context
+
+- A passive appointment candidate inherits a place only from one stay that
+  fully covers its interval. `Contact.home_place_id` can break a tie between
+  covering stays but never creates availability.
+- Authoritative creates autoexecute only after that unique resolution and a
+  confirmation-time revalidation. Ambiguous or uncovered candidates cannot
+  autoexecute.
+- A candidate missing only place context uses `PassiveEscalation.status =
+  "needs_place_review"`; it does not retry on the delivery worker. Creating,
+  editing, or deleting a place stay reevaluates it and requeues it only if the
+  place decision becomes unique.
+- In Clientes > Detectados, an uncovered candidate begins with no selected
+  place. The instructor must make an explicit choice, which is recorded as an
+  exception when it lies outside a stay.
 
 ---
 

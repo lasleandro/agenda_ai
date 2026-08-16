@@ -29,6 +29,28 @@ function splitDateTime(iso: string | null): { date: string; time: string } {
   return { date, time: (rest ?? "").slice(0, 5) };
 }
 
+function placeContext(candidate: CandidateDetail, places: Place[]): string | null {
+  const placeName = candidate.resolved_place_id
+    ? places.find((place) => place.id === candidate.resolved_place_id)?.name
+    : null;
+  if (candidate.place_source === "unique_stay") {
+    return `Local definido pela permanência${placeName ? `: ${placeName}` : ""}.`;
+  }
+  if (candidate.place_source === "home_place_tiebreak") {
+    return `Local definido entre permanências pelo local habitual${placeName ? `: ${placeName}` : ""}.`;
+  }
+  if (candidate.place_resolution === "ambiguous") {
+    return "Há mais de uma permanência nesse horário. Escolha o local antes de confirmar.";
+  }
+  if (candidate.place_resolution === "uncovered") {
+    return "Não há permanência cobrindo este horário. Escolha o local para registrar uma exceção.";
+  }
+  if (candidate.place_resolution === "invalid_place") {
+    return "O local informado não pertence a este profissional.";
+  }
+  return null;
+}
+
 export function DetectedCandidatesTab({
   places,
   onWaitlistEntryCreated,
@@ -42,7 +64,15 @@ export function DetectedCandidatesTab({
   const [notice, setNotice] = useState<{ message: string; error: boolean } | null>(null);
 
   useEffect(() => {
-    fetchAppointmentCandidates("all").then((res) => setCandidates(res.candidates));
+    fetchAppointmentCandidates("all")
+      .then((res) => setCandidates(res.candidates))
+      .catch((caught) => {
+        setCandidates([]);
+        setNotice({
+          message: caught instanceof Error ? caught.message : "Não foi possível carregar os eventos detectados.",
+          error: true,
+        });
+      });
   }, []);
 
   function dismiss(candidate: CandidateDetail) {
@@ -138,6 +168,7 @@ export function DetectedCandidatesTab({
           {candidates.map((candidate) => {
             const { date, time: startTime } = splitDateTime(candidate.proposed_start_at);
             const { time: endTime } = splitDateTime(candidate.proposed_end_at);
+            const candidatePlaceContext = placeContext(candidate, places);
             return (
               <div
                 key={candidate.id}
@@ -183,12 +214,17 @@ export function DetectedCandidatesTab({
                   </p>
                 )}
 
+                {candidatePlaceContext && (
+                  <p className="mt-2 text-xs text-muted-foreground">{candidatePlaceContext}</p>
+                )}
+
                 {candidate.status === "fulfilled" && candidate.resulting_appointment_id && (
                   <p className="mt-2 text-xs text-emerald-700">Autoexecutado</p>
                 )}
                 {candidate.escalation_delivery_status && (
                   <p className="mt-2 text-xs text-muted-foreground">
                     {candidate.escalation_delivery_status === "queued" && "Aguardando envio ao agente"}
+                    {candidate.escalation_delivery_status === "needs_place_review" && "Aguardando escolha de local"}
                     {candidate.escalation_delivery_status === "sent" && "Confirmação enviada ao agente"}
                     {candidate.escalation_delivery_status === "failed" && "Falha ao enviar confirmação"}
                     {candidate.escalation_delivery_status === "expired" && "Confirmação expirada"}

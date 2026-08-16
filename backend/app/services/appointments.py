@@ -18,6 +18,7 @@ from app.models import (
     RecurringSlotParticipant,
     WorkJourneyInterval,
 )
+from app.services.place_stays import resolve_place_stay
 
 TZ_SP = dt_timezone(timedelta(hours=-3))  # America/Sao_Paulo
 
@@ -58,6 +59,7 @@ def has_scheduled_class_overlap(
         .filter(
             RecurringSlot.professional_id == professional_id,
             RecurringSlot.status == "active",
+            RecurringSlot.slot_kind == "class",
             RecurringSlot.day_of_week == local_start.weekday(),
             RecurringSlot.start_time < local_end.time().replace(tzinfo=None),
             RecurringSlot.end_time > local_start.time().replace(tzinfo=None),
@@ -230,7 +232,7 @@ def create_appointment(
     professional_id: uuid.UUID,
     *,
     contact_id: uuid.UUID,
-    place_id: uuid.UUID,
+    place_id: uuid.UUID | None,
     service: str,
     start_at: datetime,
     end_at: datetime,
@@ -240,6 +242,21 @@ def create_appointment(
     actor: str = "system",
     billing_type: str = "billable",
 ) -> Appointment:
+    resolution = resolve_place_stay(
+        db,
+        professional_id,
+        start_at=start_at,
+        end_at=end_at,
+        requested_place_id=place_id,
+    )
+    if resolution.outcome == "invalid_place":
+        raise HTTPException(status_code=404, detail="Place not found")
+    if resolution.place_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Select a place: this time has no unique covering place stay",
+        )
+
     assert_no_conflict(
         db, professional_id, start_at=start_at, end_at=end_at, is_recurring=is_recurring
     )
@@ -247,7 +264,7 @@ def create_appointment(
     appointment = Appointment(
         professional_id=professional_id,
         contact_id=contact_id,
-        place_id=place_id,
+        place_id=resolution.place_id,
         service=service.strip(),
         start_at=start_at,
         end_at=end_at,
@@ -266,7 +283,13 @@ def create_appointment(
             new_status="confirmed",
             action="create",
             actor=actor,
-            metadata_={"place_id": str(place_id)},
+            metadata_={
+                "place_id": str(resolution.place_id),
+                "place_resolution": {
+                    "stay_id": str(resolution.stay_id) if resolution.stay_id else None,
+                    "explicit_exception": resolution.is_explicit_exception,
+                },
+            },
         )
     )
     db.flush()

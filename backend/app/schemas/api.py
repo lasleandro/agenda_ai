@@ -15,7 +15,7 @@ class AppointmentCreate(BaseModel):
     """Dashboard request for a confirmed appointment."""
 
     contact_id: uuid.UUID
-    place_id: uuid.UUID
+    place_id: uuid.UUID | None = None
     service: str = Field(min_length=1, max_length=100)
     start_at: datetime
     end_at: datetime
@@ -168,6 +168,12 @@ class CandidateDetail(BaseModel):
     resulting_appointment_id: uuid.UUID | None
     operator_action_candidate_id: uuid.UUID | None
     suggested_place_id: uuid.UUID | None
+    resolved_place_id: uuid.UUID | None = None
+    matching_place_ids: list[uuid.UUID] = []
+    place_stay_id: uuid.UUID | None = None
+    place_resolution: str | None = None
+    place_source: str | None = None
+    place_is_exception: bool = False
     contact_id: uuid.UUID | None
     contact_name: str | None
     proposed_start_at: datetime | None

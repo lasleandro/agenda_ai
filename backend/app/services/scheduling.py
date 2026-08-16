@@ -143,6 +143,7 @@ def _load_place_availability_ranges(
             RecurringSlot.professional_id == professional_id,
             RecurringSlot.place_id.in_(selected_place_ids),
             RecurringSlot.status == "active",
+            RecurringSlot.slot_kind == "availability",
         )
         .all()
     )

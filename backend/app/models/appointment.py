@@ -7,10 +7,10 @@ schedule.
 contact_id stays the required "primary" participant (kept for backward
 compatibility with every existing reader); AppointmentParticipant holds any
 additional people added to what started as a one-off appointment. class_type
-mirrors RecurringSlot's individual/group axis and auto-flips the same way
-RecurringSlot.slot_kind auto-promotes on first participant: "group" once a
-second participant is added, back to "individual" if it drops to just the
-primary again (see app/services/appointment_participants.py).
+mirrors the individual/group axis and changes to "group" once a second
+participant is added, returning to "individual" when only the primary
+participant remains (see app/services/appointment_participants.py). This is
+independent from the immutable RecurringSlot.slot_kind boundary.
 """
 
 import uuid

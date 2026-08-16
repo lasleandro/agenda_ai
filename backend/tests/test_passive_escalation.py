@@ -8,7 +8,8 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.database import SessionLocal
-from app.models import AppointmentCandidate, Contact, OperationalEvent, OperatorActionCandidate, PassiveEscalation, Place, Professional, User
+from app.models import AppointmentCandidate, Contact, OperationalEvent, OperatorActionCandidate, PassiveEscalation, Place, Professional, RecurringSlot, User
+from app.services.scheduling import TIMEZONE
 from app.services import passive_escalation
 
 
@@ -30,6 +31,20 @@ def _setup(status: str = "unclear"):
     )
     db.add(candidate)
     db.commit()
+    local_start = candidate.proposed_start_at.astimezone(TIMEZONE)
+    local_end = candidate.proposed_end_at.astimezone(TIMEZONE)
+    db.add(
+        RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=local_start.weekday(),
+            start_time=local_start.time().replace(tzinfo=None),
+            end_time=local_end.time().replace(tzinfo=None),
+            slot_kind="availability",
+            status="active",
+        )
+    )
+    db.commit()
     return db, professional, candidate
 
 
@@ -38,6 +53,7 @@ def _cleanup(db, professional):
     db.query(PassiveEscalation).filter_by(professional_id=professional.id).delete()
     db.query(AppointmentCandidate).filter_by(professional_id=professional.id).delete()
     db.query(OperatorActionCandidate).filter_by(professional_id=professional.id).delete()
+    db.query(RecurringSlot).filter_by(professional_id=professional.id).delete()
     db.query(Contact).filter_by(professional_id=professional.id).delete()
     db.query(Place).filter_by(professional_id=professional.id).delete()
     db.query(User).filter_by(professional_id=professional.id).delete()
@@ -71,5 +87,58 @@ def test_due_escalation_sends_one_linked_idempotent_proposal(monkeypatch):
         assert "Responda *sim*" in sent["body"]
         assert passive_escalation.process_due_escalations(db) == 0
         assert db.query(OperatorActionCandidate).filter_by(professional_id=professional.id).count() == 1
+    finally:
+        _cleanup(db, professional)
+
+
+def test_uncovered_candidate_waits_for_manual_place_review_without_retrying():
+    db, professional, candidate = _setup()
+    try:
+        db.query(RecurringSlot).filter_by(professional_id=professional.id).delete()
+        db.commit()
+
+        escalation = passive_escalation.queue_if_eligible(db, candidate)
+
+        assert escalation is not None
+        assert not passive_escalation.deliver(escalation, db)
+        assert escalation.status == "needs_place_review"
+        assert escalation.last_error == "Place context requires instructor review"
+    finally:
+        _cleanup(db, professional)
+
+
+def test_place_stay_change_reactivates_candidate_waiting_for_place_review():
+    db, professional, candidate = _setup()
+    try:
+        db.query(RecurringSlot).filter_by(professional_id=professional.id).delete()
+        db.commit()
+        escalation = passive_escalation.queue_if_eligible(db, candidate)
+        assert escalation is not None
+        assert not passive_escalation.deliver(escalation, db)
+        assert escalation.status == "needs_place_review"
+
+        place = db.query(Place).filter_by(professional_id=professional.id).one()
+        local_start = candidate.proposed_start_at.astimezone(TIMEZONE)
+        local_end = candidate.proposed_end_at.astimezone(TIMEZONE)
+        db.add(
+            RecurringSlot(
+                professional_id=professional.id,
+                place_id=place.id,
+                day_of_week=local_start.weekday(),
+                start_time=local_start.time().replace(tzinfo=None),
+                end_time=local_end.time().replace(tzinfo=None),
+                slot_kind="availability",
+                status="active",
+            )
+        )
+
+        assert (
+            passive_escalation.reactivate_place_review_escalations(
+                db, professional.id
+            )
+            == 1
+        )
+        assert escalation.status == "queued"
+        assert escalation.last_error is None
     finally:
         _cleanup(db, professional)

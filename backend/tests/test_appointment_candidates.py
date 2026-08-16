@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.security import hash_password
 from app.database import SessionLocal
 from app.main import app
-from app.models import Appointment, AppointmentCandidate, AppointmentTransition, Contact, OperationalEvent, Place, Professional, User, WaitlistEntry
+from app.models import Appointment, AppointmentCandidate, AppointmentTransition, Contact, OperationalEvent, PassiveEscalation, Place, Professional, RecurringSlot, User, WaitlistEntry
 from app.schemas.extraction import SchedulingEvent
 
 client = TestClient(app)
@@ -94,6 +94,9 @@ def _cleanup(db, *, professionals: list[Professional]) -> None:
     db.query(WaitlistEntry).filter(WaitlistEntry.professional_id.in_(professional_ids)).delete(
         synchronize_session=False
     )
+    db.query(PassiveEscalation).filter(
+        PassiveEscalation.professional_id.in_(professional_ids)
+    ).delete(synchronize_session=False)
     db.query(AppointmentCandidate).filter(
         AppointmentCandidate.professional_id.in_(professional_ids)
     ).delete(synchronize_session=False)
@@ -104,6 +107,9 @@ def _cleanup(db, *, professionals: list[Professional]) -> None:
     ).delete(synchronize_session=False)
     db.query(Appointment).filter(
         Appointment.professional_id.in_(professional_ids)
+    ).delete(synchronize_session=False)
+    db.query(RecurringSlot).filter(
+        RecurringSlot.professional_id.in_(professional_ids)
     ).delete(synchronize_session=False)
     db.query(Contact).filter(Contact.professional_id.in_(professional_ids)).delete(
         synchronize_session=False
@@ -302,6 +308,26 @@ def test_confirm_create_candidate_creates_appointment_and_fulfills_candidate() -
         )
         db.add(candidate)
         db.commit()
+        db.add(
+            RecurringSlot(
+                professional_id=pro.id,
+                place_id=place.id,
+                day_of_week=3,
+                start_time=datetime(2030, 1, 10, 14).time(),
+                end_time=datetime(2030, 1, 10, 15).time(),
+                slot_kind="availability",
+                status="active",
+            )
+        )
+        db.commit()
+        escalation = PassiveEscalation(
+            appointment_candidate_id=candidate.id,
+            professional_id=pro.id,
+            status="needs_place_review",
+            next_attempt_at=datetime(2030, 1, 10, 17, tzinfo=timezone.utc),
+        )
+        db.add(escalation)
+        db.commit()
 
         response = client.post(
             f"/api/appointment-candidates/{candidate.id}/confirm-appointment",
@@ -312,8 +338,13 @@ def test_confirm_create_candidate_creates_appointment_and_fulfills_candidate() -
         assert response.status_code == 200
         assert response.json()["status"] == "fulfilled"
         assert response.json()["resulting_appointment_id"] is not None
+        assert response.json()["resolved_place_id"] == str(place.id)
+        assert response.json()["place_resolution"] == "resolved"
+        assert response.json()["place_source"] == "unique_stay"
         db.refresh(candidate)
+        db.refresh(escalation)
         assert candidate.resulting_appointment_id is not None
+        assert escalation.status == "expired"
         appointment = db.query(Appointment).filter_by(id=candidate.resulting_appointment_id).one()
         assert appointment.contact_id == contact.id
         assert appointment.place_id == place.id

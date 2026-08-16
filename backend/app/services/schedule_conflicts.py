@@ -50,6 +50,7 @@ def assert_no_slot_overlap(
 
     query = db.query(RecurringSlot).filter(
         RecurringSlot.professional_id == professional_id,
+        RecurringSlot.slot_kind == "availability",
         RecurringSlot.day_of_week == day_of_week,
         RecurringSlot.status == "active",
         RecurringSlot.start_time < end_time,
@@ -82,6 +83,7 @@ def assert_no_scheduled_class_overlap(
         )
         .filter(
             RecurringSlot.professional_id == professional_id,
+            RecurringSlot.slot_kind == "class",
             RecurringSlot.day_of_week == day_of_week,
             RecurringSlot.status == "active",
             RecurringSlot.start_time < end_time,

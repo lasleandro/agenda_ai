@@ -28,7 +28,8 @@ def count_participants(db: Session, appointment_id: uuid.UUID) -> int:
 
 def add_participant(
     db: Session, professional_id: uuid.UUID, appointment: Appointment, contact: Contact
-) -> None:
+) -> bool:
+    """Add a customer and report whether the class format changed."""
     if contact.id == appointment.contact_id:
         raise HTTPException(status_code=409, detail="Contact is already in this appointment")
     existing = (
@@ -45,11 +46,14 @@ def add_participant(
         raise HTTPException(status_code=409, detail="This appointment is at full capacity")
 
     db.add(AppointmentParticipant(appointment_id=appointment.id, contact_id=contact.id))
+    format_changed = appointment.class_type != "group"
     appointment.class_type = "group"
     db.flush()
+    return format_changed
 
 
-def remove_participant(db: Session, appointment_id: uuid.UUID, contact_id: uuid.UUID) -> None:
+def remove_participant(db: Session, appointment_id: uuid.UUID, contact_id: uuid.UUID) -> bool:
+    """Remove a non-primary customer and report a format change."""
     row = (
         db.query(AppointmentParticipant)
         .filter(
@@ -65,8 +69,11 @@ def remove_participant(db: Session, appointment_id: uuid.UUID, contact_id: uuid.
     db.delete(row)
     db.flush()
 
+    format_changed = False
     if count_participants(db, appointment_id) <= 1:
         appointment = db.query(Appointment).filter(Appointment.id == appointment_id).first()
-        if appointment is not None:
+        if appointment is not None and appointment.class_type != "individual":
             appointment.class_type = "individual"
+            format_changed = True
             db.flush()
+    return format_changed

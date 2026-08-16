@@ -37,6 +37,7 @@ import type {
   RecurringSlotInput,
   RecurringSlotListResponse,
   RecurringSlotParticipant,
+  SlotKind,
   RevenueCandidateList,
   RevenueOccurrenceCreateInput,
   RevenueOccurrenceDetail,
@@ -247,10 +248,15 @@ export const updatePlace = (id: string, body: Partial<PlaceInput>) =>
 export const deletePlace = (id: string) =>
   apiRequest<void>(`/api/places/${id}`, { method: "DELETE" });
 
-export const fetchRecurringSlots = (placeId?: string) =>
-  apiRequest<RecurringSlotListResponse>(
-    placeId ? `/api/recurring-slots?place_id=${placeId}` : "/api/recurring-slots"
+export const fetchRecurringSlots = (placeId?: string, slotKind?: SlotKind) => {
+  const params = new URLSearchParams();
+  if (placeId) params.set("place_id", placeId);
+  if (slotKind) params.set("slot_kind", slotKind);
+  const query = params.toString();
+  return apiRequest<RecurringSlotListResponse>(
+    `/api/recurring-slots${query ? `?${query}` : ""}`
   );
+};
 export const fetchRecurringGroup = (id: string) =>
   apiRequest<RecurringGroupDetail>(`/api/recurring-slots/${id}`);
 export const createRecurringSlot = (body: RecurringSlotInput) =>

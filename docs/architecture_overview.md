@@ -113,7 +113,7 @@ agenda_ai/
         auth.py          # Login, logout, impersonation
         admin.py         # Platform admin (tenant toggles)
         assistant.py     # Chat → agent interaction (web)
-        appointment_candidates.py  # Passive-observer candidate review (list/dismiss/fulfill-waitlist)
+        appointment_candidates.py  # Passive-observer review (dismiss, reviewed appointment, waitlist)
         calendar.py      # Calendar query + appointment CRUD
         contacts.py      # Customer ontology
         conversations.py # Dev-only conversation viewer (list + detail, via Swagger) — also
@@ -139,7 +139,7 @@ agenda_ai/
                           # commands, sim/nao confirmation, full orchestrator for
                           # everything else (AI Agent Operations Roadmap v0.1)
         extraction.py    # Intent extraction from NL (passive observer)
-        candidate_worker.py  # Background candidate processing
+        candidate_worker.py  # Background candidate processing and safe passive escalation delivery
         temporal.py      # Date/time NL extraction
         prompt.py        # LLM prompt templates
         ycloud_provider.py   # YCloud provider (webhook verify + outbound send)

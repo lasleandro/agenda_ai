@@ -2,7 +2,7 @@
 
 ## Status
 
-**Roadmap state:** approved for implementation; no phase started.
+**Roadmap state:** Phases 0–9 completed and verified.
 
 This roadmap is the canonical plan for turning **Meus Locais** into a
 background scheduling substrate. A place defines where the professional can
@@ -28,7 +28,8 @@ boundary rather than immediately creating new database tables:
 
 - `slot_kind="availability"` means **place stay**: the professional is
   normally present at a place during that interval. It has no class format,
-  roster, level, or participant capacity.
+  roster, level, or participant capacity semantically; Phase 1 documents the
+  neutral sentinels required by the current non-null legacy columns.
 - `slot_kind="class"` means **recurring class series**: an actual scheduled
   class with format, roster, level, and maximum participants.
 - `Appointment` remains the one-off or weekly appointment entity and owns its
@@ -104,6 +105,10 @@ calendar occurrence.
 | `MakeupClassCredit` | Origin points directly to a class-type `RecurringSlot` | Keep compatible while class rows remain in the table |
 | `RevenueOccurrence` | Source type is appointment or recurring slot and snapshots place/value data | Preserve source compatibility and immutable recognized snapshots |
 | `Contact.home_place_id` | Preferred/usual location | Keep as preference/tie-breaker, never proof of presence at a requested time |
+| `AppointmentParticipant` (`services/appointment_participants.py`) | Adding or removing participants can auto-change `Appointment.class_type` | Preserve legitimate individual/group conversion, but make the requested transition explicit, validate capacity, and audit it; this is not a stay-to-class conversion |
+| `WaitlistEntry.place_id` | Existing nullable FK to `places`; matching already consumes place capacity indirectly through `financial_capacity.compute_free_ranges_by_place()` | Fix the shared capacity loader in Phase 1 so matching sees only stay rows; Phase 6 verifies demand/place semantics rather than rebuilding matching |
+| `PlaceFinancialRate` | Rates keyed by `place_id`/`time_category`/`participant_count` | Keep as-is; confirms place pricing precedence input for Phase 5 |
+| `InstructorEvent.place_id` | Optional FK already present on the model | Keep; Phase 7/API sections already discuss inheritance vs. explicit exception for this field |
 
 ### Backend APIs and schemas
 
@@ -147,10 +152,23 @@ calendar occurrence.
   - Continue pricing from the occurrence's persisted place.
   - Preserve recognition snapshots after stay or price changes.
 - `services/waitlist.py`
-  - Match venue-attributed openings from stays, then create an independent
-    appointment when fulfilled.
+  - `find_matches()` already obtains venue-attributed openings indirectly from
+    `financial_capacity.compute_free_ranges_by_place()`; it therefore inherits
+    that service's current failure to filter capacity inputs by `slot_kind`.
+  - Correct the shared capacity loader in Phase 1, then verify that fulfillment
+    creates an independent appointment/class without mutating a stay.
 - `services/makeup_recommender.py`
+  - `_load_levels_by_place_weekday` currently queries `RecurringSlot.level`
+    filtered only by `status=="active"`, with no `slot_kind` filter — an
+    availability row carrying a stray `level` value already pollutes level
+    matching today. Fix this concretely, not just generically.
   - Separate place capacity inputs from recurring-class level/roster inputs.
+- `services/appointment_participants.py`
+  - Adding or removing participants can legitimately change an appointment
+    between individual and group. Make that transition explicit in the
+    requested action and confirmation, validate the resulting capacity, and
+    record it in the audit trail; do not conflate it with converting a stay
+    into a class.
 - `services/schedule_conflicts.py` and `services/schedule_overrides.py`
   - Continue treating real occurrences as busy.
   - Validate the destination stay context on reschedule.
@@ -186,6 +204,16 @@ calendar occurrence.
 - Read tools and prompts must stop describing availability as a class or group.
 - All mutation executors must revalidate at confirmation time because a stay
   can change after a proposal is created.
+- `propose_create_event` uses the shared stay resolver when inheriting or
+  validating an event place, while retaining the explicit event-exception
+  path defined above.
+- `propose_add_waitlist_entry` tenant-validates an optional explicit place and
+  stores unmet demand; it does not require a covering stay at creation time.
+  `propose_remove_waitlist_entry` does not resolve a stay.
+- `propose_cancel_schedule` does not resolve a stay, but any resulting waitlist
+  rematch must consume the corrected place-capacity inputs.
+- `propose_note_participant_absence` does not resolve a stay; it must target a
+  real class occurrence and preserve its already-persisted place context.
 
 ### Passive conversational observer
 
@@ -220,7 +248,7 @@ phase deployable and avoids an all-at-once table migration.
 
 ## Delivery phases
 
-### [ ] Phase 0 — Characterization, vocabulary, and safety baseline
+### [x] Phase 0 — Characterization, vocabulary, and safety baseline
 
 **Objective:** freeze existing behavior with tests and establish terminology
 before changing production semantics.
@@ -258,7 +286,7 @@ before changing production semantics.
 
 **Rollback:** documentation/tests only; remove the new tests/script if needed.
 
-### [ ] Phase 1 — Enforce the semantic boundary in the existing model
+### [x] Phase 1 — Enforce the semantic boundary in the existing model
 
 **Objective:** make `slot_kind` authoritative without changing table identity
 or breaking existing references.
@@ -266,15 +294,30 @@ or breaking existing references.
 **Scope**
 
 - Define canonical invariants:
-  - availability: no participants, no group name, no level, neutral class
-    defaults ignored by consumers;
+  - availability: no participants, `group_name=NULL`, `level=NULL`, and the
+    storage sentinels `class_type="individual"` and `max_participants=1`;
+    consumers must ignore those two non-null legacy fields for stay rows;
   - class: valid class type, participant capacity, optional roster/group data.
 - Update recurring-slot schemas and endpoints to validate these combinations.
 - Add `slot_kind` filters to list APIs and frontend types.
 - Change participant services to reject availability IDs instead of converting
   availability into a class.
+- `services/scheduling.py:_slot_occurrences` already filters
+  `slot_kind != "class"` correctly today; this item is verification, not new
+  work.
 - Make schedule projection select only class rows for occurrences.
 - Make place availability/capacity loaders select only availability rows.
+- `RecurringSlot.level`/`class_type`/`max_participants` are currently
+  unguarded plain columns with no DB-level tie to `slot_kind`. Add a CHECK
+  constraint (or equivalent service-enforced invariant) so an availability row
+  must satisfy `class_type='individual'`, `max_participants=1`, `level IS NULL`,
+  and `group_name IS NULL`. Making the first two fields nullable is a separate
+  schema/API migration and is not part of this staged phase unless explicitly
+  selected after the Phase 0 data audit.
+- Fix `services/makeup_recommender.py:_load_levels_by_place_weekday`, which
+  currently queries `RecurringSlot.level` filtered only by `status=="active"`
+  with no `slot_kind` filter — an availability row with a stray `level`
+  already pollutes makeup level matching today.
 - Correct conflict checks so stays are not treated as busy classes and classes
   are not treated as capacity.
 - Add a forward-only local migration/data repair if Phase 0 discovers invalid
@@ -298,7 +341,7 @@ or breaking existing references.
 
 **Rollback:** revert behavior changes; no destructive table split occurs.
 
-### [ ] Phase 2 — Meus Locais becomes the place-stay management surface
+### [x] Phase 2 — Meus Locais becomes the place-stay management surface
 
 **Objective:** deliver the requested neutral “stay time” UX independently of
 calendar-item creation.
@@ -342,7 +385,7 @@ calendar-item creation.
 **Rollback:** restore the previous form/list while retaining Phase 1's safe
 backend distinction.
 
-### [ ] Phase 3 — Shared place-stay resolver and Agenda overlay
+### [x] Phase 3 — Shared place-stay resolver and Agenda overlay
 
 **Objective:** make stays real background context and give every creation path
 one deterministic place-resolution policy.
@@ -384,15 +427,15 @@ one deterministic place-resolution policy.
 
 **Exit criteria**
 
-- [ ] Dashboard creation and rescheduling share one resolver.
-- [ ] Every saved class has an explicit place or an explicit supported legacy
+- [x] Dashboard creation and rescheduling share one resolver.
+- [x] Every saved class has an explicit place or an explicit supported legacy
       exception; no silent inference remains.
-- [ ] Editing stays cannot silently move existing calendar items.
+- [x] Editing stays cannot silently move existing calendar items.
 
 **Rollback:** disable automatic preselection and fall back to explicit place
 selection; persisted calendar items remain valid.
 
-### [ ] Phase 4 — Class and group flows stop manipulating stays
+### [x] Phase 4 — Class and group flows stop manipulating stays
 
 **Objective:** ensure class format, recurrence, capacity, and rosters are owned
 only by real calendar/class entities.
@@ -401,6 +444,9 @@ only by real calendar/class entities.
 
 - Keep individual/group selection in “Novo agendamento.”
 - Keep 1–4 appointment participants and one-customer groups.
+- When an appointment roster change also changes individual/group format,
+  require that transition in the requested action and confirmation, validate
+  the resulting capacity, and audit both the roster and format change.
 - Move recurring-group creation/management to Agenda, Clientes, or Groups;
   never expose it as editing a stay under Meus Locais.
 - Replace “assign customer to availability slot” behavior with:
@@ -426,14 +472,14 @@ only by real calendar/class entities.
 
 **Exit criteria**
 
-- [ ] No UI/API/agent flow turns a stay into a class.
-- [ ] Group identity and roster operate independently of place-stay identity.
-- [ ] Existing recurring groups retain overrides, credits, and audit history.
+- [x] No UI/API/agent flow turns a stay into a class.
+- [x] Group identity and roster operate independently of place-stay identity.
+- [x] Existing recurring groups retain overrides, credits, and audit history.
 
 **Rollback:** preserve existing class rows and restore the prior class creation
 surface; never merge class data back into stay rows.
 
-### [ ] Phase 5 — Financeiro, pricing, and simulator alignment
+### [x] Phase 5 — Financeiro, pricing, and simulator alignment
 
 **Objective:** make neutral place stays the sole source of venue-attributed
 capacity while calendar items remain the sole source of participant demand and
@@ -473,16 +519,16 @@ revenue.
 
 **Exit criteria**
 
-- [ ] Capacity, simulated schedule, and projected revenue share the same stay
+- [x] Capacity, simulated schedule, and projected revenue share the same stay
       inputs.
-- [ ] Actual revenue and scenario revenue use explicit, test-covered pricing
+- [x] Actual revenue and scenario revenue use explicit, test-covered pricing
       paths.
-- [ ] Dashboard and simulator labels reflect the new semantics.
+- [x] Dashboard and simulator labels reflect the new semantics.
 
 **Rollback:** retain previous financial endpoints behind the existing feature
 flag while reverting capacity selection; no recognized data is rewritten.
 
-### [ ] Phase 6 — Clientes, waitlist, and makeup recommendations
+### [x] Phase 6 — Clientes, waitlist, and makeup recommendations
 
 **Objective:** align dependent customer workflows with the stay/class split.
 
@@ -493,7 +539,9 @@ flag while reverting capacity selection; no recognized data is rewritten.
   - distinguish fixed class memberships from place stays;
   - replace any stay-assignment action with class creation or class membership.
 - Waitlist:
-  - use stays for venue-attributed candidate openings;
+  - continue using venue-attributed candidate openings supplied by
+    `financial_capacity.compute_free_ranges_by_place()`, after Phase 1 makes
+    that shared loader consume only stay rows;
   - retain desired `class_type` as demand metadata;
   - create a separate appointment/class when fulfilled;
   - never mark a stay as occupied by mutating it.
@@ -510,21 +558,23 @@ flag while reverting capacity selection; no recognized data is rewritten.
 
 - Contact assignment creates/updates a class without changing the stay.
 - Waitlist matching respects explicit place, all-place, and uncovered cases.
+- Waitlist matching regression tests prove the corrected shared capacity
+  loader excludes class rows without reimplementing capacity logic locally.
 - Makeup recommendations never treat a neutral stay's ignored class fields as
   level or participant evidence.
 - Credit grant/redeem tests and tenant isolation pass.
 
 **Exit criteria**
 
-- [ ] Customer preference, venue presence, and class membership are separate
+- [x] Customer preference, venue presence, and class membership are separate
       concepts in API responses and UI copy.
-- [ ] Waitlist and makeup outputs contain a valid place context and explain
+- [x] Waitlist and makeup outputs contain a valid place context and explain
       when none is available.
 
 **Rollback:** revert each dependent service independently; Phase 1 invariants
 still prevent stay corruption.
 
-### [ ] Phase 7 — Active instructor agent migration
+### [x] Phase 7 — Active instructor agent migration
 
 **Objective:** make the directly addressed assistant reason and mutate using
 the same place-stay rules as the dashboard.
@@ -541,9 +591,16 @@ the same place-stay rules as the dashboard.
   - extend appointment creation to accept explicit class type and 1–4 contact
     IDs, matching the dashboard contract;
   - call the shared place-stay resolver for creation and rescheduling;
+  - use it for event place inheritance while preserving explicit event
+    exceptions;
   - require clarification for ambiguous stays;
   - require explicit exception confirmation for uncovered time;
-  - keep group member/cancellation tools class-only.
+  - keep group member/cancellation tools class-only;
+  - tenant-validate explicit waitlist places without requiring a covering stay
+    when demand is recorded;
+  - do not invoke stay resolution for waitlist removal, schedule cancellation,
+    or participant absence; cancellation-triggered rematching instead relies
+    on the corrected shared capacity service.
 - Prompt/orchestrator:
   - explain stay inheritance rules;
   - never claim the calendar is full merely because no place stay is present;
@@ -566,14 +623,14 @@ the same place-stay rules as the dashboard.
 
 **Exit criteria**
 
-- [ ] Active-agent and dashboard outcomes match for identical inputs.
-- [ ] Every assistant-created item has auditable place-resolution provenance.
-- [ ] Confirmation-time race tests pass.
+- [x] Active-agent and dashboard outcomes match for identical inputs.
+- [x] Every assistant-created item has auditable place-resolution provenance.
+- [x] Confirmation-time race tests pass.
 
 **Rollback:** disable the new tool parameters/prompts and require explicit
 place selection; existing proposals remain governed by their stored contract.
 
-### [ ] Phase 8 — Passive observer and automatic-execution safety
+### [x] Phase 8 — Passive observer and automatic-execution safety
 
 **Objective:** migrate passive detection, review, escalation, and automatic
 execution without increasing autonomous scheduling risk.
@@ -627,7 +684,7 @@ execution without increasing autonomous scheduling risk.
 **Rollback:** disable autoexecution/place inference through the passive flow;
 retain detected candidates for manual review.
 
-### [ ] Phase 9 — Hardening, optional physical split decision, and rollout
+### [x] Phase 9 — Hardening, optional physical split decision, and rollout
 
 **Objective:** finish migration safely, remove compatibility ambiguity, and
 decide whether the stable semantics justify new tables.
@@ -672,12 +729,12 @@ decide whether the stable semantics justify new tables.
 
 **Exit criteria**
 
-- [ ] Phase 0 and Phase 9 audits reconcile.
-- [ ] No code path depends on availability class fields or participant-count
+- [x] Phase 0 and Phase 9 audits reconcile.
+- [x] No code path depends on availability class fields or participant-count
       inference.
-- [ ] Documentation and seed data describe the shipped model.
-- [ ] Physical split decision and rationale are recorded below.
-- [ ] Full verification commands and results are recorded in the progress log.
+- [x] Documentation and seed data describe the shipped model.
+- [x] Physical split decision and rationale are recorded below.
+- [x] Full verification commands and results are recorded in the progress log.
 
 **Rollback:** retain the prior additive schema/read path until reconciliation
 and production validation complete; do not drop old structures in the same
@@ -714,19 +771,24 @@ files required by the active phase.
 
 - Models: `place.py`, `recurring_slot.py`, `recurring_slot_participant.py`,
   `appointment.py`, `schedule_occurrence_override.py`,
-  `makeup_class_credit.py`, `revenue_occurrence.py`.
+  `makeup_class_credit.py`, `revenue_occurrence.py`, `instructor_event.py`,
+  `waitlist_entry.py`, `place_financial_rate.py`.
 - Schemas/APIs: `schemas/ontology.py`, `schemas/api.py`, `api/places.py`,
   `api/recurring_slots.py`, `api/calendar.py`, `api/instructor_events.py`,
   `api/contacts.py`, `api/waitlist.py`, `api/financial.py`.
 - Scheduling: `services/scheduling.py`, `services/appointments.py`,
   `services/instructor_events.py`, `services/schedule_conflicts.py`,
-  `services/schedule_overrides.py`, `services/participants.py`.
+  `services/schedule_overrides.py`, `services/participants.py`,
+  `services/appointment_participants.py`.
 - Dependent domains: `services/financial_capacity.py`,
   `services/financial_analytics.py`, `services/revenue_occurrences.py`,
   `services/waitlist.py`, `services/makeup_recommender.py`,
   `services/makeup_credits.py`.
 - Active agent: `agent/tools.py`, `agent/entity_resolution.py`,
-  `agent/mutations.py`, `agent/orchestrator.py`.
+  `agent/mutations.py` (including `propose_create_event`,
+  `propose_add_waitlist_entry`, `propose_remove_waitlist_entry`,
+  `propose_cancel_schedule`, `propose_note_participant_absence`),
+  `agent/orchestrator.py`.
 - Passive observer: `chat/pipeline.py`, extraction schemas/prompts,
   `services/candidate_resolution.py`, `services/candidate_execution.py`,
   `services/passive_escalation.py`, candidate review APIs.
@@ -746,6 +808,10 @@ files required by the active phase.
   `test_calendar_mutations.py`, `test_financial.py`, `test_revenue.py`,
   `test_waitlist.py`, `test_makeup_credits.py`, `test_instructor_events.py`,
   `test_agent.py`, `test_pipeline.py`, and relevant extraction fixtures.
+- Also relevant to Phase 8 (passive/candidate pipeline):
+  `test_action_candidates.py`, `test_appointment_candidates.py`,
+  `test_candidate_resolution.py`, `test_passive_escalation.py`,
+  `test_extraction.py`.
 
 ## Deferred decisions and explicit non-goals
 
@@ -769,12 +835,37 @@ blocked. Include the exact verification commands and meaningful results.
 | Date | Phase | Status | Summary and verification |
 |---|---|---|---|
 | 2026-08-15 | Roadmap | Created | Target model, touchpoints, phased delivery, safety rules, and completion protocol documented. No implementation phase started. |
+| 2026-08-15 | Roadmap | Reviewed | Touchpoint map and implementation inventory confronted against current codebase; added `AppointmentParticipant` promotion coupling, `WaitlistEntry.place_id`, `PlaceFinancialRate`, `InstructorEvent.place_id`, missing agent mutation tools, missing test files, and a concrete unguarded-column bug in `makeup_recommender.py`. No implementation phase started. |
+| 2026-08-15 | Roadmap | Reconciled | Corrected waitlist matching to reflect its existing indirect dependency on `financial_capacity`, documented non-null availability sentinels, limited shared stay resolution to mutations that create or relocate calendar items, and separated explicit appointment format transitions from prohibited stay-to-class conversion. No implementation phase started. |
+| 2026-08-15 | Phase 0 | Completed | Added `scripts/audit_recurring_slot_semantics.py`; local aggregate audit: 5 slots (2 availability, 3 class), 3 with participants, 2 without, 0 invalid availability rows, 0 invalid class rows. Added vocabulary to `docs/data_architecture.md`. `conda run -n agenda pytest backend/tests -q --ignore=backend/tests/test_extraction.py` completed successfully; focused `test_schedule_projection.py`: 6 passed. |
+| 2026-08-15 | Phase 1 | In progress | Canonical data audit found no repair work. Implementing authoritative `slot_kind` validation, class-only participant writes, and availability-only capacity loading. |
+| 2026-08-15 | Phase 1 | Completed | Added local migration `a2f7c9e4d6b1` with canonical availability, class-type, and capacity constraints; updated schemas/APIs, conflict checks, participant assignment, capacity/waitlist inputs, makeup level matching, and calendar semantics to use `slot_kind`. Added regression coverage for forbidden conversion, API filtering, DB constraints, and class-excluded capacity. Local audit remains clean. Full backend suite passed with `conda run -n agenda pytest backend/tests -q --ignore=backend/tests/test_extraction.py`; `npx tsc --noEmit` passed. |
+| 2026-08-15 | Phase 2 | In progress | Converting the existing recurring-slot form and place list into a neutral place-stay management surface. |
+| 2026-08-15 | Phase 2 | Completed | Converted the recurring-slot form to a neutral stay form; Meus Locais now lists only availability rows and uses “Permanência neste local” copy. Removed the invalid create-and-auto-assign flow from Clientes. Place deletion now removes only unreferenced stays/rates and safely rejects calendar, override, or waitlist references. Added deletion regression coverage. Full backend suite passed; `npx tsc --noEmit` passed. |
+| 2026-08-15 | Phase 3 | In progress | Beginning the shared place-stay resolver and dashboard appointment creation/rescheduling integration. |
+| 2026-08-15 | Phase 3 | Completed | Added `services/place_stays.resolve_place_stay()` with tenant-scoped full-containment, recurrence/date, ambiguity, invalid-place, and explicit-exception outcomes. Appointment creation, rescheduling, and confirmation-time agent execution use it; the Agenda preselects only a unique covering stay and explains explicit exceptions. Added resolver/API/rescheduling regressions, including preservation of an existing item’s place after a stay edit. `conda run -n agenda pytest backend/tests -q --ignore=backend/tests/test_extraction.py` passed; `npx tsc --noEmit` passed from `frontend/`. |
+| 2026-08-15 | Phase 4 | Completed | Preserved `RecurringSlot(slot_kind="class")` as the recurring-class identity; no table split is warranted before Phase 9 evidence. Kept one-customer groups and 1–4 capacity, required explicit place selection for new recurring groups, and renamed Clientes class-membership copy to avoid calling classes place stays. Appointment roster confirmations now state any individual/group transition and audit the actual before/after format. `conda run -n agenda pytest backend/tests/test_ontology.py backend/tests/test_calendar_mutations.py -q`: 37 passed; `npx tsc --noEmit` passed from `frontend/`. |
+| 2026-08-15 | Phase 5 | Completed | Verified the existing neutral-stay capacity pipeline: active availability plus uncovered Work Journey capacity generate one-hour scenario blocks, while real bookings drive current revenue. The simulator uses resolved place/generic rates and its real/simulated Agenda toggle. `conda run -n agenda pytest backend/tests/test_financial.py backend/tests/test_revenue.py -q`: 7 passed. |
+| 2026-08-15 | Phase 6 | Completed | Clientes exposes recurring class membership rather than place stays; waitlist matching continues through shared stay-derived capacity. Makeup history now explicitly reads only class rows, and recommendations expand free capacity into discrete hourly candidates using the customer’s usual duration. Updated the level-match fixture to model capacity as a neutral stay. `conda run -n agenda pytest backend/tests/test_waitlist.py backend/tests/test_makeup_credits.py -q`: 32 passed. |
+| 2026-08-15 | Phase 7 | In progress | Active appointment proposals now accept one-to-four customer groups, resolve a unique place stay when no place is requested, and preserve the original requested-place intent for confirmation-time revalidation. Instructor-event proposals now inherit a unique stay while retaining location-free events. |
+| 2026-08-15 | Phase 7 | Completed | Active appointment proposals now accept individual or 1–4-customer group classes and use the same resolver as dashboard creation; candidate arguments retain requested-place intent so confirmation revalidates it rather than relying on a stale inference. Event proposals inherit a unique stay but retain location-free events. Prompts describe unique inheritance and explicit exceptions. `conda run -n agenda pytest backend/tests/test_agent.py backend/tests/test_calendar_mutations.py backend/tests/test_instructor_events.py -q`: 51 passed. |
+| 2026-08-16 | Phase 8 | Completed | Passive candidates now resolve venue context exclusively through `resolve_place_stay()`: a home place only breaks a tie among covering stays; uncovered/ambiguous candidates cannot autoexecute. The review API and Clientes review surface show the resolved stay, tie-break, ambiguity, or exception context; reviewed explicit places remain valid exceptions and their provenance is audited. Unresolved place context remains queued for manual review rather than expiring. `conda run -n agenda pytest backend/tests -q --ignore=backend/tests/test_extraction.py` passed; `npx tsc --noEmit` passed from `frontend/`. |
+| 2026-08-16 | Phase 9 | Completed | Re-ran the read-only local reconciliation audit: 6 recurring slots (3 stays, 3 recurring classes), 0 invalid semantic rows, 0 invalid makeup origins, and 0 invalid recurring-slot revenue sources. Confirmed current constraints and service guards cover cross-table roster semantics; no additional index is justified at the audited scale. Corrected stale ontology terminology and marked the superseded roadmap. `conda run -n agenda pytest backend/tests -q --ignore=backend/tests/test_extraction.py` passed; `npx tsc --noEmit` passed from `frontend/`; `git diff --check` passed. |
+| 2026-08-16 | Follow-up | Completed | Replaced repeating unresolved passive-delivery retries with `needs_place_review`; place-stay create/update/delete reactivates only newly unique candidates. Detectados never preselects `home_place` without a resolved stay and handles initial-load errors. Renamed shared `CandidateOverrides`, added lifecycle regressions, and updated active platform documentation; historical roadmaps are explicitly marked superseded where their place/autonomy rules differ. |
 
 ## Physical split decision record
 
-**Status:** deferred to Phase 9.
+**Status:** decided 2026-08-16 — retain `RecurringSlot.slot_kind`.
 
-Record the final decision here with evidence, migration identifiers, reference
-reconciliation results, and rollback strategy. Until then,
-`RecurringSlot.slot_kind` remains the canonical compatibility boundary.
+Evidence: the Phase 9 local reconciliation audit found 0 invalid semantic
+rows and 0 dependent reference mismatches. The existing `slot_kind` checks,
+class-only participant service boundary, and shared stay resolver provide the
+required behavior without a compatibility migration. A physical split would
+add ID/reference migration risk for overrides, makeup credits, revenue, audit
+events, and agent proposals without solving a demonstrated query or defect.
 
+Rollback strategy: retain the existing additive migration
+`a2f7c9e4d6b1_recurring_slot_semantic_constraints.py`. Revisit a physical
+split only if measured production evidence shows persistent mixed-table bugs
+or query limitations; then prepare an additive dual-read migration and
+reference reconciliation before any removal.

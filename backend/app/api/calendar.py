@@ -133,19 +133,11 @@ def create_appointment(
     contacts_by_id = {contact.id: contact for contact in contacts}
     contact = contacts_by_id[body.contact_id]
 
-    place = (
-        db.query(Place)
-        .filter(Place.id == body.place_id, Place.professional_id == professional_id)
-        .first()
-    )
-    if place is None:
-        raise HTTPException(status_code=404, detail="Place not found")
-
     appointment = create_appointment_service(
         db,
         professional_id,
         contact_id=contact.id,
-        place_id=place.id,
+        place_id=body.place_id,
         service=body.service,
         start_at=body.start_at,
         end_at=body.end_at,
@@ -171,7 +163,7 @@ def create_appointment(
         contact_id=appointment.contact_id,
         contact_name=contact.display_name,
         place_id=appointment.place_id,
-        place_name=place.name,
+        place_name=db.query(Place.name).filter(Place.id == appointment.place_id).scalar(),
         service=appointment.service,
         start_at=appointment.start_at,
         end_at=appointment.end_at,

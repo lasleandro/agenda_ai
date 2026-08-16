@@ -30,6 +30,7 @@ from app.models import (
     User,
     WorkJourneyInterval,
 )
+from app.services.financial_capacity import build_capacity_segments, load_prime_ranges
 
 client = TestClient(app)
 
@@ -139,6 +140,77 @@ def _cleanup(db, *, professionals, users) -> None:
             Professional.id.in_(professional_ids)
         ).delete(synchronize_session=False)
     db.commit()
+
+
+def test_capacity_uses_stays_not_recurring_classes() -> None:
+    db = SessionLocal()
+    professional, owner, admin, _ = _create_tenant(db, enabled=True)
+    try:
+        place = Place(
+            professional_id=professional.id,
+            name="Clube",
+            normalized_name="clube",
+        )
+        contact = Contact(
+            professional_id=professional.id,
+            phone=f"+55119{uuid.uuid4().hex[:8]}",
+            display_name="Aluno",
+            normalized_name="aluno",
+        )
+        db.add_all([place, contact])
+        db.flush()
+        db.add(
+            WorkJourneyInterval(
+                professional_id=professional.id,
+                day_of_week=0,
+                interval_type="work",
+                start_time=time(8),
+                end_time=time(10),
+            )
+        )
+        stay = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=0,
+            start_time=time(8),
+            end_time=time(9),
+            slot_kind="availability",
+            created_at=datetime(2026, 8, 3, 8, tzinfo=timezone.utc),
+        )
+        recurring_class = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=0,
+            start_time=time(9),
+            end_time=time(10),
+            slot_kind="class",
+            class_type="group",
+            max_participants=4,
+            created_at=datetime(2026, 8, 3, 8, tzinfo=timezone.utc),
+        )
+        db.add_all([stay, recurring_class])
+        db.flush()
+        db.add(
+            RecurringSlotParticipant(
+                recurring_slot_id=recurring_class.id,
+                contact_id=contact.id,
+            )
+        )
+        db.commit()
+
+        segments = build_capacity_segments(
+            db,
+            professional.id,
+            date(2026, 8, 10),
+            date(2026, 8, 10),
+            [place],
+            load_prime_ranges(db, professional.id),
+        )
+
+        assert sum(segment.duration_minutes for segment in segments) == 60
+    finally:
+        _cleanup(db, professionals=[professional], users=[owner, admin])
+        db.close()
 
 
 def test_financial_inheritance_zero_and_multi_group_context() -> None:

@@ -9,10 +9,9 @@ DELETE /api/recurring-slots/{id}                       — delete.
 POST   /api/recurring-slots/{id}/participants          — assign a contact (capacity-checked).
 DELETE /api/recurring-slots/{id}/participants/{contact_id} — remove a contact.
 
-Assigning a slot's first participant promotes it from slot_kind="availability"
-to slot_kind="class" (operational ontology roadmap v0.2, Phase 0). Removing
-participants does not demote it back — an emptied class slot stays a class
-record, matching "class rows may overlap a containing availability window."
+Availability rows represent place stays and cannot receive participants.
+Recurring classes are created explicitly and remain class records when their
+roster becomes empty, so a class can overlap its containing place stay.
 """
 
 import uuid
@@ -28,6 +27,7 @@ from app.services.participants import count_participants as _participant_count
 from app.services.participants import remove_participant as _remove_participant_service
 from app.services.schedule_conflicts import assert_no_scheduled_class_overlap as _assert_no_scheduled_class_overlap
 from app.services.schedule_conflicts import assert_no_slot_overlap as _assert_no_overlap
+from app.services.passive_escalation import reactivate_place_review_escalations
 from app.schemas.ontology import (
     RecurringSlotBulkCreate,
     RecurringSlotCreate,
@@ -38,6 +38,8 @@ from app.schemas.ontology import (
     RecurringSlotParticipantCreate,
     RecurringSlotParticipantDetail,
     RecurringSlotUpdate,
+    SlotKind,
+    validate_recurring_slot_definition,
 )
 
 router = APIRouter(prefix="/api/recurring-slots", tags=["recurring-slots"])
@@ -88,6 +90,7 @@ def _to_detail(db: Session, slot: RecurringSlot, place_name: str) -> RecurringSl
 @router.get("", response_model=RecurringSlotListResponse)
 def list_recurring_slots(
     place_id: uuid.UUID | None = None,
+    slot_kind: SlotKind | None = None,
     db: Session = Depends(get_db),
     professional_id: uuid.UUID = Depends(require_professional_id),
 ):
@@ -98,6 +101,8 @@ def list_recurring_slots(
     )
     if place_id is not None:
         query = query.filter(RecurringSlot.place_id == place_id)
+    if slot_kind is not None:
+        query = query.filter(RecurringSlot.slot_kind == slot_kind)
 
     rows = query.order_by(RecurringSlot.day_of_week, RecurringSlot.start_time).all()
     return RecurringSlotListResponse(slots=[_to_detail(db, slot, name) for slot, name in rows])
@@ -110,6 +115,8 @@ def get_recurring_group(
     professional_id: uuid.UUID = Depends(require_professional_id),
 ):
     slot = _get_slot_or_404(db, slot_id, professional_id)
+    if slot.slot_kind != "class":
+        raise HTTPException(status_code=404, detail="Recurring class not found")
     place_name = db.query(Place.name).filter(Place.id == slot.place_id).scalar()
     participants = (
         db.query(RecurringSlotParticipant, Contact)
@@ -148,7 +155,12 @@ def create_recurring_slot(
     if place is None:
         raise HTTPException(status_code=404, detail="Place not found")
 
-    _assert_no_overlap(
+    overlap_check = (
+        _assert_no_scheduled_class_overlap
+        if body.slot_kind == "class"
+        else _assert_no_overlap
+    )
+    overlap_check(
         db,
         professional_id,
         body.day_of_week,
@@ -160,6 +172,8 @@ def create_recurring_slot(
 
     slot = RecurringSlot(professional_id=professional_id, **body.model_dump())
     db.add(slot)
+    if slot.slot_kind == "availability":
+        reactivate_place_review_escalations(db, professional_id)
     db.commit()
     return _to_detail(db, slot, place.name)
 
@@ -178,8 +192,13 @@ def create_recurring_slots(
     if place is None:
         raise HTTPException(status_code=404, detail="Place not found")
 
+    overlap_check = (
+        _assert_no_scheduled_class_overlap
+        if body.slot_kind == "class"
+        else _assert_no_overlap
+    )
     for day_of_week in body.days_of_week:
-        _assert_no_overlap(
+        overlap_check(
             db,
             professional_id,
             day_of_week,
@@ -197,6 +216,8 @@ def create_recurring_slots(
         for day_of_week in body.days_of_week
     ]
     db.add_all(slots)
+    if body.slot_kind == "availability":
+        reactivate_place_review_escalations(db, professional_id)
     db.commit()
     return [_to_detail(db, slot, place.name) for slot in slots]
 
@@ -286,6 +307,17 @@ def update_recurring_slot(
     slot = _get_slot_or_404(db, slot_id, professional_id)
     updates = body.model_dump(exclude_unset=True)
 
+    if "slot_kind" in updates and updates["slot_kind"] != slot.slot_kind:
+        raise HTTPException(status_code=422, detail="Slot kind cannot be changed")
+
+    validate_recurring_slot_definition(
+        updates.get("slot_kind", slot.slot_kind),
+        updates.get("class_type", slot.class_type),
+        updates.get("max_participants", slot.max_participants),
+        updates.get("group_name", slot.group_name),
+        updates.get("level", slot.level),
+    )
+
     if "place_id" in updates:
         place = (
             db.query(Place)
@@ -327,6 +359,8 @@ def update_recurring_slot(
 
     for field, value in updates.items():
         setattr(slot, field, value)
+    if slot.slot_kind == "availability":
+        reactivate_place_review_escalations(db, professional_id)
     db.commit()
 
     place_name = db.query(Place.name).filter(Place.id == slot.place_id).scalar()
@@ -340,7 +374,10 @@ def delete_recurring_slot(
     professional_id: uuid.UUID = Depends(require_professional_id),
 ):
     slot = _get_slot_or_404(db, slot_id, professional_id)
+    is_place_stay = slot.slot_kind == "availability"
     db.delete(slot)
+    if is_place_stay:
+        reactivate_place_review_escalations(db, professional_id)
     db.commit()
 
 

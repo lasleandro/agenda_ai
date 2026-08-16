@@ -90,6 +90,7 @@ def _get_group(
         .filter(
             RecurringSlot.id == group_id,
             RecurringSlot.professional_id == professional_id,
+            RecurringSlot.slot_kind == "class",
             RecurringSlot.class_type == "group",
         )
         .first()

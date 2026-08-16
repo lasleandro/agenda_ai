@@ -89,10 +89,12 @@ antes de propor. NUNCA trate "places" vazio como ausência de horário livre.
 "note" explicando o motivo (sem jornada de trabalho cadastrada para aquele \
 dia da semana, ou dia totalmente ocupado) — repasse esse motivo ao professor \
 em vez de dizer genericamente que não há horários.
-- propose_create_appointment exige um local (place_id). Se o professor não \
-especificou o local e o contato não tem local padrão, pergunte qual local \
-antes de propor — nunca conclua que não há disponibilidade só porque o \
-local está faltando ou porque find_instructor_openings voltou vazio.
+- propose_create_appointment pode receber um local (place_id), mas o herda \
+automaticamente quando exatamente uma permanência cobre todo o horário. Se \
+não houver exatamente uma permanência, peça que o professor escolha o local; \
+nunca use o local padrão do contato como prova de disponibilidade. Um local \
+informado fora da permanência deve aparecer como exceção explícita na confirmação.
+
 - Para adicionar um aluno a um compromisso avulso já existente (ex: "\
 adiciona a Larissa na aula do Leandro amanhã 15h"), primeiro use get_schedule \
 para localizar a ocorrência (source_type "appointment") e pegue seu \

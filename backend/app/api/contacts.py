@@ -108,7 +108,10 @@ def get_contact(
         db.query(RecurringSlot, Place.name)
         .join(RecurringSlotParticipant, RecurringSlotParticipant.recurring_slot_id == RecurringSlot.id)
         .join(Place, RecurringSlot.place_id == Place.id)
-        .filter(RecurringSlotParticipant.contact_id == contact_id)
+        .filter(
+            RecurringSlotParticipant.contact_id == contact_id,
+            RecurringSlot.slot_kind == "class",
+        )
         .all()
     )
     fixed_slots = [

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.models import ScheduleOccurrenceOverride
 from app.services import scheduling
+from app.services.place_stays import resolve_place_stay
 
 
 def _get_active_override(
@@ -132,7 +133,21 @@ def reschedule_occurrence(
     if new_end_at <= new_start_at:
         raise HTTPException(status_code=422, detail="End time must be after start time")
 
-    effective_place_id = new_place_id or original.place_id
+    resolution = resolve_place_stay(
+        db,
+        professional_id,
+        start_at=new_start_at,
+        end_at=new_end_at,
+        requested_place_id=new_place_id,
+    )
+    if resolution.outcome == "invalid_place":
+        raise HTTPException(status_code=404, detail="Place not found")
+    if resolution.place_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Select a place: this time has no unique covering place stay",
+        )
+    effective_place_id = resolution.place_id
 
     assert_new_time_available(
         db,

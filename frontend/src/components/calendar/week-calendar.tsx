@@ -56,7 +56,7 @@ function toFullCalendarDay(dayOfWeek: number): number {
 
 function slotToEvent(slot: RecurringSlot): EventInput {
   const courtLabel = slot.label ? ` · ${slot.label}` : "";
-  const isScheduledClass = slot.participant_count > 0;
+  const isScheduledClass = slot.slot_kind === "class";
   const levelLabel = slot.level
     ? ` · ${CONTACT_LEVEL_LABELS[slot.level] ?? slot.level}`
     : "";
@@ -175,17 +175,31 @@ function suggestedPlaceForRange(
   slots: RecurringSlot[]
 ): string | null {
   if (start.toDateString() !== end.toDateString()) return null;
+  const localDate = [
+    start.getFullYear(),
+    String(start.getMonth() + 1).padStart(2, "0"),
+    String(start.getDate()).padStart(2, "0"),
+  ].join("-");
   const dayOfWeek = (start.getDay() + 6) % 7;
   const startMinutes = start.getHours() * 60 + start.getMinutes();
   const endMinutes = end.getHours() * 60 + end.getMinutes();
-  const matchingSlot = slots.find(
-    (slot) =>
-      slot.status === "active" &&
-      slot.day_of_week === dayOfWeek &&
-      startMinutes >= timeToMinutes(slot.start_time) &&
-      endMinutes <= timeToMinutes(slot.end_time)
+  const matchingPlaceIds = new Set(
+    slots.filter(
+      (slot) =>
+        slot.status === "active" &&
+        slot.slot_kind === "availability" &&
+        slot.day_of_week === dayOfWeek &&
+        (slot.recurrence_type === "weekly"
+          ? (!slot.valid_from || slot.valid_from <= localDate) &&
+            (!slot.valid_until || slot.valid_until >= localDate)
+          : slot.scheduled_date === localDate) &&
+        startMinutes >= timeToMinutes(slot.start_time) &&
+        endMinutes <= timeToMinutes(slot.end_time)
+    ).map((slot) => slot.place_id)
   );
-  return matchingSlot?.place_id ?? null;
+  return matchingPlaceIds.size === 1
+    ? [...matchingPlaceIds][0]
+    : null;
 }
 
 interface BookingSelection {
@@ -297,7 +311,7 @@ export function WeekCalendar() {
   const handleEventClick = useCallback((arg: EventClickArg) => {
     if (arg.event.extendedProps.kind === "recurring_slot") {
       const slot = arg.event.extendedProps.slot as RecurringSlot;
-      if (slot.participant_count === 0) return;
+      if (slot.slot_kind !== "class") return;
       setSelectedGroupId(slot.id);
       setSelectedGroupOccurrenceDate(arg.event.startStr.slice(0, 10));
       setGroupPanelOpen(true);
@@ -326,7 +340,7 @@ export function WeekCalendar() {
 
   const handleEventMount = useCallback((arg: EventMountArg) => {
     if (arg.event.extendedProps.kind !== "recurring_slot") return;
-    if (arg.event.extendedProps.slot.participant_count > 0) return;
+    if (arg.event.extendedProps.slot.slot_kind === "class") return;
     const label = document.createElement("span");
     label.className = "agenda-place-slot-label";
     label.textContent = arg.event.title;
@@ -460,7 +474,7 @@ export function WeekCalendar() {
   const eventCountLabel = useMemo(
     () => {
       const scheduledCount =
-        events.length + slots.filter((slot) => slot.participant_count > 0).length;
+        events.length + slots.filter((slot) => slot.slot_kind === "class").length;
       return `${scheduledCount} agendamento${scheduledCount === 1 ? "" : "s"}`;
     },
     [events, slots]
@@ -478,6 +492,7 @@ export function WeekCalendar() {
         if (event.extendedProps?.kind === "recurring_slot") {
           const slot = event.extendedProps.slot as RecurringSlot;
           return (
+            slot.slot_kind === "class" &&
             slot.class_type === "group" &&
             slot.participant_count > 0 &&
             slot.participant_count < 4

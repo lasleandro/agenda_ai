@@ -38,6 +38,7 @@ from app.models import (
 )
 from app.services import appointment_participants, appointments, participants, schedule_overrides
 from app.services import instructor_events as instructor_events_service
+from app.services.place_stays import resolve_place_stay
 from app.services import waitlist as waitlist_service
 from app.services.contacts import apply_contact_updates
 from app.services.makeup_credits import grant_credit_if_eligible
@@ -360,13 +361,24 @@ def propose_add_appointment_participant(
         return {"error": "This appointment is at full capacity"}
 
     label = _appointment_label(db, appointment)
+    class_type_transition = (
+        {"from": "individual", "to": "group"}
+        if appointment.class_type == "individual"
+        else None
+    )
     preview_text = f"Adicionar {contact.display_name} à aula ({label})."
+    if class_type_transition:
+        preview_text += " O formato mudará de individual para grupo."
     candidate = candidates.propose(
         db,
         professional_id,
         actor_user_id,
         tool_name="propose_add_appointment_participant",
-        arguments={"contact_id": contact_id, "appointment_id": appointment_id},
+        arguments={
+            "contact_id": contact_id,
+            "appointment_id": appointment_id,
+            "class_type_transition": class_type_transition,
+        },
         preview_text=preview_text,
         affected_entities=[
             {"entity_type": "contact", "entity_id": contact_id, "label": contact.display_name},
@@ -401,7 +413,10 @@ def _execute_add_appointment_participant(
     if contact is None or appointment is None:
         raise ValueError("Contact or appointment no longer exists")
 
-    appointment_participants.add_participant(db, professional_id, appointment, contact)
+    before_class_type = appointment.class_type
+    format_changed = appointment_participants.add_participant(
+        db, professional_id, appointment, contact
+    )
     record_event(
         db,
         professional_id=professional_id,
@@ -414,9 +429,9 @@ def _execute_add_appointment_participant(
         entity_id=appointment.id,
         correlation_id=candidate.correlation_id,
         operator_action_candidate_id=candidate.id,
-        payload={"contact_id": str(contact.id)},
-        before_state={"class_type": "individual"},
-        after_state={"class_type": "group", "contact_id": str(contact.id)},
+        payload={"contact_id": str(contact.id), "class_type_changed": format_changed},
+        before_state={"class_type": before_class_type},
+        after_state={"class_type": appointment.class_type, "contact_id": str(contact.id)},
     )
     return ExecutionResult(
         ok=True,
@@ -467,13 +482,24 @@ def propose_remove_appointment_participant(
         return {"error": "Contact is not a participant of this appointment"}
 
     label = _appointment_label(db, appointment)
+    class_type_transition = (
+        {"from": "group", "to": "individual"}
+        if appointment_participants.count_participants(db, appointment.id) == 2
+        else None
+    )
     preview_text = f"Remover {contact.display_name} da aula ({label})."
+    if class_type_transition:
+        preview_text += " O formato mudará de grupo para individual."
     candidate = candidates.propose(
         db,
         professional_id,
         actor_user_id,
         tool_name="propose_remove_appointment_participant",
-        arguments={"contact_id": contact_id, "appointment_id": appointment_id},
+        arguments={
+            "contact_id": contact_id,
+            "appointment_id": appointment_id,
+            "class_type_transition": class_type_transition,
+        },
         preview_text=preview_text,
         affected_entities=[
             {"entity_type": "contact", "entity_id": contact_id, "label": contact.display_name},
@@ -509,7 +535,10 @@ def _execute_remove_appointment_participant(
         raise ValueError("Contact or appointment no longer exists")
 
     label = _appointment_label(db, appointment)
-    appointment_participants.remove_participant(db, appointment.id, contact.id)
+    before_class_type = appointment.class_type
+    format_changed = appointment_participants.remove_participant(
+        db, appointment.id, contact.id
+    )
     record_event(
         db,
         professional_id=professional_id,
@@ -522,9 +551,9 @@ def _execute_remove_appointment_participant(
         entity_id=appointment.id,
         correlation_id=candidate.correlation_id,
         operator_action_candidate_id=candidate.id,
-        payload={"contact_id": str(contact.id)},
-        before_state={"contact_id": str(contact.id)},
-        after_state=None,
+        payload={"contact_id": str(contact.id), "class_type_changed": format_changed},
+        before_state={"contact_id": str(contact.id), "class_type": before_class_type},
+        after_state={"class_type": appointment.class_type},
     )
     return ExecutionResult(
         ok=True,
@@ -650,29 +679,38 @@ def propose_create_appointment(
     channel: str = "web",
     *,
     contact_id: str,
-    place_id: str,
+    place_id: str | None = None,
     start_at: str,
     end_at: str,
     service: str,
+    contact_ids: list[str] | None = None,
+    class_type: str = "individual",
     billing_type: str = "billable",
     idempotency_key: str | None = None,
     commit: bool = True,
 ) -> dict[str, Any]:
-    contact = (
-        db.query(Contact)
-        .filter(Contact.id == uuid.UUID(contact_id), Contact.professional_id == professional_id)
-        .first()
-    )
-    if contact is None:
-        return {"error": "Contact not found"}
+    participant_ids = contact_ids or [contact_id]
+    if len(participant_ids) > 4 or len(participant_ids) != len(set(participant_ids)):
+        return {"error": "A group must contain one to four unique contacts"}
+    if contact_id not in participant_ids:
+        return {"error": "contact_id must be included in contact_ids"}
+    if class_type not in ("individual", "group"):
+        return {"error": "class_type must be individual or group"}
+    if class_type == "individual" and len(participant_ids) != 1:
+        return {"error": "An individual class must have one contact"}
 
-    place = (
-        db.query(Place)
-        .filter(Place.id == uuid.UUID(place_id), Place.professional_id == professional_id)
-        .first()
+    contacts = (
+        db.query(Contact)
+        .filter(
+            Contact.id.in_([uuid.UUID(item) for item in participant_ids]),
+            Contact.professional_id == professional_id,
+        )
+        .all()
     )
-    if place is None:
-        return {"error": "Place not found"}
+    if len(contacts) != len(participant_ids):
+        return {"error": "One or more contacts were not found"}
+    contacts_by_id = {str(contact.id): contact for contact in contacts}
+    contact = contacts_by_id[contact_id]
 
     if billing_type not in VALID_BILLING_TYPES:
         return {"error": f"billing_type must be one of {VALID_BILLING_TYPES}"}
@@ -683,6 +721,27 @@ def propose_create_appointment(
         return {"error": "end_at must be after start_at"}
 
     try:
+        requested_place_id = uuid.UUID(place_id) if place_id else None
+    except ValueError:
+        return {"error": "place_id must be a valid UUID"}
+    place_resolution = resolve_place_stay(
+        db,
+        professional_id,
+        start_at=parsed_start,
+        end_at=parsed_end,
+        requested_place_id=requested_place_id,
+    )
+    if place_resolution.outcome == "invalid_place":
+        return {"error": "Place not found"}
+    if place_resolution.place_id is None:
+        return {"error": "Select a place: this time has no unique covering place stay"}
+    place = (
+        db.query(Place)
+        .filter(Place.id == place_resolution.place_id, Place.professional_id == professional_id)
+        .one()
+    )
+
+    try:
         appointments.assert_no_conflict(
             db, professional_id, start_at=parsed_start, end_at=parsed_end
         )
@@ -691,9 +750,18 @@ def propose_create_appointment(
 
     local_start = parsed_start.astimezone(TIMEZONE)
     courtesy_label = " (Cortesia)" if billing_type == "courtesy" else ""
+    participant_label = ", ".join(
+        contacts_by_id[participant_id].display_name for participant_id in participant_ids
+    )
+    place_context = (
+        "local inferido pela permanência"
+        if place_resolution.stay_id is not None
+        else "local informado como exceção"
+    )
     preview_text = (
-        f"Criar atendimento de {service.strip()} para {contact.display_name} em "
-        f"{local_start.strftime('%d/%m/%Y %H:%M')}, {place.name}{courtesy_label}."
+        f"Criar aula {class_type} de {service.strip()} para {participant_label} em "
+        f"{local_start.strftime('%d/%m/%Y %H:%M')}, {place.name} "
+        f"({place_context}){courtesy_label}."
     )
     candidate = candidates.propose(
         db,
@@ -702,7 +770,10 @@ def propose_create_appointment(
         tool_name="propose_create_appointment",
         arguments={
             "contact_id": contact_id,
-            "place_id": place_id,
+            "contact_ids": participant_ids,
+            "class_type": class_type,
+            "place_id": str(place_resolution.place_id),
+            "requested_place_id": place_id,
             "start_at": parsed_start.isoformat(),
             "end_at": parsed_end.isoformat(),
             "service": service,
@@ -711,7 +782,11 @@ def propose_create_appointment(
         preview_text=preview_text,
         affected_entities=[
             {"entity_type": "contact", "entity_id": contact_id, "label": contact.display_name},
-            {"entity_type": "place", "entity_id": place_id, "label": place.name},
+            {
+                "entity_type": "place",
+                "entity_id": str(place_resolution.place_id),
+                "label": place.name,
+            },
         ],
         correlation_id=correlation_id,
         channel=channel,
@@ -725,14 +800,31 @@ def _execute_create_appointment(
     db: Session, professional_id: uuid.UUID, candidate: OperatorActionCandidate
 ) -> ExecutionResult:
     args = candidate.resolved_arguments
+    participant_ids = args.get("contact_ids") or [args["contact_id"]]
+    contacts = (
+        db.query(Contact)
+        .filter(
+            Contact.id.in_([uuid.UUID(contact_id) for contact_id in participant_ids]),
+            Contact.professional_id == professional_id,
+        )
+        .all()
+    )
+    if len(contacts) != len(participant_ids):
+        raise ValueError("One or more contacts no longer exist")
+    contacts_by_id = {str(contact.id): contact for contact in contacts}
     appointment = appointments.create_appointment(
         db,
         professional_id,
         contact_id=uuid.UUID(args["contact_id"]),
-        place_id=uuid.UUID(args["place_id"]),
+        place_id=(
+            uuid.UUID(args["requested_place_id"])
+            if args.get("requested_place_id")
+            else None
+        ),
         service=args["service"],
         start_at=_parse_datetime(args["start_at"]),
         end_at=_parse_datetime(args["end_at"]),
+        class_type=args.get("class_type", "individual"),
         source="assistant",
         actor=f"user:{candidate.actor_user_id}",
     )
@@ -741,6 +833,14 @@ def _execute_create_appointment(
         billing_type = "billable"
     if billing_type == "courtesy":
         appointment.billing_type = "courtesy"
+    for participant_id in participant_ids:
+        if participant_id != args["contact_id"]:
+            appointment_participants.add_participant(
+                db,
+                professional_id,
+                appointment,
+                contacts_by_id[participant_id],
+            )
 
     record_event(
         db,
@@ -754,7 +854,11 @@ def _execute_create_appointment(
         entity_id=appointment.id,
         correlation_id=candidate.correlation_id,
         operator_action_candidate_id=candidate.id,
-        payload={"start_at": args["start_at"], "end_at": args["end_at"]},
+        payload={
+            "contact_ids": participant_ids,
+            "requested_place_id": args.get("requested_place_id"),
+            "resolved_place_id": str(appointment.place_id),
+        },
         before_state=None,
         after_state={"status": appointment.status},
     )
@@ -1240,6 +1344,23 @@ def propose_reschedule_occurrence(
         return {"error": "new_end_at must be after new_start_at"}
 
     try:
+        requested_place_id = uuid.UUID(new_place_id) if new_place_id else None
+    except ValueError:
+        return {"error": "new_place_id must be a valid UUID"}
+
+    place_resolution = resolve_place_stay(
+        db,
+        professional_id,
+        start_at=parsed_new_start,
+        end_at=parsed_new_end,
+        requested_place_id=requested_place_id,
+    )
+    if place_resolution.outcome == "invalid_place":
+        return {"error": "Place not found"}
+    if place_resolution.place_id is None:
+        return {"error": "Select a place: this time has no unique covering place stay"}
+
+    try:
         schedule_overrides.assert_new_time_available(
             db,
             professional_id,
@@ -1251,9 +1372,8 @@ def propose_reschedule_occurrence(
     except HTTPException as exc:
         return {"error": exc.detail}
 
-    new_place_name = occurrence.place_name
-    if new_place_id is not None:
-        new_place_name = _place_name(db, uuid.UUID(new_place_id))
+    effective_place_id = str(place_resolution.place_id)
+    new_place_name = _place_name(db, place_resolution.place_id)
 
     old_local = occurrence.starts_at.astimezone(TIMEZONE)
     new_local = parsed_new_start.astimezone(TIMEZONE)
@@ -1272,7 +1392,7 @@ def propose_reschedule_occurrence(
             "occurrence_date": occurrence_date,
             "new_start_at": parsed_new_start.isoformat(),
             "new_end_at": parsed_new_end.isoformat(),
-            "new_place_id": new_place_id,
+            "new_place_id": effective_place_id,
         },
         preview_text=preview_text,
         affected_entities=[
@@ -1543,16 +1663,29 @@ def propose_create_event(
     if parsed_end <= parsed_start:
         return {"error": "end_at must be after start_at"}
 
+    try:
+        requested_place_id = uuid.UUID(place_id) if place_id else None
+    except ValueError:
+        return {"error": "place_id must be a valid UUID"}
+    place_resolution = resolve_place_stay(
+        db,
+        professional_id,
+        start_at=parsed_start,
+        end_at=parsed_end,
+        requested_place_id=requested_place_id,
+    )
+    if place_resolution.outcome == "invalid_place":
+        return {"error": "Place not found"}
+
+    effective_place_id = place_resolution.place_id
     place_name = None
-    if place_id is not None:
+    if effective_place_id is not None:
         place = (
             db.query(Place)
-            .filter(Place.id == uuid.UUID(place_id), Place.professional_id == professional_id)
+            .filter(Place.id == effective_place_id, Place.professional_id == professional_id)
             .first()
         )
-        if place is None:
-            return {"error": "Place not found"}
-        place_name = place.name
+        place_name = place.name if place else None
 
     try:
         instructor_events_service.assert_no_event_conflict(
@@ -1565,6 +1698,10 @@ def propose_create_event(
     local_end = parsed_end.astimezone(TIMEZONE)
     income_label = f" — R$ {income_cents / 100:.2f}".replace(".", ",") if income_cents else ""
     place_suffix = f", {place_name}" if place_name else ""
+    if place_resolution.stay_id is not None:
+        place_suffix += " (local inferido pela permanência)"
+    elif place_id is not None:
+        place_suffix += " (local informado como exceção)"
     preview_text = (
         f"Criar evento ({event_type}) {title or ''} em "
         f"{local_start.strftime('%d/%m/%Y %H:%M')}–{local_end.strftime('%H:%M')}"
@@ -1579,7 +1716,8 @@ def propose_create_event(
             "event_type": event_type,
             "start_at": parsed_start.isoformat(),
             "end_at": parsed_end.isoformat(),
-            "place_id": place_id,
+            "place_id": str(effective_place_id) if effective_place_id else None,
+            "requested_place_id": place_id,
             "title": title,
             "income_cents": income_cents,
             "note": note,
@@ -1596,14 +1734,30 @@ def _execute_create_event(
     db: Session, professional_id: uuid.UUID, candidate: OperatorActionCandidate
 ) -> ExecutionResult:
     args = candidate.resolved_arguments
+    start_at = _parse_datetime(args["start_at"])
+    end_at = _parse_datetime(args["end_at"])
+    requested_place_id = (
+        uuid.UUID(args["requested_place_id"])
+        if args.get("requested_place_id")
+        else None
+    )
+    place_resolution = resolve_place_stay(
+        db,
+        professional_id,
+        start_at=start_at,
+        end_at=end_at,
+        requested_place_id=requested_place_id,
+    )
+    if place_resolution.outcome == "invalid_place":
+        raise ValueError("Place no longer exists")
     try:
         event = instructor_events_service.create_event(
             db,
             professional_id,
             event_type=args["event_type"],
-            start_at=_parse_datetime(args["start_at"]),
-            end_at=_parse_datetime(args["end_at"]),
-            place_id=uuid.UUID(args["place_id"]) if args.get("place_id") else None,
+            start_at=start_at,
+            end_at=end_at,
+            place_id=place_resolution.place_id,
             title=args.get("title"),
             income_cents=args.get("income_cents"),
             note=args.get("note"),
@@ -1623,7 +1777,12 @@ def _execute_create_event(
         entity_id=event.id,
         correlation_id=candidate.correlation_id,
         operator_action_candidate_id=candidate.id,
-        payload={"event_type": event.event_type, "start_at": args["start_at"]},
+        payload={
+            "event_type": event.event_type,
+            "start_at": args["start_at"],
+            "requested_place_id": args.get("requested_place_id"),
+            "resolved_place_id": str(event.place_id) if event.place_id else None,
+        },
         before_state=None,
         after_state={"status": event.status},
     )
@@ -1708,18 +1867,20 @@ MUTATION_TOOL_SPECS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "propose_create_appointment",
-            "description": "Propose creating a direct (one-off) appointment for a contact. Requires explicit instructor confirmation before it takes effect — use resolved IDs from search_contacts/search_places.",
+            "description": "Propose creating a one-off individual or group appointment. The place is inherited only when exactly one place stay covers the full interval; otherwise ask for an explicit place. Requires instructor confirmation.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "contact_id": {"type": "string"},
-                    "place_id": {"type": "string"},
+                    "place_id": {"type": "string", "description": "Optional explicit place ID. Omit only when a unique covering place stay exists."},
                     "start_at": {"type": "string", "description": "ISO 8601 datetime, e.g. 2026-08-10T14:00:00-03:00."},
                     "end_at": {"type": "string", "description": "ISO 8601 datetime."},
                     "service": {"type": "string"},
+                    "contact_ids": {"type": "array", "items": {"type": "string"}, "description": "One to four contacts, including contact_id. Required for a group."},
+                    "class_type": {"type": "string", "enum": ["individual", "group"], "description": "Defaults to individual."},
                     "billing_type": {"type": "string", "enum": ["billable", "courtesy"], "description": "Optional — 'courtesy' marks this as a free/courtesy class that shouldn't generate revenue."},
                 },
-                "required": ["contact_id", "place_id", "start_at", "end_at", "service"],
+                "required": ["contact_id", "start_at", "end_at", "service"],
             },
         },
     },

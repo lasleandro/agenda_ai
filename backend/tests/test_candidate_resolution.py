@@ -9,8 +9,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.database import SessionLocal
 from app.chat.pipeline import _auto_execute_authoritative_create
-from app.models import Appointment, AppointmentCandidate, AppointmentTransition, Contact, OperationalEvent, Place, Professional, User
-from app.services.candidate_resolution import resolve_candidate
+from app.models import Appointment, AppointmentCandidate, AppointmentTransition, Contact, OperationalEvent, Place, Professional, RecurringSlot, User
+from app.services.candidate_resolution import CandidateOverrides, resolve_candidate
+from app.services.scheduling import TIMEZONE
 
 
 def _phone() -> str:
@@ -56,6 +57,7 @@ def _cleanup(db, professional: Professional) -> None:
         )
     ).delete(synchronize_session=False)
     db.query(Appointment).filter_by(professional_id=professional.id).delete()
+    db.query(RecurringSlot).filter_by(professional_id=professional.id).delete()
     db.query(Contact).filter_by(professional_id=professional.id).delete()
     db.query(Place).filter_by(professional_id=professional.id).delete()
     db.query(User).filter_by(professional_id=professional.id).delete()
@@ -64,7 +66,26 @@ def _cleanup(db, professional: Professional) -> None:
     db.close()
 
 
-def test_resolve_candidate_create_uses_contact_home_place() -> None:
+def _add_covering_stay(
+    db, professional: Professional, place: Place, candidate: AppointmentCandidate
+) -> None:
+    local_start = candidate.proposed_start_at.astimezone(TIMEZONE)
+    local_end = candidate.proposed_end_at.astimezone(TIMEZONE)
+    db.add(
+        RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=local_start.weekday(),
+            start_time=local_start.time().replace(tzinfo=None),
+            end_time=local_end.time().replace(tzinfo=None),
+            slot_kind="availability",
+            status="active",
+        )
+    )
+    db.commit()
+
+
+def test_resolve_candidate_create_uses_home_place_only_to_break_stay_tie() -> None:
     db, professional, contact, candidate = _setup_candidate()
     try:
         place = Place(
@@ -74,8 +95,17 @@ def test_resolve_candidate_create_uses_contact_home_place() -> None:
         )
         db.add(place)
         db.flush()
+        other_place = Place(
+            professional_id=professional.id,
+            name="Outro Clube",
+            normalized_name="outro-clube",
+        )
+        db.add(other_place)
+        db.flush()
         contact.home_place_id = place.id
         db.commit()
+        _add_covering_stay(db, professional, place, candidate)
+        _add_covering_stay(db, professional, other_place, candidate)
 
         resolution = resolve_candidate(db, candidate)
 
@@ -83,6 +113,7 @@ def test_resolve_candidate_create_uses_contact_home_place() -> None:
         assert resolution.operation == "create"
         assert resolution.arguments["contact_id"] == str(contact.id)
         assert resolution.arguments["place_id"] == str(place.id)
+        assert resolution.place_source == "home_place_tiebreak"
     finally:
         _cleanup(db, professional)
 
@@ -95,6 +126,45 @@ def test_resolve_candidate_create_reports_missing_place() -> None:
         assert not resolution.is_resolved
         assert resolution.operation == "create"
         assert resolution.missing_fields == ["place_id"]
+    finally:
+        _cleanup(db, professional)
+
+
+def test_resolve_candidate_does_not_treat_home_place_as_covering_stay() -> None:
+    db, professional, contact, candidate = _setup_candidate()
+    try:
+        place = Place(professional_id=professional.id, name="Clube", normalized_name="clube")
+        db.add(place)
+        db.flush()
+        contact.home_place_id = place.id
+        db.commit()
+
+        resolution = resolve_candidate(db, candidate)
+
+        assert not resolution.is_resolved
+        assert resolution.missing_fields == ["place_id"]
+        assert resolution.place_resolution is not None
+        assert resolution.place_resolution.outcome == "uncovered"
+    finally:
+        _cleanup(db, professional)
+
+
+def test_resolve_candidate_accepts_reviewed_place_exception() -> None:
+    db, professional, _, candidate = _setup_candidate()
+    try:
+        place = Place(professional_id=professional.id, name="Clube", normalized_name="clube")
+        db.add(place)
+        db.commit()
+
+        resolution = resolve_candidate(
+            db, candidate, CandidateOverrides(place_id=place.id)
+        )
+
+        assert resolution.is_resolved
+        assert resolution.arguments["place_id"] == str(place.id)
+        assert resolution.place_source == "review_override"
+        assert resolution.place_resolution is not None
+        assert resolution.place_resolution.is_explicit_exception is True
     finally:
         _cleanup(db, professional)
 
@@ -115,6 +185,7 @@ def test_authoritative_resolved_create_is_auto_executed() -> None:
             )
         )
         db.commit()
+        _add_covering_stay(db, professional, place, candidate)
 
         assert _auto_execute_authoritative_create(db, candidate)
         db.commit()
@@ -151,6 +222,7 @@ def test_resolve_candidate_reschedule_maps_existing_appointment() -> None:
         db.flush()
         candidate.existing_appointment_id = appointment.id
         db.commit()
+        _add_covering_stay(db, professional, place, candidate)
 
         resolution = resolve_candidate(db, candidate)
 

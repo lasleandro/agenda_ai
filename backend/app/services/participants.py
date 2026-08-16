@@ -37,21 +37,25 @@ def add_participant(
     if existing is not None:
         raise HTTPException(status_code=409, detail="Contact already assigned to this slot")
 
+    if slot.slot_kind != "class":
+        raise HTTPException(
+            status_code=409,
+            detail="Participants can only be assigned to a recurring class",
+        )
+
     if count_participants(db, slot.id) >= slot.max_participants:
         raise HTTPException(status_code=409, detail="This slot is at full capacity")
 
-    if slot.slot_kind == "availability":
-        assert_no_scheduled_class_overlap(
-            db,
-            professional_id,
-            slot.day_of_week,
-            slot.start_time,
-            slot.end_time,
-            slot.recurrence_type,
-            slot.scheduled_date,
-            exclude_slot_id=slot.id,
-        )
-        slot.slot_kind = "class"
+    assert_no_scheduled_class_overlap(
+        db,
+        professional_id,
+        slot.day_of_week,
+        slot.start_time,
+        slot.end_time,
+        slot.recurrence_type,
+        slot.scheduled_date,
+        exclude_slot_id=slot.id,
+    )
 
     participant = RecurringSlotParticipant(recurring_slot_id=slot.id, contact_id=contact.id)
     db.add(participant)

@@ -14,6 +14,31 @@ GroupLevel = Literal["beginner", "intermediate", "advanced"]
 SlotKind = Literal["availability", "class"]
 
 
+def validate_recurring_slot_definition(
+    slot_kind: str,
+    class_type: str,
+    max_participants: int,
+    group_name: str | None,
+    level: str | None,
+) -> None:
+    """Validate the fields whose meaning depends on a recurring slot's kind."""
+    if class_type not in {"individual", "group"}:
+        raise ValueError("Class type must be individual or group")
+    if not 1 <= max_participants <= 4:
+        raise ValueError("Participant capacity must be between 1 and 4")
+    if slot_kind == "availability":
+        if (
+            class_type != "individual"
+            or max_participants != 1
+            or group_name is not None
+            or level is not None
+        ):
+            raise ValueError("Availability must not include class fields")
+        return
+    if class_type == "individual" and max_participants != 1:
+        raise ValueError("An individual class has capacity for one participant")
+
+
 # ---------------------------------------------------------------------------
 # Place ("Local")
 # ---------------------------------------------------------------------------
@@ -87,6 +112,13 @@ class RecurringSlotCreate(BaseModel):
     def validate_time_range(self) -> "RecurringSlotCreate":
         if self.end_time <= self.start_time:
             raise ValueError("End time must be after start time")
+        validate_recurring_slot_definition(
+            self.slot_kind,
+            self.class_type,
+            self.max_participants,
+            self.group_name,
+            self.level,
+        )
         return self
 
 
@@ -119,6 +151,13 @@ class RecurringSlotBulkCreate(BaseModel):
     def validate_time_range(self) -> "RecurringSlotBulkCreate":
         if self.end_time <= self.start_time:
             raise ValueError("End time must be after start time")
+        validate_recurring_slot_definition(
+            self.slot_kind,
+            self.class_type,
+            self.max_participants,
+            self.group_name,
+            self.level,
+        )
         return self
 
 
@@ -204,8 +243,8 @@ class RecurringGroupCreate(BaseModel):
     @field_validator("max_participants")
     @classmethod
     def validate_max_participants(cls, capacity: int) -> int:
-        if capacity < 2 or capacity > 4:
-            raise ValueError("Group capacity must be between 2 and 4")
+        if capacity < 1 or capacity > 4:
+            raise ValueError("Group capacity must be between 1 and 4")
         return capacity
 
     @field_validator("contact_ids")

@@ -60,7 +60,11 @@ export default function ClientesPage() {
     ]).then(([contactRes, placeRes, slotRes, waitlistRes]) => {
       setContacts(contactRes.contacts);
       setPlaces(placeRes.places);
-      setGroups(slotRes.slots.filter((slot) => slot.class_type === "group"));
+      setGroups(
+        slotRes.slots.filter(
+          (slot) => slot.slot_kind === "class" && slot.class_type === "group"
+        )
+      );
       setWaitlistEntries(
         waitlistRes.entries.filter((entry) => entry.status === "open" || entry.status === "matched")
       );

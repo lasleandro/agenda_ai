@@ -1,11 +1,9 @@
 """
-RecurringSlotParticipant model — links a Contact to a RecurringSlot (the
-"grupo"/"aluno" part of the quadra -> horário -> grupo -> aluno hierarchy,
-customer ontology roadmap Phase 4). A group slot has capacity for 2-4
-participants and may start with one participant while enrollment is pending; an
-individual slot has exactly 1 — capacity is enforced in the API layer
-against RecurringSlot.max_participants, not by a DB constraint (the check
-is dynamic, not a fixed number).
+RecurringSlotParticipant model — links a Contact only to a recurring class.
+A group class has capacity for 1–4 participants and may start with one person
+while enrollment is pending; an individual class has exactly one. Capacity and
+the class-only boundary are enforced by the service layer because they span
+this table and RecurringSlot.
 """
 
 import uuid

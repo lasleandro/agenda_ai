@@ -1,13 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Clock, MapPin, Plus, Users } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Clock, MapPin, Users } from "lucide-react";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -19,7 +17,6 @@ import {
 } from "@/lib/api";
 import { DAY_LABELS, formatTime } from "@/lib/ontology-utils";
 import type { ContactDetailData, Place, RecurringSlot } from "@/lib/types";
-import { RecurringSlotFormDialog } from "./recurring-slot-form-dialog";
 
 interface AssignSlotDialogProps {
   contact: ContactDetailData;
@@ -41,7 +38,6 @@ export function AssignSlotDialog({
   const [selectedPlaceId, setSelectedPlaceId] = useState(contact.home_place_id ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showCreateForm, setShowCreateForm] = useState(false);
   const [assigningId, setAssigningId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
@@ -58,7 +54,7 @@ export function AssignSlotDialog({
         setSelectedPlaceId(contact.home_place_id);
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Falha ao carregar horários");
+          setError(caught instanceof Error ? caught.message : "Falha ao carregar aulas");
     } finally {
       setLoading(false);
     }
@@ -70,6 +66,7 @@ export function AssignSlotDialog({
 
   // Filter: exclude assigned, full, and filter by selected place
   const filteredSlots = allSlots.filter((s) => {
+    if (s.slot_kind !== "class") return false;
     if (assignedSlotIds.has(s.id)) return false;
     if (s.participant_count >= s.max_participants) return false;
     if (selectedPlaceId && s.place_id !== selectedPlaceId) return false;
@@ -100,13 +97,6 @@ export function AssignSlotDialog({
     }
   }
 
-  function handleSlotCreated(newSlot: RecurringSlot) {
-    setAllSlots((prev) => [...prev, newSlot]);
-    setShowCreateForm(false);
-    // Auto-assign the newly created slot
-    handleAssign(newSlot);
-  }
-
   const homePlace = places.find((p) => p.id === contact.home_place_id);
 
   return (
@@ -114,9 +104,9 @@ export function AssignSlotDialog({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Atribuir horário fixo</DialogTitle>
+            <DialogTitle>Adicionar a aula recorrente</DialogTitle>
             <DialogDescription>
-              Selecione um horário disponível para{" "}
+              Selecione uma aula recorrente com vaga para{" "}
               <span className="font-medium text-foreground">{contact.display_name}</span>
               {homePlace ? (
                 <> em <span className="font-medium text-foreground">{homePlace.name}</span></>
@@ -159,7 +149,7 @@ export function AssignSlotDialog({
             {!loading && filteredSlots.length === 0 && (
               <div className="text-center py-8 space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  Nenhum horário disponível{selectedPlaceId ? " neste local" : ""}.
+                  Nenhuma aula recorrente com vaga{selectedPlaceId ? " neste local" : ""}.
                 </p>
               </div>
             )}
@@ -205,29 +195,8 @@ export function AssignSlotDialog({
               })}
           </div>
 
-          <DialogFooter className="flex-row-reverse sm:flex-row-reverse gap-2 pt-2 border-t border-border">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowCreateForm(true)}
-            >
-              <Plus className="h-4 w-4" />
-              Novo horário
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {showCreateForm && (
-        <RecurringSlotFormDialog
-          open
-          onOpenChange={setShowCreateForm}
-          places={places}
-          fixedPlaceId={selectedPlaceId || contact.home_place_id || undefined}
-          onPlaceCreated={(place) => setPlaces((prev) => [...prev, place])}
-          onSaved={handleSlotCreated}
-        />
-      )}
     </>
   );
 }

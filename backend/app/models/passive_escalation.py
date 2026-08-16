@@ -13,7 +13,10 @@ from app.database import Base
 class PassiveEscalation(Base):
     __tablename__ = "passive_escalations"
     __table_args__ = (
-        CheckConstraint("status IN ('queued', 'sent', 'failed', 'expired')", name="ck_passive_escalations_status"),
+        CheckConstraint(
+            "status IN ('queued', 'needs_place_review', 'sent', 'failed', 'expired')",
+            name="ck_passive_escalations_status",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

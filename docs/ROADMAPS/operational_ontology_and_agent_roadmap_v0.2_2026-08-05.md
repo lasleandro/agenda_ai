@@ -1,7 +1,8 @@
 # Operational Ontology & AI Agent Roadmap v0.2 — 2026-08-05
 
-**Status: Phase 0 (semantic hardening) and Phase 1 (occurrence projection
-and exceptions) implemented 2026-08-06. Phase 2 not started.**
+**Status: historical roadmap. Its place-stay semantics are superseded by
+`place_stays_and_schedule_overlay_roadmap_v0.1_2026-08-15.md`; availability
+never promotes into a class in the shipped model.**
 
 ## Phase 1 implementation notes (2026-08-06)
 

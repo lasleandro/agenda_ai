@@ -514,6 +514,16 @@ def test_recommend_makeup_slots_bonuses_level_matching_candidates() -> None:
             )
         )
 
+        stay = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=target_weekday,
+            start_time=time(8, 0),
+            end_time=time(18, 0),
+            slot_kind="availability",
+            recurrence_type="weekly",
+        )
+
         ana = _make_contact(db, professional.id, "Ana")
         # Ana's own group determines her preferred_level="advanced" and
         # her usual 60-minute duration.
@@ -530,8 +540,8 @@ def test_recommend_makeup_slots_bonuses_level_matching_candidates() -> None:
             recurrence_type="weekly",
             created_at=datetime.combine(today - timedelta(days=60), time(8), tzinfo=TIMEZONE),
         )
-        # An advanced-level slot later the same day — capacity + a
-        # level match for Ana.
+        # An advanced-level class later the same day supplies a level match
+        # for Ana; the neutral stay above supplies capacity.
         advanced_slot = RecurringSlot(
             professional_id=professional.id,
             place_id=place.id,
@@ -545,7 +555,7 @@ def test_recommend_makeup_slots_bonuses_level_matching_candidates() -> None:
             recurrence_type="weekly",
             created_at=datetime.combine(today - timedelta(days=60), time(8), tzinfo=TIMEZONE),
         )
-        # A beginner-level slot — capacity but no level match for Ana.
+        # A beginner-level class — no level match for Ana.
         beginner_slot = RecurringSlot(
             professional_id=professional.id,
             place_id=place.id,
@@ -559,7 +569,7 @@ def test_recommend_makeup_slots_bonuses_level_matching_candidates() -> None:
             recurrence_type="weekly",
             created_at=datetime.combine(today - timedelta(days=60), time(8), tzinfo=TIMEZONE),
         )
-        db.add_all([ana_group, advanced_slot, beginner_slot])
+        db.add_all([stay, ana_group, advanced_slot, beginner_slot])
         db.commit()
         db.add(RecurringSlotParticipant(recurring_slot_id=ana_group.id, contact_id=ana.id))
         db.commit()

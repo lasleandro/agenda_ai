@@ -114,6 +114,12 @@ def dismiss_candidate(
             status_code=409, detail=f"Candidate is not pending (status={candidate.status})"
         )
     candidate.status = "dismissed"
+    if candidate.escalation is not None and candidate.escalation.status in {
+        "queued",
+        "needs_place_review",
+    }:
+        candidate.escalation.status = "expired"
+        candidate.escalation.last_error = None
     db.commit()
     return candidate_with_evidence(db, candidate)
 

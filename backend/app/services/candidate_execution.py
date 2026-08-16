@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Appointment, AppointmentCandidate
 from app.services import appointments
-from app.services.candidate_resolution import CreateCandidateOverrides, resolve_candidate
+from app.services.candidate_resolution import CandidateOverrides, resolve_candidate
 from app.services.operational_events import record_event
 from app.services.scheduling import TIMEZONE
 
@@ -43,7 +43,7 @@ def confirm_create_candidate(
     resolution = resolve_candidate(
         db,
         candidate,
-        CreateCandidateOverrides(
+        CandidateOverrides(
             place_id=input.place_id,
             start_at=input.start_at,
             end_at=input.end_at,
@@ -72,6 +72,12 @@ def confirm_create_candidate(
     )
     candidate.status = "fulfilled"
     candidate.resulting_appointment_id = appointment.id
+    if candidate.escalation is not None and candidate.escalation.status in {
+        "queued",
+        "needs_place_review",
+    }:
+        candidate.escalation.status = "expired"
+        candidate.escalation.last_error = None
     record_event(
         db,
         professional_id=candidate.professional_id,
@@ -87,6 +93,16 @@ def confirm_create_candidate(
             "origin": "passive_observer",
             "appointment_candidate_id": str(candidate.id),
             "automatic": automatic,
+            "place_resolution": resolution.place_resolution.outcome
+            if resolution.place_resolution
+            else None,
+            "place_source": resolution.place_source,
+            "place_stay_id": str(resolution.place_resolution.stay_id)
+            if resolution.place_resolution and resolution.place_resolution.stay_id
+            else None,
+            "place_is_exception": resolution.place_resolution.is_explicit_exception
+            if resolution.place_resolution
+            else False,
         },
         before_state=None,
         after_state={"status": appointment.status},

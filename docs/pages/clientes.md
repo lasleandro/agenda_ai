@@ -32,7 +32,7 @@ a detail page for editing individual contact profiles.
 
 - **Clientes tab:** Search/filter list, multi-select for group creation, Fila de Espera filter chip
 - **Grupos tab:** All group-type recurring slots, with participant management
-- **Detectados tab:** `AppointmentCandidate` rows (status `detected`) from the passive observer — dismiss, or for `waitlist_request` candidates, complete/confirm into a real waitlist entry
+- **Detectados tab:** `AppointmentCandidate` rows (status `detected`) from the passive observer — dismiss, create a reviewed appointment, or for `waitlist_request` candidates, complete/confirm into a real waitlist entry. The card explains whether the location came from a place stay, a valid home-place tie-break, or needs explicit review.
 
 ### Data Sources
 
@@ -55,7 +55,7 @@ a detail page for editing individual contact profiles.
 | Call contact | Per-row `Phone` button |
 | Filter to waitlisted contacts | "Fila de espera" chip next to search |
 | Add/remove from waitlist | Per-row `Clock` button — toggles based on current state, opens `AddToWaitlistDialog` |
-| Review a detected event | Detectados tab → dismiss, or (waitlist_request only) "Adicionar à fila de espera" |
+| Review a detected event | Detectados tab → dismiss; confirm a create after reviewing time/service/place; or add a `waitlist_request` to the waitlist |
 
 ### Visual Design
 

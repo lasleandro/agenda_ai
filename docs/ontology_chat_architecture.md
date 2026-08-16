@@ -44,16 +44,15 @@ Debounce timer fires (30s after last message):
     returns validated events with concrete timestamps
   → chat/pipeline.py: persists AppointmentCandidate + AppointmentEvidence
 
-AppointmentCandidate is created (status=pending):
+AppointmentCandidate is created (status=detected):
   → candidate_worker.py: process_due_conversations() polls
     pending_processing (FOR UPDATE SKIP LOCKED) and calls
     chat/pipeline.py: process_conversation() for each due conversation
-  → The candidate sits as `pending` for the instructor to review in the
-    dashboard — nothing here calls the active agent's orchestrator or
-    creates an OperatorActionCandidate automatically. AppointmentCandidate
-    (passive extraction) and OperatorActionCandidate (active-agent
-    proposals, §3.2) are two separate systems with no code path between
-    them today; see docs/ai_agent_modes.md.
+  → The shared place-stay resolver permits automatic creation only for an
+    authoritative create with one covering stay. An unclear, fully resolved
+    candidate can create a private OperatorActionCandidate confirmation.
+    Uncovered or ambiguous candidates remain in Detectados for explicit
+    location review; see docs/ai_agent_modes.md.
 ```
 
 ### 2.2 Key Design Decisions
@@ -252,8 +251,8 @@ Customer messages instructor on WhatsApp:
 
 This is the **passive observer** path. The extraction pipeline analyzes the
 conversation between instructor and customer without being addressed. It
-detects scheduling intent and surfaces candidates for the instructor to
-review. No action is taken without explicit confirmation.
+detects scheduling intent and surfaces candidates for review. It can act only
+within the place-resolution guardrails described above.
 
 ---
 
@@ -265,15 +264,13 @@ candidate_worker.py: process_due_conversations() polls pending_processing
      - build_conversation_window() + extract_scheduling_events() + validate_temporal()
      - Persists one AppointmentCandidate per distinct extracted event
        (deduplicated by event_fingerprint), confidence and ambiguities
-       stored as-is — there is no auto-propose branch today; every
-       candidate lands the same way regardless of confidence
-  → Instructor sees the candidate in the dashboard and reviews it manually
+       stored as-is
+  → Resolves place context from covering stays, then either autoexecutes a
+    safe authoritative create, sends a private confirmation, or keeps the
+    candidate in dashboard review
 ```
 
-There's no confidence threshold that skips instructor review yet — see
-"Future: Auto-Propose from Passive Observation" in
-`docs/ai_agent_modes.md` for that as a possible later enhancement, not
-current behavior.
+Confidence alone never bypasses location and confirmation guardrails.
 
 The `Ambiguities` JSONB field captures unclear elements (e.g., "which
 Thursday?" or "which student named Maria?"), which the system surfaces

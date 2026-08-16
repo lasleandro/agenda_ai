@@ -4,6 +4,7 @@
 from pathlib import Path
 import sys
 import uuid
+from datetime import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -161,6 +162,35 @@ def test_delete_place_cascades_recurring_slots_and_clears_contact_home_place() -
         assert db.query(RecurringSlot).filter(RecurringSlot.id == uuid.UUID(slot_id)).first() is None
         db.refresh(contact)
         assert contact.home_place_id is None
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_delete_place_rejects_calendar_class_reference() -> None:
+    db = SessionLocal()
+    professional, user, cookies = _login_new_tenant(db)
+    try:
+        place_res = client.post("/api/places", json={"name": "Clube"}, cookies=cookies)
+        place_id = uuid.UUID(place_res.json()["id"])
+        db.add(
+            RecurringSlot(
+                professional_id=professional.id,
+                place_id=place_id,
+                day_of_week=3,
+                start_time=time(10, 0),
+                end_time=time(11, 0),
+                slot_kind="class",
+                class_type="group",
+                max_participants=4,
+            )
+        )
+        db.commit()
+
+        delete_res = client.delete(f"/api/places/{place_id}", cookies=cookies)
+
+        assert delete_res.status_code == 409
+        assert db.query(Place).filter(Place.id == place_id).first() is not None
     finally:
         _cleanup(db, professionals=[professional], users=[user])
         db.close()
@@ -523,6 +553,103 @@ def test_dashboard_booking_uses_reserved_place_without_being_blocked() -> None:
         db.close()
 
 
+def test_appointment_inherits_the_unique_covering_place_stay() -> None:
+    db = SessionLocal()
+    professional, user, cookies = _login_new_tenant(db)
+    try:
+        place_res = client.post("/api/places", json={"name": "Clube"}, cookies=cookies)
+        place_id = uuid.UUID(place_res.json()["id"])
+        contact = Contact(
+            professional_id=professional.id,
+            phone=_random_phone(),
+            display_name="Aluno",
+            normalized_name="aluno",
+        )
+        stay = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place_id,
+            day_of_week=0,
+            start_time=time(10, 0),
+            end_time=time(12, 0),
+            slot_kind="availability",
+        )
+        db.add_all([contact, stay])
+        db.commit()
+
+        appointment_res = client.post(
+            "/api/appointments",
+            json={
+                "contact_id": str(contact.id),
+                "service": "Aula",
+                "start_at": "2026-08-03T10:00:00-03:00",
+                "end_at": "2026-08-03T11:00:00-03:00",
+            },
+            cookies=cookies,
+        )
+
+        assert appointment_res.status_code == 201
+        assert appointment_res.json()["place_id"] == str(place_id)
+
+        moved_stay = client.patch(
+            f"/api/recurring-slots/{stay.id}",
+            json={"start_time": "12:00:00", "end_time": "14:00:00"},
+            cookies=cookies,
+        )
+        assert moved_stay.status_code == 200
+        persisted = client.get(
+            f"/api/appointments/{appointment_res.json()['id']}", cookies=cookies
+        )
+        assert persisted.status_code == 200
+        assert persisted.json()["place_id"] == str(place_id)
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_appointment_requires_explicit_place_outside_a_stay() -> None:
+    db = SessionLocal()
+    professional, user, cookies = _login_new_tenant(db)
+    try:
+        place_res = client.post("/api/places", json={"name": "Clube"}, cookies=cookies)
+        place_id = uuid.UUID(place_res.json()["id"])
+        contact = Contact(
+            professional_id=professional.id,
+            phone=_random_phone(),
+            display_name="Aluno",
+            normalized_name="aluno",
+        )
+        db.add(contact)
+        db.commit()
+
+        body = {
+            "contact_id": str(contact.id),
+            "service": "Aula",
+            "start_at": "2026-08-03T13:00:00-03:00",
+            "end_at": "2026-08-03T14:00:00-03:00",
+        }
+        unresolved = client.post("/api/appointments", json=body, cookies=cookies)
+        assert unresolved.status_code == 409
+
+        explicit = client.post(
+            "/api/appointments",
+            json={**body, "place_id": str(place_id)},
+            cookies=cookies,
+        )
+        assert explicit.status_code == 201
+        transition = (
+            db.query(AppointmentTransition)
+            .filter(AppointmentTransition.appointment_id == uuid.UUID(explicit.json()["id"]))
+            .one()
+        )
+        assert transition.metadata_["place_resolution"] == {
+            "stay_id": None,
+            "explicit_exception": True,
+        }
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
 def test_recurring_slot_participant_capacity_enforced() -> None:
     db = SessionLocal()
     professional, user, cookies = _login_new_tenant(db)
@@ -538,6 +665,7 @@ def test_recurring_slot_participant_capacity_enforced() -> None:
                 "start_time": "10:00:00",
                 "end_time": "11:00:00",
                 "class_type": "group",
+                "slot_kind": "class",
                 "max_participants": 2,
             },
             cookies=cookies,
@@ -656,9 +784,10 @@ def test_add_participant_rejects_cross_tenant_contact() -> None:
                 "place_id": place_res.json()["id"],
                 "day_of_week": 2,
                 "start_time": "10:00:00",
-                "end_time": "11:00:00",
-                "class_type": "group",
-                "max_participants": 2,
+                    "end_time": "11:00:00",
+                    "class_type": "group",
+                    "slot_kind": "class",
+                    "max_participants": 2,
             },
             cookies=cookies,
         )
@@ -886,7 +1015,7 @@ def test_place_create_and_update_set_normalized_name() -> None:
         db.close()
 
 
-def test_recurring_slot_defaults_to_availability_and_promotes_on_first_participant() -> None:
+def test_recurring_slot_availability_rejects_participant_assignment() -> None:
     db = SessionLocal()
     professional, user, cookies = _login_new_tenant(db)
     try:
@@ -907,6 +1036,19 @@ def test_recurring_slot_defaults_to_availability_and_promotes_on_first_participa
         slot_id = slot_res.json()["id"]
         assert slot_res.json()["slot_kind"] == "availability"
 
+        class_list_res = client.get(
+            "/api/recurring-slots?slot_kind=class", cookies=cookies
+        )
+        assert class_list_res.status_code == 200
+        assert class_list_res.json()["slots"] == []
+
+        transition_res = client.patch(
+            f"/api/recurring-slots/{slot_id}",
+            json={"slot_kind": "class"},
+            cookies=cookies,
+        )
+        assert transition_res.status_code == 422
+
         contact = Contact(
             professional_id=professional.id,
             phone=_random_phone(),
@@ -921,10 +1063,63 @@ def test_recurring_slot_defaults_to_availability_and_promotes_on_first_participa
             json={"contact_id": str(contact.id)},
             cookies=cookies,
         )
-        assert add_res.status_code == 201
+        assert add_res.status_code == 409
 
         slot = db.query(RecurringSlot).filter(RecurringSlot.id == slot_id).one()
-        assert slot.slot_kind == "class"
+        assert slot.slot_kind == "availability"
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_recurring_slot_availability_rejects_class_fields() -> None:
+    db = SessionLocal()
+    professional, user, cookies = _login_new_tenant(db)
+    try:
+        place_res = client.post("/api/places", json={"name": "Clube"}, cookies=cookies)
+        place_id = place_res.json()["id"]
+
+        slot_res = client.post(
+            "/api/recurring-slots",
+            json={
+                "place_id": place_id,
+                "day_of_week": 3,
+                "start_time": "10:00:00",
+                "end_time": "11:00:00",
+                "slot_kind": "availability",
+                "class_type": "group",
+                "max_participants": 4,
+            },
+            cookies=cookies,
+        )
+
+        assert slot_res.status_code == 422
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_recurring_slot_database_constraint_keeps_availability_neutral() -> None:
+    db = SessionLocal()
+    professional, user, cookies = _login_new_tenant(db)
+    try:
+        place_res = client.post("/api/places", json={"name": "Clube"}, cookies=cookies)
+        place_id = uuid.UUID(place_res.json()["id"])
+        invalid_slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place_id,
+            day_of_week=3,
+            start_time=time(10, 0),
+            end_time=time(11, 0),
+            slot_kind="availability",
+            class_type="group",
+            max_participants=4,
+        )
+        db.add(invalid_slot)
+
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
     finally:
         _cleanup(db, professionals=[professional], users=[user])
         db.close()

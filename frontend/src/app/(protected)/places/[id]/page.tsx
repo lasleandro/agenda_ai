@@ -8,7 +8,6 @@ import {
   Pencil,
   Plus,
   Trash2,
-  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,12 +27,7 @@ import {
   fetchRecurringSlots,
 } from "@/lib/api";
 import { fetchSession, sessionHasFeature } from "@/lib/auth";
-import {
-  CLASS_TYPE_LABELS,
-  CONTACT_LEVEL_LABELS,
-  DAY_LABELS,
-  formatTime,
-} from "@/lib/ontology-utils";
+import { DAY_LABELS, formatTime } from "@/lib/ontology-utils";
 import type {
   Place,
   PlaceRateMatrixDetail,
@@ -61,10 +55,11 @@ export default function PlaceDetailPage() {
   const [placeRates, setPlaceRates] =
     useState<PlaceRateMatrixDetail | null>(null);
   const [financialError, setFinancialError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   function reload() {
     fetchPlace(placeId).then(setPlace);
-    fetchRecurringSlots(placeId).then((res) => setSlots(res.slots));
+    fetchRecurringSlots(placeId, "availability").then((res) => setSlots(res.slots));
   }
 
   useEffect(() => {
@@ -97,9 +92,16 @@ export default function PlaceDetailPage() {
   }, [placeId]);
 
   async function handleDeletePlace() {
-    if (!confirm("Remover este local? Os horários fixos associados também serão removidos.")) return;
-    await deletePlace(placeId);
-    router.push("/places");
+    if (!confirm("Remover este local? As permanências associadas também serão removidas.")) return;
+    setDeleteError(null);
+    try {
+      await deletePlace(placeId);
+      router.push("/places");
+    } catch (caught) {
+      setDeleteError(
+        caught instanceof Error ? caught.message : "Falha ao remover o local"
+      );
+    }
   }
 
   return (
@@ -135,6 +137,8 @@ export default function PlaceDetailPage() {
         </div>
       )}
 
+      {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
+
       {financialEnabled && (
         <Card className="mt-2">
           <CardHeader>
@@ -168,7 +172,7 @@ export default function PlaceDetailPage() {
       )}
 
       <div className="flex items-center justify-between mt-2">
-        <h2 className="text-sm font-semibold text-foreground">Horários fixos</h2>
+        <h2 className="text-sm font-semibold text-foreground">Permanência neste local</h2>
         <Button
           size="sm"
           onClick={() => {
@@ -177,12 +181,12 @@ export default function PlaceDetailPage() {
           }}
         >
           <Plus className="h-3.5 w-3.5" />
-          Novo horário
+          Nova permanência
         </Button>
       </div>
 
       {slots !== null && slots.length === 0 && (
-        <p className="text-sm text-muted-foreground">Nenhum horário fixo cadastrado neste local.</p>
+        <p className="text-sm text-muted-foreground">Nenhuma permanência cadastrada neste local.</p>
       )}
 
       <div className="space-y-2">
@@ -201,22 +205,6 @@ export default function PlaceDetailPage() {
                 {formatTime(slot.start_time)}–{formatTime(slot.end_time)}
               </span>
               {slot.label && <span className="text-muted-foreground">· {slot.label}</span>}
-            </div>
-            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-              <span className="rounded-full bg-muted px-2 py-0.5">
-                {CLASS_TYPE_LABELS[slot.class_type]}
-              </span>
-              {slot.level && (
-                <span className="rounded-full bg-muted px-2 py-0.5">
-                  {CONTACT_LEVEL_LABELS[slot.level] ?? slot.level}
-                </span>
-              )}
-              {slot.class_type === "group" && (
-                <span className="flex items-center gap-1">
-                  <Users className="h-3.5 w-3.5" />
-                  {slot.participant_count}/{slot.max_participants}
-                </span>
-              )}
             </div>
           </button>
         ))}

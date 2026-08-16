@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import require_professional_id
 from app.database import SessionLocal
 from app.models import AppointmentCandidate, AppointmentEvidence, Contact, Conversation, Message
+from app.services.candidate_resolution import resolve_candidate
 from app.schemas.api import (
     CandidateDetail,
     CandidateEvidenceItem,
@@ -128,6 +129,8 @@ def candidate_with_evidence(db: Session, candidate: AppointmentCandidate) -> Can
         if candidate.contact_id
         else None
     )
+    resolution = resolve_candidate(db, candidate)
+    place = resolution.place_resolution
     return CandidateDetail(
         id=candidate.id,
         action=candidate.action,
@@ -137,6 +140,12 @@ def candidate_with_evidence(db: Session, candidate: AppointmentCandidate) -> Can
         resulting_appointment_id=candidate.resulting_appointment_id,
         operator_action_candidate_id=candidate.operator_action_candidate_id,
         suggested_place_id=contact.home_place_id if contact else None,
+        resolved_place_id=place.place_id if place else None,
+        matching_place_ids=list(place.matching_place_ids) if place else [],
+        place_stay_id=place.stay_id if place else None,
+        place_resolution=place.outcome if place else None,
+        place_source=resolution.place_source,
+        place_is_exception=place.is_explicit_exception if place else False,
         contact_id=candidate.contact_id,
         contact_name=contact.display_name if contact else None,
         proposed_start_at=candidate.proposed_start_at,

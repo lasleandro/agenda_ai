@@ -148,6 +148,12 @@ export interface CandidateDetail {
   resulting_appointment_id: string | null;
   operator_action_candidate_id: string | null;
   suggested_place_id: string | null;
+  resolved_place_id: string | null;
+  matching_place_ids: string[];
+  place_stay_id: string | null;
+  place_resolution: "resolved" | "ambiguous" | "uncovered" | "invalid_place" | null;
+  place_source: "unique_stay" | "home_place_tiebreak" | "review_override" | null;
+  place_is_exception: boolean;
   contact_id: string | null;
   contact_name: string | null;
   proposed_start_at: string | null;
@@ -156,7 +162,7 @@ export interface CandidateDetail {
   confidence: number | null;
   status: "detected" | "dismissed" | "fulfilled";
   escalation_status: "proposed" | "confirmed" | "rejected" | "expired" | "executed" | "failed" | null;
-  escalation_delivery_status: "queued" | "sent" | "failed" | "expired" | null;
+  escalation_delivery_status: "queued" | "needs_place_review" | "sent" | "failed" | "expired" | null;
   ambiguities: { field: string; description: string }[];
   created_at: string;
   evidence: CandidateEvidenceItem[];
@@ -670,6 +676,8 @@ export interface PlaceInput {
 // day_of_week: 0=Monday .. 6=Sunday (Python date.weekday() convention).
 export const CLASS_TYPES = ["individual", "group"] as const;
 export type ClassType = (typeof CLASS_TYPES)[number];
+export const SLOT_KINDS = ["availability", "class"] as const;
+export type SlotKind = (typeof SLOT_KINDS)[number];
 
 /** Mirror of the FastAPI RecurringSlotDetail schema ("Horário Fixo"). */
 export interface RecurringSlot {
@@ -680,11 +688,15 @@ export interface RecurringSlot {
   start_time: string; // "HH:MM:SS"
   end_time: string;
   label: string | null;
+  group_name: string | null;
   class_type: ClassType;
+  slot_kind: SlotKind;
   level: string | null;
   max_participants: number;
   recurrence_type: "weekly" | "once";
   scheduled_date: string | null;
+  valid_from: string | null;
+  valid_until: string | null;
   status: string;
   participant_count: number;
 }
@@ -699,11 +711,15 @@ export interface RecurringSlotInput {
   start_time: string;
   end_time: string;
   label?: string | null;
+  group_name?: string | null;
   class_type?: ClassType;
+  slot_kind?: SlotKind;
   level?: string | null;
   max_participants?: number;
   recurrence_type?: "weekly" | "once";
   scheduled_date?: string | null;
+  valid_from?: string | null;
+  valid_until?: string | null;
 }
 
 export interface RecurringSlotBulkInput extends Omit<RecurringSlotInput, "day_of_week"> {

@@ -41,7 +41,7 @@ export function RecurringGroupDialog({
   onPlaceCreated: (place: Place) => void;
   onCreated: (slot: RecurringSlot) => void;
 }) {
-  const [placeId, setPlaceId] = useState(places[0]?.id ?? "");
+  const [placeId, setPlaceId] = useState("");
   const [dayOfWeek, setDayOfWeek] = useState(0);
   const [startTime, setStartTime] = useState("08:00");
   const [endTime, setEndTime] = useState("09:00");
@@ -51,7 +51,7 @@ export function RecurringGroupDialog({
   const [scheduledDate, setScheduledDate] = useState(
     new Date().toISOString().slice(0, 10)
   );
-  const [maxParticipants, setMaxParticipants] = useState(Math.max(2, contacts.length));
+  const [maxParticipants, setMaxParticipants] = useState(4);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -212,7 +212,7 @@ export function RecurringGroupDialog({
               <Input
                 id="group-capacity"
                 type="number"
-                min={Math.max(2, contacts.length)}
+                min={Math.max(1, contacts.length)}
                 max={4}
                 value={maxParticipants}
                 onChange={(event) => setMaxParticipants(Number(event.target.value))}

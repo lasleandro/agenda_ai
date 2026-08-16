@@ -58,6 +58,7 @@ def _contact_duration_places_and_level(
         .filter(
             RecurringSlotParticipant.contact_id == contact_id,
             RecurringSlot.professional_id == professional_id,
+            RecurringSlot.slot_kind == "class",
         )
         .all()
     )
@@ -114,6 +115,7 @@ def _load_levels_by_place_weekday(
             RecurringSlot.professional_id == professional_id,
             RecurringSlot.place_id.in_(place_ids),
             RecurringSlot.status == "active",
+            RecurringSlot.slot_kind == "class",
             RecurringSlot.level.isnot(None),
         )
         .all()
@@ -291,48 +293,49 @@ def recommend_makeup_slots(
                 sorted(place_booked),
             )
 
-            for start_min, end_min in free_ranges:
-                if end_min - start_min < duration:
-                    continue
+            for range_start, range_end in free_ranges:
+                first_start = ((range_start + 59) // 60) * 60
+                for start_min in range(first_start, range_end - duration + 1, 60):
+                    end_min = start_min + duration
 
-                # Cost score: resolve hourly rate
-                rate = pricing.resolve(
-                    place.id,
-                    segment.time_category,
-                    participant_count=1,
-                )
+                    # Cost score: resolve hourly rate
+                    rate = pricing.resolve(
+                        place.id,
+                        segment.time_category,
+                        participant_count=1,
+                    )
 
-                # Flow score: look up (weekday, hour_bucket)
-                weekday = segment.local_date.weekday()
-                start_hour = start_min // 60
-                flow_key = (weekday, start_hour)
-                flow_ratio = flow_ratios.get(flow_key)
+                    # Flow score: look up (weekday, hour_bucket)
+                    weekday = segment.local_date.weekday()
+                    start_hour = start_min // 60
+                    flow_key = (weekday, start_hour)
+                    flow_ratio = flow_ratios.get(flow_key)
 
-                level_match = _level_matches(
-                    levels_by_place_weekday,
-                    place.id,
-                    weekday,
-                    start_min,
-                    end_min,
-                    preferred_level,
-                )
+                    level_match = _level_matches(
+                        levels_by_place_weekday,
+                        place.id,
+                        weekday,
+                        start_min,
+                        end_min,
+                        preferred_level,
+                    )
 
-                candidates.append(
-                    {
-                        "date": segment.local_date.isoformat(),
-                        "place_id": str(place.id),
-                        "place_name": place.name,
-                        "start_time": f"{start_min // 60:02d}:{start_min % 60:02d}",
-                        "end_time": f"{end_min // 60:02d}:{end_min % 60:02d}",
-                        "duration_minutes": end_min - start_min,
-                        "time_category": segment.time_category,
-                        "part_of_day": segment.part_of_day,
-                        "hourly_rate_cents": rate,
-                        "flow_ratio": flow_ratio,
-                        "preferred_place": place.id in preferred_places,
-                        "level_match": level_match,
-                    }
-                )
+                    candidates.append(
+                        {
+                            "date": segment.local_date.isoformat(),
+                            "place_id": str(place.id),
+                            "place_name": place.name,
+                            "start_time": f"{start_min // 60:02d}:{start_min % 60:02d}",
+                            "end_time": f"{end_min // 60:02d}:{end_min % 60:02d}",
+                            "duration_minutes": duration,
+                            "time_category": segment.time_category,
+                            "part_of_day": segment.part_of_day,
+                            "hourly_rate_cents": rate,
+                            "flow_ratio": flow_ratio,
+                            "preferred_place": place.id in preferred_places,
+                            "level_match": level_match,
+                        }
+                    )
 
     if not candidates:
         return []

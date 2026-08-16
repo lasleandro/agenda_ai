@@ -1,6 +1,7 @@
 # Passive Confirmation Detection and Ambiguity Escalation Roadmap v0.1 — 2026-08-10
 
-**Status: Implemented locally. Phases 1-5 are available for local validation; full autonomy remains explicitly out of scope.**
+**Status: historical implementation roadmap. Current passive place-resolution
+and autonomy rules are defined by `place_stays_and_schedule_overlay_roadmap_v0.1_2026-08-15.md` and `docs/ai_agent_modes.md`.**
 
 ## What this is
 
