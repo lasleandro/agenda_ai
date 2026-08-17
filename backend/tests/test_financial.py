@@ -176,6 +176,8 @@ def test_capacity_uses_stays_not_recurring_classes() -> None:
             end_time=time(9),
             slot_kind="availability",
             created_at=datetime(2026, 8, 3, 8, tzinfo=timezone.utc),
+            valid_from=date(2026, 8, 10),
+            valid_until=date(2026, 8, 10),
         )
         recurring_class = RecurringSlot(
             professional_id=professional.id,
@@ -201,8 +203,8 @@ def test_capacity_uses_stays_not_recurring_classes() -> None:
         segments = build_capacity_segments(
             db,
             professional.id,
-            date(2026, 8, 10),
-            date(2026, 8, 10),
+            date(2026, 8, 3),
+            date(2026, 8, 17),
             [place],
             load_prime_ranges(db, professional.id),
         )
@@ -1041,6 +1043,20 @@ def test_financial_dashboard_top_line_uses_work_journey_not_recurring_slots() ->
             cookies=cookies,
         )
         assert rates.status_code == 200
+        generic_rates = client.put(
+            "/api/financial/generic-place/rates",
+            json={
+                "rates": [
+                    {
+                        "time_category": "regular",
+                        "participant_count": 1,
+                        "hourly_rate_cents": 2500,
+                    }
+                ]
+            },
+            cookies=cookies,
+        )
+        assert generic_rates.status_code == 200
 
         # Full-day work journey, Monday only — no RecurringSlot at all.
         journey = client.put(
@@ -1101,18 +1117,32 @@ def test_financial_dashboard_top_line_uses_work_journey_not_recurring_slots() ->
         }
 
         # The by-place breakdown still correctly reports zero — it needs an
-        # explicit RecurringSlot to attribute hours to that place.
+        # explicit active place stay to attribute hours to that place.
         assert all(row["available_minutes"] == 0 for row in body["by_place"])
 
-        # "Potencial com 100% da capacidade" must price the uncovered
-        # work-journey time (240min) against the global rate too, not
-        # just the (empty) RecurringSlot-scoped segments.
+        # "Potencial com 100% da capacidade" must price unattributed
+        # work-journey time through the generic-location matrix before
+        # falling back to the tenant-global rate.
         all_individual = next(
             preset
             for preset in body["capacity_presets"]
             if preset["key"] == "all_individual"
         )
-        assert all_individual["projected_revenue_cents"] == 4000
+        assert all_individual["projected_revenue_cents"] == 10000
+        assert body["capacity_sources"] == [
+            {
+                "key": "defined_places",
+                "label": "Em locais definidos",
+                "available_minutes": 0,
+                "projected_revenue_cents": 0,
+            },
+            {
+                "key": "without_defined_place",
+                "label": "Sem local definido",
+                "available_minutes": 240,
+                "projected_revenue_cents": 10000,
+            },
+        ]
 
         scenario = client.post(
             "/api/financial/scenarios/evaluate",
@@ -1132,14 +1162,35 @@ def test_financial_dashboard_top_line_uses_work_journey_not_recurring_slots() ->
             "utilized_minutes": 240,
             "occupancy_pct": 100,
             "participant_hours": 4,
-            "projected_revenue_cents": 4000,
+            "projected_revenue_cents": 10000,
         }
         assert {event["place_name"] for event in scenario.json()["simulated_schedule"]} == {
             "Sem local definido"
         }
 
+        clear_generic_rates = client.put(
+            "/api/financial/generic-place/rates",
+            json={"rates": []},
+            cookies=cookies,
+        )
+        assert clear_generic_rates.status_code == 200
+        global_fallback = client.get(
+            "/api/financial/dashboard",
+            params={"date_from": "2026-08-10", "date_to": "2026-08-10"},
+            cookies=cookies,
+        )
+        assert global_fallback.status_code == 200
+        fallback_body = global_fallback.json()
+        fallback_individual = next(
+            preset
+            for preset in fallback_body["capacity_presets"]
+            if preset["key"] == "all_individual"
+        )
+        assert fallback_individual["projected_revenue_cents"] == 4000
+        assert fallback_body["capacity_sources"][1]["projected_revenue_cents"] == 4000
+
         # With a place filter applied, top-line figures must fall back to
-        # the place-scoped (RecurringSlot-based) accounting — otherwise
+        # the place-scoped (stay-based) accounting — otherwise
         # a place-filtered booked_minutes would be compared against a
         # tenant-wide available_minutes.
         filtered = client.get(
@@ -1156,6 +1207,20 @@ def test_financial_dashboard_top_line_uses_work_journey_not_recurring_slots() ->
         assert filtered_body["available_minutes"] == 0
         assert filtered_body["booked_minutes"] == 0
         assert filtered_body["occupancy_pct"] == 0
+        assert filtered_body["capacity_sources"] == [
+            {
+                "key": "defined_places",
+                "label": "Em locais definidos",
+                "available_minutes": 0,
+                "projected_revenue_cents": 0,
+            },
+            {
+                "key": "without_defined_place",
+                "label": "Sem local definido",
+                "available_minutes": 0,
+                "projected_revenue_cents": 0,
+            },
+        ]
     finally:
         db.query(Appointment).filter(
             Appointment.professional_id == professional.id

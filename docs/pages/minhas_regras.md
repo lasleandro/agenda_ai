@@ -45,7 +45,8 @@ categorization construct, not a scheduling/eligibility gate.
 - For each day of week (0-6), define work and break intervals
 - Work intervals: when the instructor is available for classes
 - Break intervals: mid-day gaps where no classes are scheduled; must be
-  fully contained within a work interval for that day
+  fully contained within a work interval for that day. A day may have multiple
+  pauses, provided they do not overlap.
 - Endpoints: `GET /api/rules/work-journey`, `PUT /api/rules/work-journey`
 
 ### Aviso Prévio para Reposição (Cancellation Notice)
@@ -68,7 +69,8 @@ categorization construct, not a scheduling/eligibility gate.
 
 ## Visual Design
 
-Single column, two stacked cards — no tabs, matching the low section
-count. Each card owns its own save button (optimistic on success, rolls
-back its local state on failure), consistent with Financeiro's
-configuration sections.
+The page uses a compact tab control to separate **Jornada de trabalho** from
+**Reposições**. Each tab retains its own save button. Work-journey days allow
+adding and removing pause rows; client-side validation prevents a pause outside
+the daily journey or overlapping pauses before the backend repeats the same
+enforcement.

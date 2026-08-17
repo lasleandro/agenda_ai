@@ -490,8 +490,7 @@ export function FinancialSimulator({
           <ScenarioResults result={result} />
           <SimulatedAgenda
             events={result.simulated_schedule}
-            dateFrom={dateFrom}
-            dateTo={dateTo}
+            period={{ from: dateFrom, to: dateTo }}
           />
         </>
       ) : (

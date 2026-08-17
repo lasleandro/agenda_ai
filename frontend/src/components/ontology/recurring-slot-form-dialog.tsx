@@ -50,6 +50,8 @@ export function RecurringSlotFormDialog({
   const [dayPreset, setDayPreset] = useState("specific");
   const [startTime, setStartTime] = useState(slot?.start_time?.slice(0, 5) ?? "08:00");
   const [endTime, setEndTime] = useState(slot?.end_time?.slice(0, 5) ?? "09:00");
+  const [validFrom, setValidFrom] = useState(slot?.valid_from ?? "");
+  const [validUntil, setValidUntil] = useState(slot?.valid_until ?? "");
   const [label, setLabel] = useState(slot?.label ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +59,10 @@ export function RecurringSlotFormDialog({
   async function handleSave() {
     if (!placeId) {
       setError("Selecione um local");
+      return;
+    }
+    if (validFrom && validUntil && validUntil < validFrom) {
+      setError("A data final deve ser igual ou posterior à data inicial");
       return;
     }
     setSaving(true);
@@ -72,6 +78,8 @@ export function RecurringSlotFormDialog({
         group_name: null,
         level: null,
         max_participants: 1,
+        valid_from: validFrom || null,
+        valid_until: validUntil || null,
       };
       const selectedPreset = DAY_PRESETS.find((preset) => preset.value === dayPreset);
       const saved = slot
@@ -189,6 +197,32 @@ export function RecurringSlotFormDialog({
               />
             </div>
           </div>
+
+          <fieldset className="space-y-1.5">
+            <legend className="text-sm font-medium">Vigência (opcional)</legend>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="slot-valid-from">De</Label>
+                <Input
+                  id="slot-valid-from"
+                  type="date"
+                  value={validFrom}
+                  max={validUntil || undefined}
+                  onChange={(e) => setValidFrom(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="slot-valid-until">Até</Label>
+                <Input
+                  id="slot-valid-until"
+                  type="date"
+                  value={validUntil}
+                  min={validFrom || undefined}
+                  onChange={(e) => setValidUntil(e.target.value)}
+                />
+              </div>
+            </div>
+          </fieldset>
 
           <div className="space-y-1.5">
             <Label htmlFor="slot-label">Identificação (opcional)</Label>

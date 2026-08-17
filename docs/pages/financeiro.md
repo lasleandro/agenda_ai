@@ -35,6 +35,16 @@ this route redirects to the home page.
 
 ### Visao Geral (Dashboard)
 
+- Current-month summary:
+  - operational class-revenue estimate from agenda dates through today, with a
+    tooltip distinguishing it from accounting recognition;
+  - confirmed participant revenue from the immutable revenue ledger and
+    confirmed event income shown as separate detail rows;
+  - scheduled class revenue for the month;
+  - 100%-occupancy potential using the observed participant mix, split into
+    stay-attributed named-place capacity and generic `Sem local definido`
+    capacity. The **Capacidade total do mês** card includes a tooltip explaining
+    the occupancy, pricing, participant-mix, and place-source assumptions.
 - Date range filter + place filter
 - Key metrics: current revenue, projected revenue, capacity utilization
   (`occupancy_pct`), average rates — see
@@ -74,7 +84,8 @@ this route redirects to the home page.
   format, category, rate per person/hour, and total revenue.
 - The agenda card has a **Simulada / Real** toggle. The real view shows the
   current appointments, recurring classes, and confirmed instructor events for
-  the selected period in read-only form.
+  the selected period in read-only form. Weekly classes are rendered only
+  inside their inclusive effective-date window.
 - The comparison baseline is **Aulas agendadas atuais**. Instructor events
   (workshops, clinics, and refereeing) remain separate revenue and do not alter
   simulated class capacity.
@@ -123,6 +134,7 @@ regardless of `commercial_financials`.
 | Full configuration | `GET /api/financial/configuration` |
 | Generic-place rates | `PUT /api/financial/generic-place/rates` |
 | Dashboard metrics | `GET /api/financial/dashboard?date_from=&date_to=&place_id=` |
+| Confirmed month revenue | `GET /api/financial/revenue/summary?date_from=&date_to=` |
 | Revenue candidates | `GET /api/financial/revenue/candidates?date_from=&date_to=` |
 | Scenarios | `GET /api/financial/scenarios` |
 

@@ -1,8 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Building2, Calendar, CircleDollarSign, Sparkles, Users } from "lucide-react";
+import {
+  Building2,
+  Calendar,
+  CalendarClock,
+  CircleDollarSign,
+  Settings2,
+  Sparkles,
+  Users,
+  X,
+} from "lucide-react";
 import { AuthRequestError, fetchSession, impersonate } from "@/lib/auth";
 import {
   fetchTenants,
@@ -18,6 +28,8 @@ export default function SelectTenantPage() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [pendingFeatureIds, setPendingFeatureIds] = useState<Set<string>>(new Set());
   const [pendingAssistantIds, setPendingAssistantIds] = useState<Set<string>>(new Set());
+  const [settingsTenant, setSettingsTenant] = useState<TenantSummary | null>(null);
+  const [settingsTab, setSettingsTab] = useState<"assistant" | "financial" | "tasks">("assistant");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -70,6 +82,11 @@ export default function SelectTenantPage() {
           : item
       ) ?? null
     );
+    setSettingsTenant((current) =>
+      current?.id === tenant.id
+        ? { ...current, commercial_financials_enabled: enabled }
+        : current
+    );
     setPendingFeatureIds((current) => new Set(current).add(tenant.id));
 
     void updateCommercialFinancials(tenant.id, enabled)
@@ -83,6 +100,14 @@ export default function SelectTenantPage() {
                 }
               : item
           ) ?? null
+        );
+        setSettingsTenant((current) =>
+          current?.id === tenant.id
+            ? {
+                ...current,
+                commercial_financials_enabled: tenant.commercial_financials_enabled,
+              }
+            : current
         );
         setError(`Falha ao atualizar o módulo Financeiro de ${tenant.name}`);
       })
@@ -136,6 +161,15 @@ export default function SelectTenantPage() {
           : item
       ) ?? null
     );
+    setSettingsTenant((current) =>
+      current?.id === tenant.id
+        ? {
+            ...current,
+            assistant_temperature: temperature,
+            assistant_memory_window_messages: memoryWindowMessages,
+          }
+        : current
+    );
     setPendingAssistantIds((current) => new Set(current).add(tenant.id));
 
     void updateAssistantSettings(tenant.id, temperature, memoryWindowMessages)
@@ -150,6 +184,15 @@ export default function SelectTenantPage() {
                 }
               : item
           ) ?? null
+        );
+        setSettingsTenant((current) =>
+          current?.id === tenant.id
+            ? {
+                ...current,
+                assistant_temperature: previous.temperature,
+                assistant_memory_window_messages: previous.memoryWindow,
+              }
+            : current
         );
         setError(`Falha ao atualizar o assistente de ${tenant.name}`);
       })
@@ -177,6 +220,12 @@ export default function SelectTenantPage() {
               Selecione um tenant para acessar sua agenda.
             </p>
           </div>
+          <Link
+            href="/admin/scheduled-tasks"
+            className="ml-auto rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
+          >
+            Tarefas agendadas
+          </Link>
         </div>
 
         {error && (
@@ -249,50 +298,40 @@ export default function SelectTenantPage() {
                 </span>
               </button>
 
-              <div className="flex items-center justify-between border-t border-border bg-muted/30 px-5 py-3">
-                <span className="flex items-center gap-2 text-xs font-medium text-foreground">
-                  <CircleDollarSign className="h-4 w-4 text-muted-foreground" />
-                  Módulo Financeiro
-                </span>
+              <div className="border-t border-border bg-muted/30 p-3">
                 <button
                   type="button"
-                  role="switch"
-                  aria-checked={tenant.commercial_financials_enabled}
-                  aria-label={`${
-                    tenant.commercial_financials_enabled ? "Desativar" : "Ativar"
-                  } módulo Financeiro para ${tenant.name}`}
-                  disabled={pendingFeatureIds.has(tenant.id)}
-                  onClick={() => handleFeatureToggle(tenant)}
-                  className={cn(
-                    "relative h-5 w-9 rounded-full transition-colors disabled:opacity-60",
-                    tenant.commercial_financials_enabled
-                      ? "bg-emerald-500"
-                      : "bg-muted-foreground/30"
-                  )}
+                  onClick={() => {
+                    setSettingsTenant(tenant);
+                    setSettingsTab("assistant");
+                  }}
+                  className="flex w-full items-center justify-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-muted"
                 >
-                  <span
-                    className={cn(
-                      "absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                      tenant.commercial_financials_enabled && "translate-x-4"
-                    )}
-                  />
+                  <Settings2 className="h-4 w-4" />
+                  Configurações
                 </button>
               </div>
-
-              <AssistantSettingsRow
-                tenant={tenant}
-                saving={pendingAssistantIds.has(tenant.id)}
-                onSave={(temperature, memoryWindowMessages) =>
-                  handleAssistantSettingsSave(
-                    tenant,
-                    temperature,
-                    memoryWindowMessages
-                  )
-                }
-              />
             </article>
           ))}
         </div>
+        {settingsTenant && (
+          <TenantSettingsDialog
+            tenant={settingsTenant}
+            tab={settingsTab}
+            onTabChange={setSettingsTab}
+            onClose={() => setSettingsTenant(null)}
+            financialSaving={pendingFeatureIds.has(settingsTenant.id)}
+            assistantSaving={pendingAssistantIds.has(settingsTenant.id)}
+            onFeatureToggle={() => handleFeatureToggle(settingsTenant)}
+            onAssistantSave={(temperature, memoryWindowMessages) =>
+              handleAssistantSettingsSave(
+                settingsTenant,
+                temperature,
+                memoryWindowMessages
+              )
+            }
+          />
+        )}
       </div>
     </div>
   );
@@ -356,4 +395,209 @@ function AssistantSettingsRow({
       </div>
     </div>
   );
+}
+
+function TenantSettingsDialog({
+  tenant,
+  tab,
+  onTabChange,
+  onClose,
+  financialSaving,
+  assistantSaving,
+  onFeatureToggle,
+  onAssistantSave,
+}: {
+  tenant: TenantSummary;
+  tab: "assistant" | "financial" | "tasks";
+  onTabChange: (tab: "assistant" | "financial" | "tasks") => void;
+  onClose: () => void;
+  financialSaving: boolean;
+  assistantSaving: boolean;
+  onFeatureToggle: () => void;
+  onAssistantSave: (temperature: number, memoryWindowMessages: number) => void;
+}) {
+  const task = tenant.scheduled_task;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tenant-settings-title"
+        className="flex h-[38rem] max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl"
+      >
+        <header className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div>
+            <h2 id="tenant-settings-title" className="text-base font-semibold text-foreground">
+              Configurações
+            </h2>
+            <p className="text-sm text-muted-foreground">{tenant.name}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Fechar configurações"
+            className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+
+        <div className="flex gap-1 overflow-x-auto border-b border-border px-3 pt-3">
+          <SettingsTabButton active={tab === "assistant"} onClick={() => onTabChange("assistant")}>
+            <Sparkles className="h-4 w-4" />
+            Assistente IA
+          </SettingsTabButton>
+          <SettingsTabButton active={tab === "financial"} onClick={() => onTabChange("financial")}>
+            <CircleDollarSign className="h-4 w-4" />
+            Módulo financeiro
+          </SettingsTabButton>
+          <SettingsTabButton active={tab === "tasks"} onClick={() => onTabChange("tasks")}>
+            <CalendarClock className="h-4 w-4" />
+            Resumo de tarefas
+          </SettingsTabButton>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          {tab === "assistant" && (
+            <div className="rounded-lg border border-border">
+              <AssistantSettingsRow
+                tenant={tenant}
+                saving={assistantSaving}
+                onSave={onAssistantSave}
+              />
+              <p className="px-5 py-3 text-xs text-muted-foreground">
+                Defina o nível de criatividade e a janela de contexto do assistente deste tenant.
+              </p>
+            </div>
+          )}
+
+          {tab === "financial" && (
+            <div className="rounded-lg border border-border p-4">
+              <div className="flex items-start justify-between gap-5">
+                <div>
+                  <h3 className="text-sm font-medium text-foreground">Módulo financeiro</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Habilita os recursos comerciais e financeiros para este tenant.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={tenant.commercial_financials_enabled}
+                  aria-label="Alternar módulo financeiro"
+                  disabled={financialSaving}
+                  onClick={onFeatureToggle}
+                  className={cn(
+                    "relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-60",
+                    tenant.commercial_financials_enabled ? "bg-indigo-500" : "bg-muted"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
+                      tenant.commercial_financials_enabled ? "translate-x-5" : "translate-x-0.5"
+                    )}
+                  />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {tab === "tasks" && (
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-medium text-foreground">Resumo de tarefas agendadas</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Status da tarefa de resumo diário deste tenant.
+                  </p>
+                </div>
+                <Link
+                  href={`/admin/scheduled-tasks?tab=manage&q=${encodeURIComponent(tenant.name)}`}
+                  className="shrink-0 rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
+                >
+                  Gerenciar tarefas
+                </Link>
+              </div>
+
+              {!task.configured ? (
+                <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+                  Nenhuma tarefa de resumo diário foi configurada para este tenant.
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-lg border border-border">
+                  <dl className="divide-y divide-border text-sm">
+                    <SummaryRow label="Status">
+                      <span className={cn("font-medium", task.enabled ? "text-emerald-600" : "text-muted-foreground")}>
+                        {task.enabled ? "Ativa" : "Desativada"}
+                      </span>
+                    </SummaryRow>
+                    <SummaryRow label="Horário local">{task.local_time?.slice(0, 5) ?? "—"}</SummaryRow>
+                    <SummaryRow label="Próxima execução">{formatTaskDate(task.next_run_at)}</SummaryRow>
+                    <SummaryRow label="Última execução">
+                      {task.latest_run_status
+                        ? `${task.latest_run_status} · ${formatTaskDate(task.latest_run_at)}`
+                        : "Sem execuções"}
+                    </SummaryRow>
+                  </dl>
+                </div>
+              )}
+
+              {task.readiness_issues.length > 0 && (
+                <div className="rounded-lg bg-amber-500/10 px-4 py-3 text-sm text-amber-700">
+                  <p className="font-medium">Pendências para execução</p>
+                  <ul className="mt-1 list-disc pl-5">
+                    {task.readiness_issues.map((issue) => (
+                      <li key={issue}>{issue}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SettingsTabButton({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex shrink-0 items-center gap-2 rounded-t-md px-3 py-2 text-sm font-medium",
+        active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SummaryRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[10rem_1fr] gap-4 px-4 py-3">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="text-foreground">{children}</dd>
+    </div>
+  );
+}
+
+function formatTaskDate(value: string | null): string {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(value));
 }

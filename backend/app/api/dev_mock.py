@@ -3,10 +3,9 @@ Dev-only mock WhatsApp chat (not a roadmap phase — testing aid).
 
 Lets a developer simulate both sides of a WhatsApp conversation (the
 instructor's own app, and a customer) to exercise the real extraction
-pipeline without a live WhatsApp connection. Mock messages are built into
-the exact same event shape YCloud sends and go through the same
-`ingest_event` path as the real webhook — this is a fixture for the real
-pipeline, not a separate mocked implementation of it.
+pipeline without a live WhatsApp connection. Mock messages are canonical
+provider-neutral events and enter the same ingestion path used after every
+provider adapter normalizes a webhook.
 
 Scoped to the caller's own tenant (multi-tenancy roadmap Phase C): the mock
 "instructor" side of the conversation uses the authenticated professional's
@@ -36,7 +35,12 @@ from app.models import (
     Professional,
 )
 from app.schemas.api import CandidateDetail
-from app.chat.ingestion import get_or_create_contact, get_or_create_conversation, ingest_event
+from app.chat.ingestion import (
+    get_or_create_contact,
+    get_or_create_conversation,
+    ingest_normalized_message,
+)
+from app.integrations.whatsapp.contracts import WhatsAppMessageEvent
 from app.chat.pipeline import process_conversation
 
 router = APIRouter(prefix="/api/dev", tags=["dev"])
@@ -68,35 +72,35 @@ class MockMessageRequest(BaseModel):
     text: str
 
 
-def _build_event(instructor_phone: str, sender: Literal["instructor", "customer"], text: str) -> dict:
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+def _build_message(
+    instructor_phone: str, sender: Literal["instructor", "customer"], text: str
+) -> WhatsAppMessageEvent:
+    now = datetime.now(timezone.utc)
     msg_id = f"mock_{uuid.uuid4().hex}"
 
     if sender == "customer":
-        return {
-            "id": f"evt_{msg_id}",
-            "type": "whatsapp.inbound_message.received",
-            "whatsappInboundMessage": {
-                "id": msg_id,
-                "from": MOCK_CUSTOMER_PHONE,
-                "to": instructor_phone,
-                "text": {"body": text},
-                "sendTime": now,
-                "customerProfile": {"name": MOCK_CUSTOMER_NAME},
-            },
-        }
+        return WhatsAppMessageEvent(
+            provider_key="mock",
+            provider_message_id=msg_id,
+            direction="inbound",
+            from_phone=MOCK_CUSTOMER_PHONE,
+            to_phone=instructor_phone,
+            text=text,
+            sent_at=now,
+            raw_payload={"mock": True},
+            contact_name=MOCK_CUSTOMER_NAME,
+        )
 
-    return {
-        "id": f"evt_{msg_id}",
-        "type": "whatsapp.smb.message.echoes",
-        "whatsappMessage": {
-            "id": msg_id,
-            "from": instructor_phone,
-            "to": MOCK_CUSTOMER_PHONE,
-            "text": {"body": text},
-            "sendTime": now,
-        },
-    }
+    return WhatsAppMessageEvent(
+        provider_key="mock",
+        provider_message_id=msg_id,
+        direction="outbound",
+        from_phone=instructor_phone,
+        to_phone=MOCK_CUSTOMER_PHONE,
+        text=text,
+        sent_at=now,
+        raw_payload={"mock": True},
+    )
 
 
 @router.get("/mock-conversation")
@@ -124,8 +128,9 @@ def send_mock_message(
     professional_id: uuid.UUID = Depends(require_professional_id),
 ):
     professional = _get_professional(db, professional_id)
-    event = _build_event(professional.assistant_phone, body.sender, body.text)
-    message = ingest_event(db, event)
+    message = ingest_normalized_message(
+        db, _build_message(professional.assistant_phone, body.sender, body.text)
+    )
     if message is None:
         raise HTTPException(status_code=500, detail="Failed to ingest mock message")
     return {"message_id": message.id, "conversation_id": message.conversation_id}

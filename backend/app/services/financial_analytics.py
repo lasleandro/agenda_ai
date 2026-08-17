@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.schemas.financial import (
     CapacityPresetDetail,
+    CapacitySourceDetail,
     FinancialAnalyticsAssumptions,
     FinancialDashboardDetail,
     FinancialMetricBreakdown,
@@ -94,9 +95,10 @@ def _assumptions(
         ),
         capacity_basis=(
             "Total geral: jornada líquida (jornada menos pausas), independente "
-            "de local. Quebras por local/dia/período/categoria: interseção "
-            "entre jornada líquida e horários reservados por local — exigem "
-            "um horário reservado (RecurringSlot) configurado naquele local."
+            "de local. A capacidade coberta por permanências é atribuída aos "
+            "respectivos locais; o restante aparece como Sem local definido. "
+            "Quebras por local/dia/período/categoria mostram somente a "
+            "interseção entre a jornada e permanências ativas."
         ),
         excluded_constraints=[
             "presença, cancelamentos e faltas",
@@ -320,9 +322,8 @@ def _potential_metric(
                 / Decimal(100)
                 * occupancy
             )
-    # Work-journey time not attributed to any place: no place-specific
-    # override applies, only the global rate (or an explicit override,
-    # which isn't place-scoped either).
+    # Work-journey time not attributed to any place uses the generic-location
+    # matrix, then the tenant-global fallback. Scenario overrides remain first.
     for category, minutes in (uncovered_minutes or {}).items():
         if minutes <= 0:
             continue
@@ -338,7 +339,11 @@ def _potential_metric(
             if overrides is not None:
                 rate = overrides.get((category, item.participant_count))
             if rate is None:
-                rate = pricing.global_rates.get(item.participant_count)
+                rate = pricing.resolve(
+                    None,
+                    category,
+                    item.participant_count,
+                )
             if rate is None:
                 continue
             revenue += (
@@ -404,6 +409,45 @@ def _capacity_presets(
                 uncovered_minutes=context.uncovered_minutes,
             )
         ]
+    ]
+
+
+def _capacity_sources(
+    context: AnalyticsContext,
+    observed_mix: list[ParticipantMixItem],
+) -> list[CapacitySourceDetail]:
+    mixes = {"regular": observed_mix, "prime": observed_mix}
+    total = _potential_metric(
+        context.capacity,
+        context.pricing,
+        mixes,
+        100,
+        uncovered_minutes=context.uncovered_minutes,
+    )
+    defined_places = _potential_metric(
+        context.capacity,
+        context.pricing,
+        mixes,
+        100,
+    )
+    return [
+        CapacitySourceDetail(
+            key="defined_places",
+            label="Em locais definidos",
+            available_minutes=defined_places.available_minutes,
+            projected_revenue_cents=defined_places.projected_revenue_cents,
+        ),
+        CapacitySourceDetail(
+            key="without_defined_place",
+            label="Sem local definido",
+            available_minutes=(
+                total.available_minutes - defined_places.available_minutes
+            ),
+            projected_revenue_cents=(
+                total.projected_revenue_cents
+                - defined_places.projected_revenue_cents
+            ),
+        ),
     ]
 
 
@@ -557,6 +601,7 @@ def build_financial_dashboard(
             for key, bucket in by_category.items()
         ],
         capacity_presets=_capacity_presets(context, observed_mix),
+        capacity_sources=_capacity_sources(context, observed_mix),
     )
 
 

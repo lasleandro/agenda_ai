@@ -1,9 +1,9 @@
 """
 Shared message ingestion logic (Phase 1 — brief Section 12.1).
 
-Used by both the real YCloud webhook and the dev mock-chat endpoints, so
-mock traffic exercises exactly the same persistence/idempotency/debounce
-path as production traffic.
+Used by every WhatsApp provider webhook and the dev mock-chat endpoint, so
+application traffic exercises one persistence/idempotency/debounce path after
+provider-specific payload normalization.
 """
 
 import logging
@@ -14,7 +14,12 @@ from sqlalchemy.orm import Session
 from app.models import Contact, Conversation, Message, Professional
 from app.chat import agent_channel
 from app.chat.pipeline import schedule_processing
-from app.chat.ycloud_provider import NormalizedMessage, normalize_event
+from app.integrations.whatsapp.contracts import (
+    WhatsAppDeliveryUpdated,
+    WhatsAppEvent,
+    WhatsAppMessageEvent,
+)
+from app.integrations.whatsapp.provider import WhatsAppProvider
 from app.services.text_normalization import normalize_name
 
 logger = logging.getLogger(__name__)
@@ -63,7 +68,7 @@ def get_or_create_conversation(db: Session, professional_id, contact_id) -> Conv
     return conversation
 
 
-def ingest_normalized_message(db: Session, normalized: NormalizedMessage) -> Message | None:
+def ingest_normalized_message(db: Session, normalized: WhatsAppMessageEvent) -> Message | None:
     """Persist a normalized message: get-or-create contact/conversation, insert
     the message idempotently on provider_message_id, and reset the debounce
     timer. Returns None if the message was a duplicate (already persisted)."""
@@ -87,6 +92,7 @@ def ingest_normalized_message(db: Session, normalized: NormalizedMessage) -> Mes
     message = Message(
         professional_id=professional.id,
         conversation_id=conversation.id,
+        provider_key=normalized.provider_key,
         provider_message_id=normalized.provider_message_id,
         direction=normalized.direction,
         message_type="text",
@@ -113,14 +119,27 @@ def ingest_normalized_message(db: Session, normalized: NormalizedMessage) -> Mes
     return message
 
 
-def ingest_event(db: Session, event: dict) -> Message | None:
-    """Normalize a raw provider event and ingest it. Returns None if the event
-    type isn't tracked, if it was a duplicate, or if it was routed to the
-    agent channel (Professional.agent_phone) instead of the customer-facing
-    passive-observer pipeline below."""
-    normalized = normalize_event(event)
-    if normalized is None:
+def dispatch_whatsapp_event(
+    db: Session, event: WhatsAppEvent, provider: WhatsAppProvider
+) -> Message | None:
+    """Route a canonical WhatsApp event without exposing vendor payloads."""
+    if isinstance(event, WhatsAppDeliveryUpdated):
+        from app.services.scheduled_tasks import apply_delivery_update
+
+        apply_delivery_update(db, event)
         return None
-    if agent_channel.try_handle(db, normalized):
+    if agent_channel.try_handle(db, event, provider):
         return None
-    return ingest_normalized_message(db, normalized)
+    return ingest_normalized_message(db, event)
+
+
+def ingest_provider_webhook(
+    db: Session, raw_body: bytes, provider: WhatsAppProvider
+) -> list[Message]:
+    """Parse and dispatch a provider webhook into canonical application events."""
+    messages = []
+    for event in provider.parse_webhook(raw_body):
+        message = dispatch_whatsapp_event(db, event, provider)
+        if message is not None:
+            messages.append(message)
+    return messages

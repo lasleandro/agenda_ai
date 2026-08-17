@@ -142,7 +142,11 @@ agenda_ai/
         candidate_worker.py  # Background candidate processing and safe passive escalation delivery
         temporal.py      # Date/time NL extraction
         prompt.py        # LLM prompt templates
-        ycloud_provider.py   # YCloud provider (webhook verify + outbound send)
+        scheduled_task_worker.py # Polls and delivers durable tenant task runs
+        ycloud_provider.py   # Temporary compatibility imports for old callers
+
+      integrations/
+        whatsapp/           # Provider-neutral contracts, registry, and YCloud adapter
 
       core/
         security.py      # Password hashing, JWT creation/verify
@@ -150,7 +154,7 @@ agenda_ai/
       domain/            # Domain types and enums
       models/            # SQLAlchemy ORM models (36 models)
       schemas/           # Pydantic request/response schemas
-      services/          # Business logic layer
+      services/          # Business logic layer, including daily_agenda and scheduled_tasks
       repositories/      # (reserved for future data access patterns)
       observability/     # Logging/tracing (reserved)
 
@@ -236,13 +240,17 @@ updates.
 ### Scheduling Engine (`app/services/scheduling.py`)
 
 The scheduling module is the central projection engine. It takes recurring
-slots + appointments + overrides and projects them onto a calendar grid:
+classes + appointments + overrides and projects them onto a calendar grid;
+place stays are a separate background context consumed by capacity and place
+resolution:
 
 - `list_schedule_occurrences(db, professional_id, date_from, date_to)` --
   expands recurring appointments into per-date occurrences, applies
   `ScheduleOccurrenceOverride` rows (cancellations, reschedules), returns
   a unified `ScheduleOccurrence` list ready for the calendar grid or the
-  agent's tools.
+  agent's tools. Weekly stays and recurring classes honor inclusive
+  `valid_from`/`valid_until` bounds, falling back to `created_at` for legacy
+  rows with no explicit start.
 
 ### Financial Capacity (`app/services/financial_capacity.py`)
 
@@ -250,11 +258,15 @@ Classifies open time into prime/regular segments and prices them using
 the instructor's configured rates:
 
 - `build_capacity_segments(...)` -- intersects work-journey intervals with
-  place-level recurring-slot availability windows, splits the result at
+  active place-stay windows, splits the result at
   part-of-day/prime-time boundaries. This is the shared foundation behind
   both the Financeiro capacity dashboard and the make-up slot
   recommender -- see `docs/capacity_and_recommendations.md` for the full
   algorithm on both sides, verified against the shipped code.
+- Work-journey time outside all stays remains generic `Sem local definido`
+  financial capacity. Financeiro values it with the generic regular/prime
+  matrix and tenant-global fallback, but concrete slot recommenders omit it
+  until a place stay supplies a real venue.
 - `find_instructor_openings(...)` (defined in `app/agent/tools.py`, built
   on top of this module) -- the agent read tool answering "when am I
   free?". Computed from `compute_free_calendar_ranges(...)` (Work Journey

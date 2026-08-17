@@ -140,6 +140,8 @@ def test_recurring_class_slot_expands_and_excludes_availability_only_slots() -> 
             max_participants=4,
             recurrence_type="weekly",
             created_at=created_at,
+            valid_from=MONDAY + timedelta(days=7),
+            valid_until=MONDAY + timedelta(days=14),
         )
         availability_slot = RecurringSlot(
             professional_id=professional.id,
@@ -158,9 +160,12 @@ def test_recurring_class_slot_expands_and_excludes_availability_only_slots() -> 
         db.commit()
 
         occurrences = list_schedule_occurrences(
-            db, professional.id, MONDAY, MONDAY + timedelta(days=14)
+            db, professional.id, MONDAY, MONDAY + timedelta(days=21)
         )
-        assert len(occurrences) == 3
+        assert [occurrence.occurrence_date for occurrence in occurrences] == [
+            MONDAY + timedelta(days=7),
+            MONDAY + timedelta(days=14),
+        ]
         assert all(o.source_type == "recurring_slot" for o in occurrences)
         assert all(o.source_id == class_slot.id for o in occurrences)
         assert all(o.status == "scheduled" for o in occurrences)

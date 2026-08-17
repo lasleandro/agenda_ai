@@ -42,6 +42,7 @@ EVENT_TYPES = (
     "place.updated",
     "place.deactivated",
     "assistant.settings.updated",
+    "scheduled_task.configuration.updated",
     "makeup_credit.granted",
     "makeup_credit.redeemed",
     "makeup_credit.expired",

@@ -3,7 +3,7 @@ API response schemas for the Phase 4 web calendar.
 """
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Literal, Self
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -209,6 +209,19 @@ class ConversationListResponse(BaseModel):
     conversations: list[ConversationSummary]
 
 
+class TenantScheduledTaskSummary(BaseModel):
+    """Safe daily-agenda status shown inside a platform-admin tenant tile."""
+
+    configured: bool
+    enabled: bool
+    local_time: time | None
+    consent_confirmed: bool
+    readiness_issues: list[str]
+    next_run_at: datetime | None
+    latest_run_status: str | None
+    latest_run_at: datetime | None
+
+
 class TenantSummary(BaseModel):
     """One tile in the platform-admin tenant grid (multi-tenancy roadmap Phase D)."""
 
@@ -221,6 +234,7 @@ class TenantSummary(BaseModel):
     commercial_financials_enabled: bool
     assistant_temperature: float
     assistant_memory_window_messages: int
+    scheduled_task: TenantScheduledTaskSummary
 
     model_config = {"from_attributes": True}
 
@@ -256,3 +270,117 @@ class AssistantSettingsState(BaseModel):
 
     temperature: float
     memory_window_messages: int
+
+
+class ScheduledTaskUpdate(BaseModel):
+    """Platform-admin configuration for one tenant's daily agenda task."""
+
+    enabled: bool
+    local_time: time
+    consent_confirmed: bool = False
+
+
+class ScheduledTaskRunState(BaseModel):
+    """Sanitized scheduled-task delivery history row."""
+
+    id: uuid.UUID
+    target_local_date: date
+    scheduled_for_at: datetime
+    status: str
+    attempt_count: int
+    agenda_item_count: int | None
+    class_count: int | None
+    event_count: int | None
+    last_error_code: str | None
+    last_error_detail: str | None
+    accepted_at: datetime | None
+    sent_at: datetime | None
+    delivered_at: datetime | None
+    read_at: datetime | None
+    finished_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ScheduledTaskHistoryResponse(BaseModel):
+    """Paginated run history for one tenant's daily agenda task."""
+
+    runs: list[ScheduledTaskRunState]
+
+
+class ScheduledTaskAdminSummary(BaseModel):
+    """One tenant row in the platform-admin scheduled-task panel."""
+
+    professional_id: uuid.UUID
+    professional_name: str
+    tenant_status: str
+    task_id: uuid.UUID | None
+    enabled: bool
+    local_time: time
+    timezone: str
+    consent_confirmed: bool
+    sender_phone_masked: str | None
+    recipient_phone_masked: str | None
+    readiness_issues: list[str]
+    next_run_at: datetime | None
+    latest_run: ScheduledTaskRunState | None
+
+
+class ScheduledTaskAdminListResponse(BaseModel):
+    """One paginated page of tenant daily-agenda configurations."""
+
+    tasks: list[ScheduledTaskAdminSummary]
+    total: int
+    page: int
+    page_size: int
+
+
+class ScheduledTaskTenantSuggestion(BaseModel):
+    """Minimal tenant result for the scheduled-task creation combobox."""
+
+    id: uuid.UUID
+    name: str
+    status: str
+    timezone: str
+    task_configured: bool
+    readiness_issues: list[str]
+
+
+class ScheduledTaskTenantSuggestionResponse(BaseModel):
+    """Bounded async tenant-search result set."""
+
+    tenants: list[ScheduledTaskTenantSuggestion]
+
+
+class ScheduledTaskRunLogEntry(BaseModel):
+    """One safe, platform-admin execution-log row."""
+
+    id: uuid.UUID
+    professional_id: uuid.UUID
+    professional_name: str
+    task_type: str
+    target_local_date: date
+    scheduled_for_at: datetime
+    scheduled_local_time: str
+    status: str
+    attempt_count: int
+    agenda_item_count: int | None
+    provider_key: str | None
+    accepted_at: datetime | None
+    sent_at: datetime | None
+    delivered_at: datetime | None
+    read_at: datetime | None
+    finished_at: datetime | None
+    last_error_code: str | None
+    last_error_detail: str | None
+    created_at: datetime
+
+
+class ScheduledTaskRunLogResponse(BaseModel):
+    """One paginated page of global scheduled-task execution logs."""
+
+    runs: list[ScheduledTaskRunLogEntry]
+    total: int
+    page: int
+    page_size: int

@@ -43,6 +43,11 @@ import type {
   RevenueOccurrenceDetail,
   RevenuePreviewDetail,
   RevenueSummaryDetail,
+  ScheduledTaskAdminListResponse,
+  ScheduledTaskAdminSummary,
+  ScheduledTaskHistoryResponse,
+  ScheduledTaskRunLogResponse,
+  ScheduledTaskTenantSuggestionResponse,
   PrimeTimeWindowDetail,
   PrimeTimeWindowInput,
   CandidateFulfillWaitlistInput,
@@ -215,6 +220,68 @@ export const updateAssistantSettings = (
         memory_window_messages: memoryWindowMessages,
       },
     }
+  );
+
+export type ScheduledTaskQuery = {
+  q?: string;
+  enabled?: boolean;
+  tenant_status?: string;
+  readiness?: "ready" | "blocked";
+  latest_run_status?: string;
+  page?: number;
+  page_size?: number;
+};
+
+export const fetchScheduledTasks = (query: ScheduledTaskQuery = {}) => {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== "") params.set(key, String(value));
+  }
+  const suffix = params.toString();
+  return apiRequest<ScheduledTaskAdminListResponse>(
+    `/api/admin/scheduled-tasks${suffix ? `?${suffix}` : ""}`
+  );
+};
+
+export const searchScheduledTaskTenants = (q: string) =>
+  apiRequest<ScheduledTaskTenantSuggestionResponse>(
+    `/api/admin/scheduled-task-tenants?q=${encodeURIComponent(q)}&limit=20`
+  );
+
+export type ScheduledTaskRunLogQuery = {
+  q?: string;
+  status?: string;
+  date_from?: string;
+  date_to?: string;
+  provider_key?: string;
+  has_error?: boolean;
+  page?: number;
+  page_size?: number;
+};
+
+export const fetchScheduledTaskRuns = (query: ScheduledTaskRunLogQuery = {}) => {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== "") params.set(key, String(value));
+  }
+  const suffix = params.toString();
+  return apiRequest<ScheduledTaskRunLogResponse>(
+    `/api/admin/scheduled-task-runs${suffix ? `?${suffix}` : ""}`
+  );
+};
+
+export const updateDailyAgendaTask = (
+  tenantId: string,
+  input: { enabled: boolean; local_time: string; consent_confirmed: boolean }
+) =>
+  apiRequest<ScheduledTaskAdminSummary>(
+    `/api/admin/tenants/${tenantId}/scheduled-tasks/daily-agenda`,
+    { method: "PUT", body: input }
+  );
+
+export const fetchDailyAgendaTaskRuns = (tenantId: string) =>
+  apiRequest<ScheduledTaskHistoryResponse>(
+    `/api/admin/tenants/${tenantId}/scheduled-tasks/daily-agenda/runs`
   );
 
 // ---------------------------------------------------------------------------

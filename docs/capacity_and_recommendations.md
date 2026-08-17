@@ -27,7 +27,8 @@ For every date in range, for every place, it computes:
 ```
 net_ranges  = WorkJourneyInterval "work" rows for that weekday
               minus WorkJourneyInterval "break" rows for that weekday
-place_ranges = RecurringSlot rows at that place covering that weekday
+place_ranges = active place-stay rows (`slot_kind="availability"`) at that
+               place covering that weekday and effective date
                (via _load_place_availability_ranges, in scheduling.py)
 capacity    = intersect(net_ranges, place_ranges)
 ```
@@ -38,20 +39,21 @@ Each resulting interval is then split at part-of-day boundaries
 sub-interval) with a `time_category` ("prime" | "regular") and
 `part_of_day`.
 
-**Important, easy-to-miss consequence:** capacity here requires *both* a
-configured work journey *and* an explicit `RecurringSlot` at that place
-covering that time — a place with zero `RecurringSlot` rows on a given
+**Important, easy-to-miss consequence:** named-place capacity here requires
+*both* a configured work journey *and* an explicit active place stay covering
+that time — a place with zero stay rows on a given
 weekday contributes **zero** capacity for that weekday, regardless of how
 broad the work journey is. This is a different (stricter) notion of
 "available" than one-off appointment booking uses: `propose_create_appointment`
 / `assert_no_conflict` (`app/services/appointments.py`) only checks the
 work journey directly plus real conflicts — it does **not** require a
 pre-declared `RecurringSlot` window. So a time slot can be legitimately
-bookable via chat/dashboard while still showing as zero capacity on the
-Financeiro dashboard and invisible to the recommender, if no `RecurringSlot`
-happens to cover it. If make-up recommendations feel sparser than
-expected, this — not a bug — is usually why; the fix is adding a
-`RecurringSlot` (even a `slot_kind="availability"` one) at that place/time.
+bookable via chat/dashboard while still showing as zero capacity in the
+named-place Financeiro breakdown and invisible to the recommender if no
+stay covers it. Financeiro still retains that time as generic capacity under
+`Sem local definido`; the recommender omits it because a concrete recommendation
+must identify a real place. If make-up recommendations feel sparser than
+expected, configure a place stay for that place/time.
 
 ---
 
@@ -104,8 +106,15 @@ Entry point: `app/services/financial_analytics.py::build_financial_dashboard(db,
    "full groups of 4." Unlike the per-bucket breakdowns, these also fold
    in Work Journey time that falls outside any place's `RecurringSlot`
    coverage (`build_uncovered_capacity_minutes`), priced against the
-   **global rate only** — see `docs/business_rules.md` §3.5. Only applies
-   to the unfiltered "all places" view.
+   **generic-location regular/prime matrix** with tenant-global fallback —
+   see `docs/business_rules.md` §3.5. Only applies to the unfiltered "all
+   places" view.
+6. **Capacity sources** — `capacity_sources` reconciles the observed-demand
+   preset into `Em locais definidos` and `Sem local definido`. Each source
+   reports its capacity minutes and revenue contribution; the two values add
+   exactly to the month capacity headline. A place-filtered request reports a
+   zero generic contribution rather than assigning unattributed time to the
+   selected place.
 
 ### What-if scenarios (`evaluate_financial_scenario`)
 

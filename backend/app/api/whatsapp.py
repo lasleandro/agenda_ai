@@ -1,19 +1,15 @@
-"""
-YCloud WhatsApp webhook (Phase 1 — brief Section 12.1).
-
-Verifies signature, then delegates to the shared ingestion logic (persist,
-normalize, idempotency, debounce reset). No synchronous LLM calls happen
-here.
-"""
+"""Provider-aware WhatsApp webhook boundary."""
 
 import logging
+import os
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.chat.ingestion import ingest_event
-from app.chat.ycloud_provider import verify_signature, webhook_signing_secret
+from app.chat.ingestion import ingest_provider_webhook
+from app.integrations.whatsapp.contracts import WhatsAppPermanentError
+from app.integrations.whatsapp.registry import get_whatsapp_provider
 
 router = APIRouter(prefix="/webhooks", tags=["whatsapp"])
 
@@ -28,19 +24,48 @@ def get_db() -> Session:
         db.close()
 
 
-@router.post("/ycloud")
-async def ycloud_webhook(request: Request, db: Session = Depends(get_db)):
+def _debug_mode() -> bool:
+    return os.getenv("DEBUG", "").casefold() == "true"
+
+
+async def _handle_webhook(
+    provider_key: str, request: Request, db: Session
+) -> Response:
+    try:
+        provider = get_whatsapp_provider(provider_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="WhatsApp provider not found") from exc
+
     raw_body = await request.body()
-    secret = webhook_signing_secret()
-
-    if secret:
-        if not verify_signature(raw_body, request.headers.get("ycloud-signature"), secret):
-            logger.warning("YCloud webhook signature verification failed")
+    if not provider.verify_webhook(raw_body, request.headers):
+        if not _debug_mode():
+            logger.warning("Rejected WhatsApp webhook signature (provider=%s)", provider.key)
             return Response(status_code=401)
-    else:
-        logger.warning("YCLOUD_WEBHOOK_SIGNING_SECRET not set — skipping signature verification")
+        logger.warning(
+            "Accepting unverified WhatsApp webhook in DEBUG mode (provider=%s)",
+            provider.key,
+        )
 
-    event = await request.json()
-    ingest_event(db, event)
+    try:
+        ingest_provider_webhook(db, raw_body, provider)
+    except WhatsAppPermanentError:
+        logger.warning("Rejected malformed WhatsApp webhook (provider=%s)", provider.key)
+        return Response(status_code=400)
 
     return Response(status_code=200)
+
+
+@router.post("/whatsapp/{provider_key}")
+async def whatsapp_webhook(
+    provider_key: str, request: Request, db: Session = Depends(get_db)
+) -> Response:
+    """Receive a selected provider callback through the canonical dispatcher."""
+    return await _handle_webhook(provider_key, request, db)
+
+
+@router.post("/ycloud")
+async def ycloud_webhook(
+    request: Request, db: Session = Depends(get_db)
+) -> Response:
+    """Temporary compatibility callback for the current YCloud registration."""
+    return await _handle_webhook("ycloud", request, db)

@@ -21,6 +21,7 @@ import {
   fetchFinancialConfiguration,
   fetchFinancialScenarios,
   fetchFinancialSettings,
+  fetchRevenueSummary,
 } from "@/lib/api";
 import { fetchSession, sessionHasFeature } from "@/lib/auth";
 import type {
@@ -30,6 +31,7 @@ import type {
   FinancialScenarioDetail,
   FinancialSettingsDetail,
   PlaceRateMatrixDetail,
+  RevenueSummaryDetail,
 } from "@/lib/types";
 
 type FinanceTab = "dashboard" | "revenue" | "simulator" | "configuration";
@@ -65,6 +67,8 @@ export default function FinanceiroPage() {
     useState<FinancialDashboardDetail | null>(null);
   const [monthDashboard, setMonthDashboard] =
     useState<FinancialDashboardDetail | null>(null);
+  const [monthRevenueSummary, setMonthRevenueSummary] =
+    useState<RevenueSummaryDetail | null>(null);
   const [scenarios, setScenarios] = useState<FinancialScenarioDetail[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -84,11 +88,13 @@ export default function FinanceiroPage() {
           configurationResult,
           dashboardResult,
           scenariosResult,
+          revenueSummaryResult,
         ] = await Promise.all([
           fetchFinancialSettings(),
           fetchFinancialConfiguration(),
           fetchFinancialDashboard(initial.dateFrom, initial.dateTo),
           fetchFinancialScenarios(),
+          fetchRevenueSummary(initial.dateFrom, initial.dateTo),
         ]);
         if (!active) return;
         setSettings(settingsResult);
@@ -96,6 +102,7 @@ export default function FinanceiroPage() {
         setDashboard(dashboardResult);
         setMonthDashboard(dashboardResult);
         setScenarios(scenariosResult.scenarios);
+        setMonthRevenueSummary(revenueSummaryResult);
       } catch (caught) {
         if (active) {
           setError(
@@ -156,11 +163,14 @@ export default function FinanceiroPage() {
     );
   }
 
-  if (error && (!settings || !configuration || !dashboard)) {
+  if (
+    error &&
+    (!settings || !configuration || !dashboard || !monthRevenueSummary)
+  ) {
     return <div className="p-6 text-sm text-destructive">{error}</div>;
   }
 
-  if (!settings || !configuration || !dashboard) {
+  if (!settings || !configuration || !dashboard || !monthRevenueSummary) {
     return <div className="p-6 text-sm text-muted-foreground">Carregando...</div>;
   }
 
@@ -188,7 +198,12 @@ export default function FinanceiroPage() {
       </div>
 
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-5">
-        {monthDashboard && <FinancialMonthSummary monthDashboard={monthDashboard} />}
+        {monthDashboard && (
+          <FinancialMonthSummary
+            monthDashboard={monthDashboard}
+            monthRevenueSummary={monthRevenueSummary}
+          />
+        )}
 
         <div
           className="flex w-fit gap-1 rounded-lg border bg-muted/30 p-1"

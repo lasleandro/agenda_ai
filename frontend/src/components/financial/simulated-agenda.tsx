@@ -36,6 +36,12 @@ function formatDate(value: string) {
   return value.split("-").reverse().join("/");
 }
 
+function dayAfter(value: string): string {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
 function durationMinutes(event: FinancialScenarioScheduleEvent) {
   const toMinutes = (value: string) => {
     const [hours, minutes] = value.split(":").map(Number);
@@ -68,6 +74,8 @@ function realSlotEvent(slot: RecurringSlot): EventInput | null {
     daysOfWeek: [(slot.day_of_week + 1) % 7],
     startTime: slot.start_time.slice(0, 5),
     endTime: slot.end_time.slice(0, 5),
+    startRecur: slot.valid_from ?? undefined,
+    endRecur: slot.valid_until ? dayAfter(slot.valid_until) : undefined,
     backgroundColor: "#4f46e5",
     borderColor: "#4338ca",
     textColor: "#ffffff",
@@ -76,12 +84,10 @@ function realSlotEvent(slot: RecurringSlot): EventInput | null {
 
 export function SimulatedAgenda({
   events,
-  dateFrom,
-  dateTo,
+  period,
 }: {
   events: FinancialScenarioScheduleEvent[];
-  dateFrom: string;
-  dateTo: string;
+  period: { from: string; to: string };
 }) {
   const [selectedEvent, setSelectedEvent] =
     useState<FinancialScenarioScheduleEvent | null>(null);
@@ -106,12 +112,16 @@ export function SimulatedAgenda({
     );
   }
 
+  function showRealAgenda() {
+    setRealLoading(true);
+    setRealError(null);
+    setAgendaView("real");
+  }
+
   useEffect(() => {
     if (agendaView !== "real") return;
     let active = true;
-    setRealLoading(true);
-    setRealError(null);
-    Promise.all([fetchCalendar(dateFrom, dateTo), fetchRecurringSlots()])
+    Promise.all([fetchCalendar(period.from, period.to), fetchRecurringSlots()])
       .then(([calendar, slots]) => {
         if (!active) return;
         const appointments = calendar.appointments.map((appointment) => {
@@ -155,7 +165,7 @@ export function SimulatedAgenda({
     return () => {
       active = false;
     };
-  }, [agendaView, dateFrom, dateTo]);
+  }, [agendaView, period.from, period.to]);
 
   return (
     <Card>
@@ -182,7 +192,7 @@ export function SimulatedAgenda({
           <Button
             size="sm"
             variant={agendaView === "real" ? "secondary" : "ghost"}
-            onClick={() => setAgendaView("real")}
+            onClick={showRealAgenda}
           >
             Real
           </Button>
@@ -197,10 +207,10 @@ export function SimulatedAgenda({
           <p className="py-8 text-center text-sm text-destructive">{realError}</p>
         ) : (
           <FullCalendar
-            key={`${agendaView}-${dateFrom}-${dateTo}`}
+            key={`${agendaView}-${period.from}-${period.to}`}
             plugins={[dayGridPlugin, interactionPlugin]}
             initialView="dayGridMonth"
-            initialDate={dateFrom}
+            initialDate={period.from}
             headerToolbar={{ left: "prev,next today", center: "title", right: "" }}
             buttonText={{ today: "Hoje" }}
             locale="pt-br"

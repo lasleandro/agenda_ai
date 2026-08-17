@@ -13,10 +13,8 @@ Usage:
                                        # cloudflared quick tunnel, for
                                        # registering the YCloud webhook
                                        # (see docs/local_dev_webhook_tunnel.md)
-    python start_server.py --worker   # also run the appointment candidate
-                                       # worker (Phase 2 debounce/extraction
-                                       # pipeline, polls pending_processing)
-    python start_server.py --worker   # also runs durable ambiguity escalation
+    python start_server.py --worker   # also run the candidate, ambiguity,
+                                       # and scheduled-task workers
 
 Access:
     Frontend  → http://localhost:3010
@@ -249,6 +247,17 @@ def _start_escalation_worker() -> subprocess.Popen:
     )
 
 
+def _start_scheduled_task_worker() -> subprocess.Popen:
+    print("  Starting scheduled task worker ...")
+    return _popen(
+        [PYTHON_BIN, "-m", "app.chat.scheduled_task_worker"],
+        cwd=str(BACKEND_DIR),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+
 def _stream_output(label: str, proc: subprocess.Popen, out: "queue.Queue[tuple[str, str | None]]"):
     """Feed one process's stdout, line by line, into the shared queue. Runs
     in its own thread per process so a quiet process (e.g. backend between
@@ -296,7 +305,7 @@ def main():
     )
     parser.add_argument(
         "--worker", action="store_true",
-        help="also run the appointment candidate worker (Phase 2 pipeline)",
+        help="also run candidate, ambiguity-escalation, and scheduled-task workers",
     )
     args = parser.parse_args()
 
@@ -312,6 +321,7 @@ def main():
     tunnel = _start_tunnel() if args.tunnel else None
     worker = _start_worker() if args.worker else None
     escalation_worker = _start_escalation_worker() if args.worker else None
+    scheduled_task_worker = _start_scheduled_task_worker() if args.worker else None
 
     # Give servers a moment to start
     time.sleep(2)
@@ -327,6 +337,7 @@ def main():
     if worker is not None:
         print("  Candidate worker -> polling pending_processing")
         print("  Escalation worker -> polling durable ambiguity delivery")
+        print("  Scheduled task worker -> polling due tenant tasks")
     print()
     print("  Press Ctrl+C to stop all servers.")
     print("=" * 80)
@@ -342,6 +353,8 @@ def main():
         active.append(("worker", worker))
     if escalation_worker is not None:
         active.append(("escalation-worker", escalation_worker))
+    if scheduled_task_worker is not None:
+        active.append(("scheduled-task-worker", scheduled_task_worker))
 
     tunnel_url_announced = False
     output_queue: "queue.Queue[tuple[str, str | None]]" = queue.Queue()

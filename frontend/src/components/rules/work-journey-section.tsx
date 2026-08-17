@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -22,9 +23,12 @@ type DayDraft = {
   enabled: boolean;
   start: string;
   end: string;
-  breakEnabled: boolean;
-  breakStart: string;
-  breakEnd: string;
+  breaks: BreakDraft[];
+};
+
+type BreakDraft = {
+  start: string;
+  end: string;
 };
 
 function initialDays(
@@ -36,19 +40,22 @@ function initialDays(
         (interval) =>
           interval.day_of_week === day && interval.interval_type === "work"
       );
-      const breakInterval = intervals.find(
-        (interval) =>
-          interval.day_of_week === day && interval.interval_type === "break"
-      );
+      const breaks = intervals
+        .filter(
+          (interval) =>
+            interval.day_of_week === day && interval.interval_type === "break"
+        )
+        .map((interval) => ({
+          start: interval.start_time.slice(0, 5),
+          end: interval.end_time.slice(0, 5),
+        }));
       return [
         day,
         {
           enabled: Boolean(work),
           start: work?.start_time.slice(0, 5) ?? "08:00",
           end: work?.end_time.slice(0, 5) ?? "18:00",
-          breakEnabled: Boolean(breakInterval),
-          breakStart: breakInterval?.start_time.slice(0, 5) ?? "12:00",
-          breakEnd: breakInterval?.end_time.slice(0, 5) ?? "13:00",
+          breaks,
         },
       ];
     })
@@ -77,6 +84,26 @@ export function WorkJourneySection({
     }));
   }
 
+  function addBreak(day: number) {
+    updateDay(day, {
+      breaks: [...days[day].breaks, { start: "12:00", end: "13:00" }],
+    });
+  }
+
+  function updateBreak(day: number, index: number, update: Partial<BreakDraft>) {
+    updateDay(day, {
+      breaks: days[day].breaks.map((breakDraft, breakIndex) =>
+        breakIndex === index ? { ...breakDraft, ...update } : breakDraft
+      ),
+    });
+  }
+
+  function removeBreak(day: number, index: number) {
+    updateDay(day, {
+      breaks: days[day].breaks.filter((_, breakIndex) => breakIndex !== index),
+    });
+  }
+
   async function handleSave() {
     const payload: WorkJourneyIntervalInput[] = [];
     for (const day of Object.keys(days).map(Number)) {
@@ -95,13 +122,16 @@ export function WorkJourneySection({
         start_time: `${draft.start}:00`,
         end_time: `${draft.end}:00`,
       });
-      if (draft.breakEnabled) {
+      const breaks = [...draft.breaks].sort((first, second) =>
+        first.start.localeCompare(second.start)
+      );
+      for (const breakDraft of breaks) {
         if (
-          !draft.breakStart ||
-          !draft.breakEnd ||
-          draft.breakEnd <= draft.breakStart ||
-          draft.breakStart < draft.start ||
-          draft.breakEnd > draft.end
+          !breakDraft.start ||
+          !breakDraft.end ||
+          breakDraft.end <= breakDraft.start ||
+          breakDraft.start < draft.start ||
+          breakDraft.end > draft.end
         ) {
           setNotice({
             text: `A pausa de ${DAY_LABELS[day]} deve ficar dentro da jornada.`,
@@ -109,11 +139,20 @@ export function WorkJourneySection({
           });
           return;
         }
+      }
+      if (breaks.some((breakDraft, index) => index > 0 && breakDraft.start < breaks[index - 1].end)) {
+        setNotice({
+          text: `As pausas de ${DAY_LABELS[day]} não podem se sobrepor.`,
+          error: true,
+        });
+        return;
+      }
+      for (const breakDraft of breaks) {
         payload.push({
           day_of_week: day,
           interval_type: "break",
-          start_time: `${draft.breakStart}:00`,
-          end_time: `${draft.breakEnd}:00`,
+          start_time: `${breakDraft.start}:00`,
+          end_time: `${breakDraft.end}:00`,
         });
       }
     }
@@ -179,39 +218,53 @@ export function WorkJourneySection({
                   disabled={!draft.enabled}
                   className="w-32"
                 />
-                <label className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    checked={draft.breakEnabled}
-                    onChange={(event) =>
-                      updateDay(day, { breakEnabled: event.target.checked })
-                    }
-                    disabled={!draft.enabled}
-                    className="h-4 w-4 accent-primary"
-                  />
-                  Pausa
-                </label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => addBreak(day)}
+                  disabled={!draft.enabled}
+                  className="ml-auto"
+                >
+                  <Plus />
+                  Adicionar pausa
+                </Button>
               </div>
-              {draft.enabled && draft.breakEnabled && (
-                <div className="mt-3 flex flex-wrap items-center gap-2 pl-0 sm:pl-32">
-                  <span className="text-xs text-muted-foreground">Pausa</span>
-                  <Input
-                    type="time"
-                    value={draft.breakStart}
-                    onChange={(event) =>
-                      updateDay(day, { breakStart: event.target.value })
-                    }
-                    className="w-32"
-                  />
-                  <span className="text-sm text-muted-foreground">até</span>
-                  <Input
-                    type="time"
-                    value={draft.breakEnd}
-                    onChange={(event) =>
-                      updateDay(day, { breakEnd: event.target.value })
-                    }
-                    className="w-32"
-                  />
+              {draft.enabled && draft.breaks.length > 0 && (
+                <div className="mt-3 space-y-2 pl-0 sm:pl-32">
+                  {draft.breaks.map((breakDraft, index) => (
+                    <div key={`${day}-${index}`} className="flex flex-wrap items-center gap-2">
+                      <span className="w-14 text-xs text-muted-foreground">
+                        Pausa {index + 1}
+                      </span>
+                      <Input
+                        type="time"
+                        value={breakDraft.start}
+                        onChange={(event) =>
+                          updateBreak(day, index, { start: event.target.value })
+                        }
+                        className="w-32"
+                      />
+                      <span className="text-sm text-muted-foreground">até</span>
+                      <Input
+                        type="time"
+                        value={breakDraft.end}
+                        onChange={(event) =>
+                          updateBreak(day, index, { end: event.target.value })
+                        }
+                        className="w-32"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={`Remover pausa ${index + 1} de ${dayLabel}`}
+                        onClick={() => removeBreak(day, index)}
+                      >
+                        <Trash2 />
+                      </Button>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

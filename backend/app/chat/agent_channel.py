@@ -37,9 +37,15 @@ from sqlalchemy.orm import Session
 
 from app.agent import candidates
 from app.agent.orchestrator import run_agent_turn
-from app.chat.ycloud_provider import NormalizedMessage, send_text_message
+from app.integrations.whatsapp.contracts import (
+    WhatsAppMessageEvent,
+    WhatsAppProviderError,
+    WhatsAppTextRequest,
+)
+from app.integrations.whatsapp.provider import WhatsAppProvider
+from app.integrations.whatsapp.registry import get_whatsapp_provider
 from app.models import AppointmentCandidate, AgentChannelMessage, OperatorActionCandidate, PassiveEscalation, Professional, User
-from app.services import scheduling
+from app.services import daily_agenda, scheduling
 from app.services.assistant_settings import get_assistant_settings
 
 logger = logging.getLogger(__name__)
@@ -75,9 +81,12 @@ def _format_day_list(occurrences, header: str, empty_message: str) -> str:
 
 
 def _handle_hoje(db: Session, professional_id: uuid.UUID) -> str:
-    today = datetime.now(scheduling.TIMEZONE).date()
-    occurrences = scheduling.list_schedule_occurrences(db, professional_id, today, today)
-    return _format_day_list(occurrences, "Aulas de hoje", "Nenhuma aula hoje.")
+    professional = db.get(Professional, professional_id)
+    if professional is None:
+        return "Nao foi possivel localizar a conta da agenda."
+    today = datetime.now(daily_agenda.get_professional_timezone(professional)).date()
+    _, items = daily_agenda.list_daily_agenda_items(db, professional_id, today)
+    return daily_agenda.format_daily_agenda(today, items)
 
 
 def _handle_amanha(db: Session, professional_id: uuid.UUID) -> str:
@@ -267,7 +276,18 @@ def _handle_agent_turn(
     return reply
 
 
-def try_handle(db: Session, normalized: NormalizedMessage) -> bool:
+def send_text_message(from_phone: str, to_phone: str, body: str) -> None:
+    """Compatibility helper for direct callers; production injects a provider."""
+    get_whatsapp_provider().send_text(
+        WhatsAppTextRequest(from_phone=from_phone, to_phone=to_phone, body=body)
+    )
+
+
+def try_handle(
+    db: Session,
+    normalized: WhatsAppMessageEvent,
+    provider: WhatsAppProvider | None = None,
+) -> bool:
     """If this message is addressed to a provisioned agent number, answer it
     and return True. Otherwise return False so the caller can route it
     through the normal customer-facing pipeline."""
@@ -312,5 +332,24 @@ def try_handle(db: Session, normalized: NormalizedMessage) -> bool:
             _record_turn(db, professional.id, "user", text)
             _record_turn(db, professional.id, "assistant", reply)
 
-    send_text_message(from_phone=normalized.to_phone, to_phone=normalized.from_phone, body=reply)
+    try:
+        if provider is None:
+            send_text_message(
+                from_phone=normalized.to_phone,
+                to_phone=normalized.from_phone,
+                body=reply,
+            )
+        else:
+            provider.send_text(
+                WhatsAppTextRequest(
+                    from_phone=normalized.to_phone,
+                    to_phone=normalized.from_phone,
+                    body=reply,
+                )
+            )
+    except WhatsAppProviderError:
+        logger.exception(
+            "Failed to send private-agent WhatsApp reply (professional_id=%s)",
+            professional.id,
+        )
     return True

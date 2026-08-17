@@ -36,3 +36,5 @@ from app.models.makeup_class_credit import MakeupClassCredit  # noqa: F401
 from app.models.agent_channel_message import AgentChannelMessage  # noqa: F401
 from app.models.waitlist_entry import WaitlistEntry  # noqa: F401
 from app.models.instructor_event import InstructorEvent  # noqa: F401
+from app.models.scheduled_task import ScheduledTask  # noqa: F401
+from app.models.scheduled_task_run import ScheduledTaskRun  # noqa: F401

@@ -7,7 +7,9 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.agent import mutations
-from app.chat.ycloud_provider import send_text_message_or_raise
+from app.integrations.whatsapp.contracts import WhatsAppTextRequest
+from app.integrations.whatsapp.provider import WhatsAppProvider
+from app.integrations.whatsapp.registry import get_whatsapp_provider
 from app.models import AppointmentCandidate, OperatorActionCandidate, PassiveEscalation, Professional, User
 from app.services.candidate_resolution import resolve_candidate
 from app.services.scheduling import TIMEZONE
@@ -83,7 +85,16 @@ def _has_unrelated_pending(db: Session, escalation: PassiveEscalation) -> bool:
     ).first() is not None
 
 
-def deliver(escalation: PassiveEscalation, db: Session) -> bool:
+def send_text_message_or_raise(from_phone: str, to_phone: str, body: str) -> None:
+    """Compatibility helper while callers migrate to explicit provider injection."""
+    get_whatsapp_provider().send_text(
+        WhatsAppTextRequest(from_phone=from_phone, to_phone=to_phone, body=body)
+    )
+
+
+def deliver(
+    escalation: PassiveEscalation, db: Session, provider: WhatsAppProvider | None = None
+) -> bool:
     """Create/reuse one proposal, link it, then send its confirmation prompt."""
     now = datetime.now(TIMEZONE)
     candidate = escalation.appointment_candidate
@@ -126,11 +137,21 @@ def deliver(escalation: PassiveEscalation, db: Session) -> bool:
     candidate.operator_action_candidate_id = proposal.id
     proposal.expires_at = now + timedelta(minutes=TTL_MINUTES)
     try:
-        send_text_message_or_raise(
-            from_phone=professional.agent_phone,
-            to_phone=professional.assistant_phone,
-            body=f"{proposal.preview_text}\n\nResponda *sim* para confirmar ou *nao* para cancelar.",
-        )
+        body = f"{proposal.preview_text}\n\nResponda *sim* para confirmar ou *nao* para cancelar."
+        if provider is None:
+            send_text_message_or_raise(
+                from_phone=professional.agent_phone,
+                to_phone=professional.assistant_phone,
+                body=body,
+            )
+        else:
+            provider.send_text(
+                WhatsAppTextRequest(
+                    from_phone=professional.agent_phone,
+                    to_phone=professional.assistant_phone,
+                    body=body,
+                )
+            )
     except Exception as exc:  # delivery is retried from durable state
         escalation.attempt_count += 1
         escalation.last_error = str(exc)[:500]
@@ -143,7 +164,7 @@ def deliver(escalation: PassiveEscalation, db: Session) -> bool:
     return True
 
 
-def process_due_escalations(db: Session) -> int:
+def process_due_escalations(db: Session, provider: WhatsAppProvider | None = None) -> int:
     now = datetime.now(TIMEZONE)
     expired = db.query(PassiveEscalation).join(
         AppointmentCandidate,
@@ -181,7 +202,7 @@ def process_due_escalations(db: Session) -> int:
     ).with_for_update(skip_locked=True).all()
     count = 0
     for escalation in rows:
-        if deliver(escalation, db):
+        if deliver(escalation, db, provider):
             count += 1
         db.commit()
     return count

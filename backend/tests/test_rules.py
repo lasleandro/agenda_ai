@@ -121,16 +121,27 @@ def test_rules_reachable_without_commercial_financials_flag() -> None:
                         "start_time": "12:00:00",
                         "end_time": "13:00:00",
                     },
+                    {
+                        "day_of_week": 1,
+                        "interval_type": "break",
+                        "start_time": "15:00:00",
+                        "end_time": "15:30:00",
+                    },
                 ]
             },
             cookies=cookies,
         )
         assert journey.status_code == 200
-        assert len(journey.json()) == 2
+        assert len(journey.json()) == 3
+        assert [row["interval_type"] for row in journey.json()] == [
+            "work",
+            "break",
+            "break",
+        ]
 
         refetched = client.get("/api/rules/work-journey", cookies=cookies)
         assert refetched.status_code == 200
-        assert len(refetched.json()) == 2
+        assert len(refetched.json()) == 3
 
         updated_notice = client.patch(
             "/api/rules/cancellation-notice-hours",

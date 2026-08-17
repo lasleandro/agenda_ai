@@ -54,6 +54,12 @@ function toFullCalendarDay(dayOfWeek: number): number {
   return (dayOfWeek + 1) % 7;
 }
 
+function dayAfter(value: string): string {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
 function slotToEvent(slot: RecurringSlot): EventInput {
   const courtLabel = slot.label ? ` · ${slot.label}` : "";
   const isScheduledClass = slot.slot_kind === "class";
@@ -69,6 +75,8 @@ function slotToEvent(slot: RecurringSlot): EventInput {
         daysOfWeek: [toFullCalendarDay(slot.day_of_week)],
         startTime: slot.start_time.slice(0, 5),
         endTime: slot.end_time.slice(0, 5),
+        startRecur: slot.valid_from ?? undefined,
+        endRecur: slot.valid_until ? dayAfter(slot.valid_until) : undefined,
       };
 
   return {

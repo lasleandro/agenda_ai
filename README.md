@@ -7,6 +7,7 @@ A passive WhatsApp Business copilot that converts conversations between independ
 ### Platform Architecture
 
 - [Architecture overview](docs/architecture_overview.md) — high-level system design, technology stack, project structure, and core architectural patterns (propose-confirm-execute lifecycle, event ledger, tenant isolation).
+- [Scheduled tasks architecture](docs/scheduled_tasks_architecture.md) — daily agenda configuration, tenant isolation, durable execution service, provider boundary, state transitions, and operating runbook.
 - [Data architecture](docs/data_architecture.md) — complete data model with Mermaid ERDs for all 33 database tables grouped by domain (identity, contacts, scheduling, financial, audit).
 - [Capacity evaluation & make-up slot recommender](docs/capacity_and_recommendations.md) — the financial dashboard's occupancy/what-if math and the make-up-credit slot recommender's scoring algorithm, verified against the shipped code (not the pre-implementation plan).
 - [Ontology & chat architecture](docs/ontology_chat_architecture.md) — how the AI agent reads and writes the instructor's ontology, the WhatsApp → extraction → agent pipeline, tool taxonomy (read + mutation tools), entity resolution, and temporal resolution.
@@ -29,12 +30,14 @@ A passive WhatsApp Business copilot that converts conversations between independ
 - [Multi-tenancy roadmap](docs/ROADMAPS/multi_tenancy_roadmap_v0.1_2026-08-04.md) — assessment and phased plan for onboarding a second instructor (tenant isolation, auth, admin impersonation).
 - [Operational ontology & AI agent roadmap](docs/ROADMAPS/operational_ontology_and_agent_roadmap_v0.2_2026-08-05.md) — historical roadmap; its place-stay semantics are superseded by the roadmap below.
 - [Place stays & schedule overlay roadmap](docs/ROADMAPS/place_stays_and_schedule_overlay_roadmap_v0.1_2026-08-15.md) — approved, trackable plan to make Meus Locais a neutral place/time/pricing substrate beneath classes and events, including Agenda, Financeiro, waitlist, makeup, and active/passive agent migration.
+- [Financial capacity reconciliation roadmap](docs/ROADMAPS/financial_capacity_reconciliation_roadmap_v0.1_2026-08-16.md) — corrective plan for generic versus place-attributed capacity, month-summary revenue semantics, and cross-platform alignment with place stays.
 - [Commercial & financial module roadmap](docs/ROADMAPS/commercial_financial_module_roadmap_v0.2_2026-08-05.md) — one-customer groups, inherited pricing, tenant feature controls, financial capacity scenarios, and the path to auditable revenue.
 - [Make-up class credits & courtesy classes roadmap](docs/ROADMAPS/makeup_class_credits_roadmap_v0.1_2026-08-07.md) — completed: credit ledger, recommender, redemption through chat, courtesy classification, and contact detail surface.
 - [Mobile readiness & PWA "Add to Home Screen" roadmap](docs/ROADMAPS/mobile_pwa_readiness_roadmap_v0.1_2026-08-08.md) — draft: mapped touch points for mobile-responsive screens and installable-app (manifest, icons, home-screen launch) support.
 - [Waitlist ("Fila de Espera") roadmap](docs/ROADMAPS/waitlist_roadmap_v0.1_2026-08-09.md) — completed: data model, on-demand and event-driven matching, active-agent tools, passive-observer candidate review, and Clientes/Agenda UI for tracking customer demand with no open slot yet.
 - [Instructor Events roadmap](docs/ROADMAPS/instructor_events_roadmap_v0.1_2026-08-09.md) — completed: non-class calendar entries (tournament refereeing, workshops, clinics) with conflict checking, revenue summary integration, dashboard toggle, and active-agent tools.
-- [Scheduled tasks: daily agenda roadmap](docs/ROADMAPS/scheduled_tasks_daily_agenda_roadmap_v0.1_2026-08-16.md) — proposed provider-neutral WhatsApp boundary, tenant-isolated admin panel, and durable daily agenda delivery including customer schedule occurrences and instructor events.
+- [Scheduled tasks: daily agenda roadmap](docs/ROADMAPS/scheduled_tasks_daily_agenda_roadmap_v0.1_2026-08-16.md) — implemented daily agenda task, provider-neutral WhatsApp boundary, tenant-isolated admin panel, and operational setup notes.
+- [Tenant configuration centralization roadmap](docs/ROADMAPS/tenant_configuration_centralization_roadmap_v0.1_2026-08-16.md) — proposed relocation of operational and financial definitions into one feature-aware tenant configuration area.
 - [Passive confirmation detection and ambiguity escalation roadmap](docs/ROADMAPS/passive_confirmation_push_roadmap_v0.1_2026-08-10.md) — implemented locally: authoritative, fully resolved creates autoexecute; ambiguous fully resolved creates/reschedules use a durable, private-agent confirmation prompt. Detectados remains the exception-review surface. Full autonomy is intentionally out of scope.
 - [Local dev webhook tunnel](docs/local_dev_webhook_tunnel.md) — current YCloud webhook tunnel URL and how to restart it during Phase 1 development.
 
@@ -50,7 +53,7 @@ Always starts the FastAPI backend (`:8005`) and the Next.js frontend (`:3010`, p
 | Flag | What it adds | When you need it |
 |---|---|---|
 | `--tunnel` | A `cloudflared` quick tunnel exposing the backend, with the webhook URL printed once connected and auto-recorded in [docs/local_dev_webhook_tunnel.md](docs/local_dev_webhook_tunnel.md) | Registering/testing the real YCloud webhook |
-| `--worker` | The candidate worker plus the durable passive-escalation worker, polling `pending_processing` and queued ambiguity deliveries | Running the passive confirmation pipeline against real or mock traffic |
+| `--worker` | Candidate, passive-escalation, and scheduled-task workers, polling pending work, ambiguity deliveries, and due tenant tasks | Running WhatsApp processing and scheduled daily agenda delivery |
 
 Both are additive and commonly used together: `python start_server.py --tunnel --worker`. Press `Ctrl+C` to stop everything started.
 
@@ -58,7 +61,7 @@ Both are additive and commonly used together: `python start_server.py --tunnel -
 
 The platform is in active development. All modules (calendar/agenda, contacts/places ontology, recurring groups, financial configuration & revenue, makeup class credits, courtesy appointments) are implemented end-to-end across the FastAPI backend and Next.js frontend. Run `pytest backend/tests -q --ignore=backend/tests/test_extraction.py` for the current local regression suite.
 
-The AI agent supports both read tools (search, schedule lookup, availability) and mutation tools (create/cancel/reschedule appointments, manage participants, redeem makeup credits) with a propose-confirm-execute lifecycle. The passive WhatsApp extraction pipeline detects scheduling intent from instructor-customer conversations.
+The AI agent supports both read tools (search, schedule lookup, availability) and mutation tools (create/cancel/reschedule appointments, manage participants, redeem makeup credits) with a propose-confirm-execute lifecycle. The passive WhatsApp extraction pipeline detects scheduling intent from instructor-customer conversations. Platform admins can configure a tenant-isolated daily WhatsApp agenda under `/admin/scheduled-tasks`; configure the approved daily-agenda template name in `.env` before enabling a task.
 
 See individual roadmaps for module-specific implementation status.
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Settings } from "lucide-react";
+import { CalendarClock, Settings, Undo2 } from "lucide-react";
 import { CancellationNoticeSection } from "@/components/rules/cancellation-notice-section";
 import { WorkJourneySection } from "@/components/rules/work-journey-section";
 import { fetchCancellationNoticeHours, fetchWorkJourney } from "@/lib/api";
@@ -17,6 +17,7 @@ export default function MinhasRegrasPage() {
   const [notice, setNotice] = useState<CancellationNoticeHoursDetail | null>(
     null
   );
+  const [activeTab, setActiveTab] = useState<"journey" | "makeup">("journey");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -69,8 +70,47 @@ export default function MinhasRegrasPage() {
           </div>
         )}
 
-        <WorkJourneySection intervals={workJourney} onSaved={setWorkJourney} />
-        <CancellationNoticeSection detail={notice} onSaved={setNotice} />
+        <div
+          className="flex w-fit gap-1 rounded-lg border bg-muted/30 p-1"
+          role="tablist"
+          aria-label="Áreas de Minhas Regras"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "journey"}
+            onClick={() => setActiveTab("journey")}
+            className={`flex h-8 items-center gap-1.5 rounded-md px-3 text-sm transition-colors ${
+              activeTab === "journey"
+                ? "bg-background font-medium shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <CalendarClock className="size-4" />
+            Jornada de trabalho
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "makeup"}
+            onClick={() => setActiveTab("makeup")}
+            className={`flex h-8 items-center gap-1.5 rounded-md px-3 text-sm transition-colors ${
+              activeTab === "makeup"
+                ? "bg-background font-medium shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Undo2 className="size-4" />
+            Reposições
+          </button>
+        </div>
+
+        {activeTab === "journey" && (
+          <WorkJourneySection intervals={workJourney} onSaved={setWorkJourney} />
+        )}
+        {activeTab === "makeup" && (
+          <CancellationNoticeSection detail={notice} onSaved={setNotice} />
+        )}
       </div>
     </div>
   );

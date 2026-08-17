@@ -9,10 +9,10 @@ for phase context and [webhook.site vs. tunnel rationale](#why-not-webhooksite).
 | | |
 |---|---|
 | Tool | `cloudflared` (quick tunnel, no account) |
-| Public URL | `https://genetic-upgrades-democratic-definitely.trycloudflare.com` |
-| Webhook path to register in YCloud | `https://genetic-upgrades-democratic-definitely.trycloudflare.com/webhooks/ycloud` |
+| Public URL | `https://struggle-cookbook-louisiana-reseller.trycloudflare.com` |
+| Webhook path to register in YCloud | `https://struggle-cookbook-louisiana-reseller.trycloudflare.com/webhooks/ycloud` |
 | Local target | `http://localhost:8005` (`cd backend && python -m uvicorn app.main:app --reload --port 8005`) |
-| Started | 2026-08-15 |
+| Started | 2026-08-16 |
 
 **This URL changes every time the tunnel restarts.** When it does, re-register the
 new `/webhooks/ycloud` URL in the YCloud dashboard (Developer → Webhooks) and

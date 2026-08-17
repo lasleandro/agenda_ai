@@ -61,11 +61,18 @@ def weekly_dates(
     weekday: int,
     date_from: date,
     date_to: date,
+    *,
+    ends_on: date | None = None,
 ) -> list[date]:
     first_allowed = max(starts_on, date_from)
+    last_allowed = min(ends_on, date_to) if ends_on is not None else date_to
+    if first_allowed > last_allowed:
+        return []
     offset = (weekday - first_allowed.weekday()) % 7
     first = first_allowed + timedelta(days=offset)
-    return list(iter_dates(first, date_to))[::7]
+    if first > last_allowed:
+        return []
+    return list(iter_dates(first, last_allowed))[::7]
 
 
 def split_range(
@@ -154,10 +161,11 @@ def _load_place_availability_ranges(
     for slot in slots:
         if slot.recurrence_type == "weekly":
             dates = weekly_dates(
-                slot.created_at.astimezone(TIMEZONE).date(),
+                slot.valid_from or slot.created_at.astimezone(TIMEZONE).date(),
                 slot.day_of_week,
                 date_from,
                 date_to,
+                ends_on=slot.valid_until,
             )
         elif slot.scheduled_date and date_from <= slot.scheduled_date <= date_to:
             dates = [slot.scheduled_date]
@@ -210,12 +218,13 @@ def _appointment_occurrences(
     professional_id: uuid.UUID,
     date_from: date,
     date_to: date,
+    local_timezone: ZoneInfo,
     statuses: tuple[str, ...] = APPOINTMENT_ACTIVE_STATUSES,
 ) -> list[ScheduleOccurrence]:
     end_boundary = datetime.combine(
         date_to + timedelta(days=1),
         time.min,
-        tzinfo=TIMEZONE,
+        tzinfo=local_timezone,
     )
     rows = (
         db.query(Appointment, Contact, Place.name)
@@ -252,7 +261,7 @@ def _appointment_occurrences(
 
     occurrences = []
     for appointment, contact, place_name in rows:
-        local_start = appointment.start_at.astimezone(TIMEZONE)
+        local_start = appointment.start_at.astimezone(local_timezone)
         duration = appointment.end_at - appointment.start_at
         if duration.total_seconds() <= 0 or duration > timedelta(days=1):
             continue
@@ -271,7 +280,7 @@ def _appointment_occurrences(
             starts_at = datetime.combine(
                 occurrence_date,
                 local_start.time().replace(tzinfo=None),
-                tzinfo=TIMEZONE,
+                tzinfo=local_timezone,
             )
             occurrences.append(
                 ScheduleOccurrence(
@@ -306,6 +315,7 @@ def _slot_occurrences(
     professional_id: uuid.UUID,
     date_from: date,
     date_to: date,
+    local_timezone: ZoneInfo,
 ) -> list[ScheduleOccurrence]:
     slot_rows = (
         db.query(RecurringSlot, Place.name)
@@ -346,10 +356,11 @@ def _slot_occurrences(
             continue
         if slot.recurrence_type == "weekly":
             dates = weekly_dates(
-                slot.created_at.astimezone(TIMEZONE).date(),
+                slot.valid_from or slot.created_at.astimezone(local_timezone).date(),
                 slot.day_of_week,
                 date_from,
                 date_to,
+                ends_on=slot.valid_until,
             )
         elif slot.scheduled_date and date_from <= slot.scheduled_date <= date_to:
             dates = [slot.scheduled_date]
@@ -359,12 +370,12 @@ def _slot_occurrences(
             starts_at = datetime.combine(
                 occurrence_date,
                 slot.start_time,
-                tzinfo=TIMEZONE,
+                tzinfo=local_timezone,
             )
             ends_at = datetime.combine(
                 occurrence_date,
                 slot.end_time,
-                tzinfo=TIMEZONE,
+                tzinfo=local_timezone,
             )
             occurrences.append(
                 ScheduleOccurrence(
@@ -389,6 +400,7 @@ def _apply_overrides(
     db: Session,
     professional_id: uuid.UUID,
     occurrences: list[ScheduleOccurrence],
+    local_timezone: ZoneInfo,
 ) -> list[ScheduleOccurrence]:
     if not occurrences:
         return occurrences
@@ -435,8 +447,8 @@ def _apply_overrides(
                 }
             place_name = place_names.get(place_id, place_name)
 
-        new_start = override.replacement_start_at.astimezone(TIMEZONE)
-        new_end = override.replacement_end_at.astimezone(TIMEZONE)
+        new_start = override.replacement_start_at.astimezone(local_timezone)
+        new_end = override.replacement_end_at.astimezone(local_timezone)
         result.append(
             dataclasses.replace(
                 occurrence,
@@ -457,20 +469,83 @@ def list_schedule_occurrences(
     date_from: date,
     date_to: date,
     statuses: tuple[str, ...] = APPOINTMENT_ACTIVE_STATUSES,
+    local_timezone: ZoneInfo | None = None,
+    include_rescheduled_replacements: bool = False,
 ) -> list[ScheduleOccurrence]:
+    """Project tenant schedule occurrences in the supplied local timezone.
+
+    When requested, rescheduled occurrences are also projected from their
+    original date when the replacement falls within the queried window. Daily
+    agenda queries need this view; existing calendar/detail callers retain
+    their original-occurrence semantics by default.
+    """
+    timezone = local_timezone or TIMEZONE
     occurrences = _appointment_occurrences(
         db,
         professional_id,
         date_from,
         date_to,
+        timezone,
         statuses,
     ) + _slot_occurrences(
         db,
         professional_id,
         date_from,
         date_to,
+        timezone,
     )
-    occurrences = _apply_overrides(db, professional_id, occurrences)
+
+    if include_rescheduled_replacements:
+        start_boundary = datetime.combine(date_from, time.min, tzinfo=timezone)
+        end_boundary = datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=timezone)
+        replacement_origin_dates = {
+            occurrence_date
+            for (occurrence_date,) in (
+                db.query(ScheduleOccurrenceOverride.occurrence_date)
+                .filter(
+                    ScheduleOccurrenceOverride.professional_id == professional_id,
+                    ScheduleOccurrenceOverride.override_type == "rescheduled",
+                    ScheduleOccurrenceOverride.replacement_start_at >= start_boundary,
+                    ScheduleOccurrenceOverride.replacement_start_at < end_boundary,
+                )
+                .all()
+            )
+            if occurrence_date < date_from or occurrence_date > date_to
+        }
+        for origin_date in replacement_origin_dates:
+            occurrences.extend(
+                _appointment_occurrences(
+                    db,
+                    professional_id,
+                    origin_date,
+                    origin_date,
+                    timezone,
+                    statuses,
+                )
+            )
+            occurrences.extend(
+                _slot_occurrences(
+                    db,
+                    professional_id,
+                    origin_date,
+                    origin_date,
+                    timezone,
+                )
+            )
+        occurrences = list(
+            {
+                (occurrence.source_type, occurrence.source_id, occurrence.occurrence_date): occurrence
+                for occurrence in occurrences
+            }.values()
+        )
+
+    occurrences = _apply_overrides(db, professional_id, occurrences, timezone)
+    if include_rescheduled_replacements:
+        occurrences = [
+            occurrence
+            for occurrence in occurrences
+            if date_from <= occurrence.starts_at.astimezone(timezone).date() <= date_to
+        ]
     return sorted(
         occurrences,
         key=lambda occurrence: (

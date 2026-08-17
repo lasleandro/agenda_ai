@@ -215,6 +215,18 @@ export interface TenantSummary {
   commercial_financials_enabled: boolean;
   assistant_temperature: number;
   assistant_memory_window_messages: number;
+  scheduled_task: TenantScheduledTaskSummary;
+}
+
+export interface TenantScheduledTaskSummary {
+  configured: boolean;
+  enabled: boolean;
+  local_time: string | null;
+  consent_confirmed: boolean;
+  readiness_issues: string[];
+  next_run_at: string | null;
+  latest_run_status: string | null;
+  latest_run_at: string | null;
 }
 
 export interface TenantListResponse {
@@ -230,6 +242,94 @@ export interface TenantFeatureState {
 export interface AssistantSettingsState {
   temperature: number;
   memory_window_messages: number;
+}
+
+export interface ScheduledTaskRunState {
+  id: string;
+  target_local_date: string;
+  scheduled_for_at: string;
+  status: string;
+  attempt_count: number;
+  agenda_item_count: number | null;
+  class_count: number | null;
+  event_count: number | null;
+  last_error_code: string | null;
+  last_error_detail: string | null;
+  accepted_at: string | null;
+  sent_at: string | null;
+  delivered_at: string | null;
+  read_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+}
+
+export interface ScheduledTaskAdminSummary {
+  professional_id: string;
+  professional_name: string;
+  tenant_status: string;
+  task_id: string | null;
+  enabled: boolean;
+  local_time: string;
+  timezone: string;
+  consent_confirmed: boolean;
+  sender_phone_masked: string | null;
+  recipient_phone_masked: string | null;
+  readiness_issues: string[];
+  next_run_at: string | null;
+  latest_run: ScheduledTaskRunState | null;
+}
+
+export interface ScheduledTaskAdminListResponse {
+  tasks: ScheduledTaskAdminSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ScheduledTaskHistoryResponse {
+  runs: ScheduledTaskRunState[];
+}
+
+export interface ScheduledTaskTenantSuggestion {
+  id: string;
+  name: string;
+  status: string;
+  timezone: string;
+  task_configured: boolean;
+  readiness_issues: string[];
+}
+
+export interface ScheduledTaskTenantSuggestionResponse {
+  tenants: ScheduledTaskTenantSuggestion[];
+}
+
+export interface ScheduledTaskRunLogEntry {
+  id: string;
+  professional_id: string;
+  professional_name: string;
+  task_type: string;
+  target_local_date: string;
+  scheduled_for_at: string;
+  scheduled_local_time: string;
+  status: string;
+  attempt_count: number;
+  agenda_item_count: number | null;
+  provider_key: string | null;
+  accepted_at: string | null;
+  sent_at: string | null;
+  delivered_at: string | null;
+  read_at: string | null;
+  finished_at: string | null;
+  last_error_code: string | null;
+  last_error_detail: string | null;
+  created_at: string;
+}
+
+export interface ScheduledTaskRunLogResponse {
+  runs: ScheduledTaskRunLogEntry[];
+  total: number;
+  page: number;
+  page_size: number;
 }
 
 export type CommercialStatus = "active" | "waiting" | "paused";
@@ -375,6 +475,13 @@ export interface CapacityPresetDetail {
   projected_revenue_cents: number;
 }
 
+export interface CapacitySourceDetail {
+  key: "defined_places" | "without_defined_place";
+  label: string;
+  available_minutes: number;
+  projected_revenue_cents: number;
+}
+
 export interface FinancialDashboardDetail {
   assumptions: FinancialAnalyticsAssumptions;
   available_minutes: number;
@@ -391,6 +498,7 @@ export interface FinancialDashboardDetail {
   by_weekday: FinancialMetricBreakdown[];
   by_time_category: FinancialMetricBreakdown[];
   capacity_presets: CapacityPresetDetail[];
+  capacity_sources: CapacitySourceDetail[];
 }
 
 export type FinancialScenarioMode =

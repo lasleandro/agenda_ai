@@ -171,6 +171,13 @@ def test_platform_admin_tenant_list_includes_new_tenant_and_forbids_non_admin() 
         assert tenants_res.status_code == 200
         tenant_ids = {t["id"] for t in tenants_res.json()["tenants"]}
         assert str(professional.id) in tenant_ids
+        tenant = next(
+            item
+            for item in tenants_res.json()["tenants"]
+            if item["id"] == str(professional.id)
+        )
+        assert tenant["scheduled_task"]["configured"] is False
+        assert tenant["scheduled_task"]["latest_run_status"] is None
 
         owner_login = client.post(
             "/api/auth/login", json={"email": owner.email, "password": "correct-password"}

@@ -192,11 +192,11 @@ places" view uses the place-agnostic top line.
 (`_capacity_presets`, `evaluate_financial_scenario`'s `scenario` metric)
 also fold in the Work Journey time that falls outside any place's
 `RecurringSlot` coverage (`build_uncovered_capacity_minutes`), priced
-against the **global rate only** (`FinancialRate`, no place to resolve a
-`PlaceFinancialRate` override against) — a tenant with no global rate
-configured gets 0 revenue credit for that uncovered time, same
-"unpriced contributes 0, not an error" convention used everywhere else in
-this dashboard. This only applies to the unfiltered "all places" view,
+against the **generic-location regular/prime matrix**, falling back to the
+tenant-global `FinancialRate` when a generic entry is absent. No named-place
+override applies because the time has no attributed place; an unpriced entry
+still contributes 0 revenue rather than raising an error. This only applies to
+the unfiltered "all places" view,
 for the same reason the top-line figures don't place-filter it: time not
 covered by the filtered place(s) may be covered by a place the user
 filtered out, so crediting it to the filtered place(s) would overstate

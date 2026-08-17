@@ -225,6 +225,13 @@ class CapacityPresetDetail(BaseModel):
     projected_revenue_cents: int
 
 
+class CapacitySourceDetail(BaseModel):
+    key: Literal["defined_places", "without_defined_place"]
+    label: str
+    available_minutes: int
+    projected_revenue_cents: int
+
+
 class FinancialDashboardDetail(BaseModel):
     assumptions: FinancialAnalyticsAssumptions
     available_minutes: int
@@ -241,6 +248,7 @@ class FinancialDashboardDetail(BaseModel):
     by_weekday: list[FinancialMetricBreakdown]
     by_time_category: list[FinancialMetricBreakdown]
     capacity_presets: list[CapacityPresetDetail]
+    capacity_sources: list[CapacitySourceDetail]
 
 
 class ScenarioRateOverride(BaseModel):

@@ -1,6 +1,10 @@
 # Scheduled Tasks: Daily Agenda Roadmap v0.1 — 2026-08-16
 
-**Status: proposed for review; no implementation started.**
+**Status: implemented locally on 2026-08-16.** The migration, provider-neutral
+WhatsApp boundary, admin panel, durable worker, and focused tests are in this
+repository. Before enabling a tenant in a deployed environment, set the
+approved daily-agenda template name and credentials in `.env`, run the Alembic
+migration, and run `start_server.py --worker` (or the equivalent worker process).
 
 ## 1. Goal and first-release outcome
 
@@ -80,7 +84,7 @@ No instructor can configure this task yet.
 Proposed output:
 
 ```text
-Agenda de hoje — 16/08
+Aulas de hoje — 16/08
 
 07:00 — Aula — Ana e Bruno — Clube Central
 10:30 — Evento — Clínica de saque — Arena Norte
@@ -988,3 +992,189 @@ No new runtime dependency is expected: SQLAlchemy/PostgreSQL, `zoneinfo`,
 FastAPI, `httpx`, and the existing Next.js stack cover this scope. If
 implementation proves otherwise, justify and pin the dependency in the root
 `requirements.txt` before use.
+
+---
+
+## 17. Next scope: task-manager workspace
+
+**Status: implemented locally.** The three-tab workspace, bounded tenant
+search, server-side task filters, and global execution-log query are available
+under `/admin/scheduled-tasks`.
+
+The current page is a useful first configuration surface, but it presents all
+tenants as one card list. The next iteration turns `/admin/scheduled-tasks`
+into a task-manager workspace with three sub-tabs:
+
+1. **Criar tarefa** — select a task template, select one tenant, configure it,
+   and create/update its configuration.
+2. **Gerenciar tarefas** — find existing configurations and manage their
+   enabled state, time, consent, and readiness.
+3. **Log de execução** — investigate durable run history in a filterable,
+   paginated table.
+
+This remains a focused enhancement. It does not introduce arbitrary cron
+expressions, instructor self-service, user-authored templates, or a generic
+workflow engine.
+
+### 17.1 Product decisions
+
+- The initial task repository contains exactly one visible item:
+  `daily_agenda_summary` / **Resumo diário da agenda**.
+- “Create” means create the tenant's sole configuration for the selected task
+  type. If it already exists, the UI must explain that it already exists and
+  send the administrator to its management view; it must not offer a duplicate.
+- Tenant selection is an asynchronous searchable combobox. The typed search is
+  sent to the server and results are tenant summaries, not browser-side
+  filtering of an unbounded tenant list.
+- All search/filter/pagination state is server-applied and represented in the
+  URL query string where practical, so an admin can refresh/share an
+  investigation without losing context.
+- The log is a table, not cards. It is read-only in this phase; “retry now”
+  remains out of scope because it needs a separately designed duplicate-safe
+  delivery contract.
+- Administrative convenience must not weaken tenant boundaries: every returned
+  configuration/run still includes and is filtered by its `professional_id`.
+
+### 17.2 Why three tabs
+
+Creation, ongoing management, and operational investigation have different
+primary actions. Combining them in one list makes the common “set up one
+tenant” action compete with dense filters and delivery diagnostics. The tabs
+keep each workflow understandable while reusing the same task domain model and
+platform-admin authorization.
+
+### 17.3 Criar tarefa
+
+The tab is a short provisioning flow:
+
+1. Show the task repository. For v0.1 it contains one selectable, informative
+   card for **Resumo diário da agenda**, including its WhatsApp channel,
+   “every day” cadence, and a concise description of classes plus instructor
+   events.
+2. After selecting the task, show a tenant combobox with debounced search,
+   keyboard navigation, and a dynamic dropdown. A result shows tenant name,
+   status, timezone, and whether this task is already configured.
+3. Select the tenant, then show only the required fields: local send time and
+   explicit consent confirmation. Show sender/recipient readiness before save.
+4. Submit through the existing tenant/task configuration command. Update the
+   selected configuration optimistically, reconcile the server response, and
+   provide a direct action to open it in **Gerenciar tarefas**.
+
+The repository is a UI catalog, not a new database table or plugin system. A
+static typed catalog in the frontend/API contract is enough until a second real
+task type exists.
+
+### 17.4 Gerenciar tarefas
+
+This tab replaces the unfiltered card wall with a server-paginated management
+table. Selecting a row opens the focused configuration editor for that
+tenant/task, avoiding dense inline controls across every row. It must support:
+
+- free-text tenant search;
+- filters for task type, enabled/disabled state, tenant status, readiness, and
+  latest run status;
+- local time, timezone, next-run, latest-run, sender/recipient readiness, and
+  a clear management action in each result;
+- URL-backed filters, visible result count, empty state, and pagination;
+- an accessible compact/mobile presentation without removing the underlying
+  filtering model.
+
+The existing optimistic enable/time/consent editing behavior is retained. An
+edit is allowed only on the chosen tenant/task configuration and rolls back on
+a rejected server response.
+
+### 17.5 Log de execução
+
+This tab is a platform-wide, paginated run table. It must support a free-text
+tenant search plus these server-side filters:
+
+- tenant;
+- task type;
+- run status;
+- date range using `target_local_date`;
+- provider key; and
+- runs with an error only.
+
+The initial table columns are: target local date, tenant, task, scheduled local
+time/instant, status, attempts, agenda item count, provider, accepted/sent or
+delivered time, and sanitized error code/detail. Default order is newest run
+first. Tenant phone numbers and rendered agenda body are not table columns;
+the list remains safe for platform operations without unnecessarily exposing
+customer names or message content.
+
+Selecting a row may later open a tenant-scoped detail drawer, but details and
+manual retry are explicitly deferred from this scope.
+
+### 17.6 API and query contract
+
+No new task/run persistence table is needed. This scope adds query behavior and
+response schemas around the existing `scheduled_tasks` and
+`scheduled_task_runs` tables.
+
+```mermaid
+flowchart LR
+    Create[Criar tarefa] --> Catalog[Static task catalog]
+    Create --> TenantSearch[GET tenant suggestions]
+    TenantSearch --> Configure[PUT tenant daily-agenda task]
+
+    Manage[Gerenciar tarefas] --> TaskQuery[GET task configurations with filters]
+    TaskQuery --> Configure
+
+    Log[Log de execução] --> RunQuery[GET task runs with filters]
+    RunQuery --> RunTable[Paginated execution table]
+```
+
+Recommended API evolution:
+
+| Endpoint | Change |
+|---|---|
+| `GET /api/admin/tenants` | Add bounded `q`, `limit`, and optional task-type awareness for combobox suggestions. Keep the existing response compatible for current callers. |
+| `GET /api/admin/scheduled-tasks` | Add `q`, `task_type`, `enabled`, `tenant_status`, `readiness`, `latest_run_status`, `page`, and `page_size`; return `items`, `total`, `page`, and `page_size`. |
+| `GET /api/admin/scheduled-task-runs` | Add a new global platform-admin endpoint with `q`, `professional_id`, `task_type`, `status`, `date_from`, `date_to`, `provider_key`, `has_error`, `page`, and `page_size`. |
+| Existing tenant run-history endpoint | Keep it for a future selected-tenant detail view; do not overload it as the global log query. |
+| Existing task update endpoint | Keep the same authorization and tenant path. It remains the only configuration write path. |
+
+All query endpoints must validate bounded page size, whitelist status/type
+filters, apply filters in SQL, order deterministically, and return no
+unbounded collection. Free-text search matches tenant display fields only; it
+does not search message bodies, raw provider payloads, or error stacks.
+
+### 17.7 Implementation phases
+
+1. **Query foundation** — add response pagination metadata, tenant suggestion
+   search, management filters, global run-log query, authorization tests, and
+   database query tests.
+2. **Task-manager shell** — split the page into accessible sub-tabs, preserve
+   platform-admin guard behavior, and make tab/filter state URL-addressable.
+3. **Create task flow** — add the static repository, async tenant combobox,
+   readiness preview, duplicate-config handling, and optimistic creation.
+4. **Manage task flow** — add filter controls, server-paginated results, and
+   reuse the existing optimistic configuration editor.
+5. **Execution log** — add the server-paginated table, filters, status badges,
+   empty/error states, and no-PII column policy.
+6. **Verification** — add API, service/query, and frontend behavior tests;
+   run backend regression tests, TypeScript, lint, and build checks.
+
+### 17.8 Acceptance criteria
+
+- A platform admin can find a tenant by typing a partial name and configure the
+  daily summary without loading every tenant into the browser.
+- Selecting the only current repository item cannot produce a duplicate task
+  configuration for the same tenant/type.
+- Management search and every selected filter are server-applied, paginated,
+  and preserve tenant isolation.
+- The execution log is a table with correct status/timestamp/error data and
+  never exposes message body, customer names, numbers, provider raw payloads,
+  or secrets.
+- Professional users remain forbidden from every task-manager tab/API.
+- Existing daily agenda creation, delivery, reconciliation, and audit behavior
+  remain unchanged.
+
+### 17.9 Explicitly deferred
+
+- Additional repository task types.
+- Editing template content from the task manager.
+- Manual send/retry actions.
+- Execution-log body preview or raw provider payload viewer.
+- Per-tenant provider selection.
+- Saved filter views, exports, and bulk enable/disable actions.
