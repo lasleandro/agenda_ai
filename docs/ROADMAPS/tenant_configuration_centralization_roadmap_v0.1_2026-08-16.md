@@ -1,6 +1,10 @@
 # Tenant Configuration Centralization Roadmap v0.1 — 2026-08-16
 
-**Status: proposed — implementation has not started.**
+**Status: implemented locally on 2026-08-16.** The tenant-facing route remains
+`/minhas-regras` for compatibility but is presented as **Configurações**. It
+now composes the two operational tabs for every tenant and the three existing
+financial-definition tabs when `commercial_financials` is enabled. Financeiro
+retains its analytics-only tabs.
 
 ## 1. Goal and product outcome
 

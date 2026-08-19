@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Clock, RefreshCw } from "lucide-react";
+import { ClipboardCheck, Clock, RefreshCw } from "lucide-react";
 import FullCalendar from "@fullcalendar/react";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -26,6 +26,7 @@ import {
   fulfillWaitlistEntry,
 } from "@/lib/api";
 import { AGENDA_REFRESH_EVENT } from "@/lib/agenda-events";
+import { fetchSession, sessionHasFeature } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { STATUS_COLORS } from "@/lib/calendar-utils";
 import { CONTACT_LEVEL_LABELS, EVENT_TYPE_LABELS } from "@/lib/ontology-utils";
@@ -42,10 +43,18 @@ import type {
 import { AppointmentFormDialog } from "./appointment-form-dialog";
 import { AppointmentPanel } from "./appointment-panel";
 import { InstructorEventPanel } from "./instructor-event-panel";
+import { RevenueConfirmationQueue } from "./revenue-confirmation-queue";
 import { GroupDetailsDialog } from "@/components/ontology/group-details-dialog";
 
 function toISODate(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+function localDateInput(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 // FullCalendar's daysOfWeek uses JS Date.getDay() (Sunday=0..Saturday=6);
@@ -241,6 +250,8 @@ export function WeekCalendar() {
   >(undefined);
   const [groupPanelOpen, setGroupPanelOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [financialEnabled, setFinancialEnabled] = useState(false);
+  const [activeTab, setActiveTab] = useState<"agenda" | "confirmations">("agenda");
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches
   );
@@ -251,6 +262,18 @@ export function WeekCalendar() {
     const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
     query.addEventListener("change", onChange);
     return () => query.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetchSession().then((user) => {
+      if (active) {
+        setFinancialEnabled(sessionHasFeature(user, "commercial_financials"));
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -515,144 +538,203 @@ export function WeekCalendar() {
     },
     [events, slots, showWaitlist, waitlistEntries, showIncompleteGroups]
   );
+  const now = new Date();
+  const confirmationDateFrom = localDateInput(
+    new Date(now.getFullYear(), now.getMonth(), 1)
+  );
+  const confirmationDateTo = localDateInput(now);
 
   return (
     <div className="flex-1 flex flex-col min-h-0 p-4 md:p-6 gap-3">
-      <div className="flex items-center justify-between">
+      <div>
         <h1 className="text-xl font-semibold tracking-tight">Agenda</h1>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-muted-foreground">{eventCountLabel}</span>
+      </div>
+
+      <div
+        className="flex w-fit gap-1 rounded-lg border bg-muted/30 p-1"
+        role="tablist"
+        aria-label="Áreas da Agenda"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "agenda"}
+          onClick={() => setActiveTab("agenda")}
+          className={`flex h-8 items-center gap-1.5 rounded-md px-3 text-sm transition-colors ${
+            activeTab === "agenda"
+              ? "bg-background font-medium shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Agenda
+        </button>
+        {financialEnabled && (
           <button
             type="button"
-            onClick={() => setShowWaitlist((current) => !current)}
-            aria-pressed={showWaitlist}
-            className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-              showWaitlist
-                ? "border-primary bg-primary/10 text-primary"
-                : "border-border text-muted-foreground hover:text-foreground"
+            role="tab"
+            aria-selected={activeTab === "confirmations"}
+            onClick={() => setActiveTab("confirmations")}
+            className={`flex h-8 items-center gap-1.5 rounded-md px-3 text-sm transition-colors ${
+              activeTab === "confirmations"
+                ? "bg-background font-medium shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            <Clock className="h-3.5 w-3.5" />
-            Fila de espera
-            {waitlistEntries.length > 0 && (
-              <span className="rounded-full bg-muted px-1.5 py-0.5">
-                {waitlistEntries.length}
+            <ClipboardCheck className="size-4" />
+            Confirmações
+          </button>
+        )}
+      </div>
+
+      {activeTab === "agenda" && (
+        <>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">
+                {eventCountLabel}
               </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowIncompleteGroups((current) => !current)}
-            aria-pressed={showIncompleteGroups}
-            className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-              showIncompleteGroups
-                ? "border-primary bg-primary/10 text-primary"
-                : "border-border text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            Grupos incompletos
-          </button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={handleRefresh}
-            disabled={refreshing}
-            title="Atualizar agenda"
-            aria-label="Atualizar agenda"
-          >
-            <RefreshCw className={refreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-          </Button>
-        </div>
-      </div>
+              <button
+                type="button"
+                onClick={() => setShowWaitlist((current) => !current)}
+                aria-pressed={showWaitlist}
+                className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                  showWaitlist
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Clock className="h-3.5 w-3.5" />
+                Fila de espera
+                {waitlistEntries.length > 0 && (
+                  <span className="rounded-full bg-muted px-1.5 py-0.5">
+                    {waitlistEntries.length}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowIncompleteGroups((current) => !current)}
+                aria-pressed={showIncompleteGroups}
+                className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                  showIncompleteGroups
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Grupos incompletos
+              </button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={handleRefresh}
+                disabled={refreshing}
+                title="Atualizar agenda"
+                aria-label="Atualizar agenda"
+              >
+                <RefreshCw
+                  className={
+                    refreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"
+                  }
+                />
+              </Button>
+            </div>
+          </div>
 
-      <div className="flex-1 min-h-0 bg-[var(--bg-surface)] rounded-xl p-3 shadow-sm border border-[var(--border-subtle)]">
-        <FullCalendar
-          ref={calendarRef}
-          plugins={[timeGridPlugin, dayGridPlugin, listPlugin, interactionPlugin]}
-          initialView={isMobile ? "listWeek" : "timeGridWeek"}
-          headerToolbar={
-            isMobile
-              ? { left: "prev,next goToday", center: "", right: "title" }
-              : {
-                  left: "prev,next goToday",
-                  center: "title",
-                  right: "timeGridWeek,timeGridDay,dayGridMonth",
-                }
-          }
-          customButtons={{
-            goToday: {
-              text: "Hoje",
-              click: handleToday,
-            },
-          }}
-          locale="pt-br"
-          firstDay={1}
-          height="100%"
-          allDaySlot={false}
-          slotMinTime="07:00:00"
-          slotMaxTime="21:00:00"
-          nowIndicator
-          selectable
-          selectMirror
-          events={calendarEvents}
-          selectOverlap={(event) =>
-            event.display === "background" ||
-            event.extendedProps.status === "cancelled"
-          }
-          select={handleSelect}
-          dateClick={handleDateClick}
-          eventClick={handleEventClick}
-          eventDidMount={handleEventMount}
-          datesSet={handleDatesSet}
-          buttonText={{
-            week: "Semana",
-            day: "Dia",
-            month: "Mês",
-          }}
-        />
-      </div>
+          <div className="flex-1 min-h-0 bg-[var(--bg-surface)] rounded-xl p-3 shadow-sm border border-[var(--border-subtle)]">
+            <FullCalendar
+              ref={calendarRef}
+              plugins={[timeGridPlugin, dayGridPlugin, listPlugin, interactionPlugin]}
+              initialView={isMobile ? "listWeek" : "timeGridWeek"}
+              headerToolbar={
+                isMobile
+                  ? { left: "prev,next goToday", center: "", right: "title" }
+                  : {
+                      left: "prev,next goToday",
+                      center: "title",
+                      right: "timeGridWeek,timeGridDay,dayGridMonth",
+                    }
+              }
+              customButtons={{
+                goToday: {
+                  text: "Hoje",
+                  click: handleToday,
+                },
+              }}
+              locale="pt-br"
+              firstDay={1}
+              height="100%"
+              allDaySlot={false}
+              slotMinTime="07:00:00"
+              slotMaxTime="21:00:00"
+              nowIndicator
+              selectable
+              selectMirror
+              events={calendarEvents}
+              selectOverlap={(event) =>
+                event.display === "background" ||
+                event.extendedProps.status === "cancelled"
+              }
+              select={handleSelect}
+              dateClick={handleDateClick}
+              eventClick={handleEventClick}
+              eventDidMount={handleEventMount}
+              datesSet={handleDatesSet}
+              buttonText={{
+                week: "Semana",
+                day: "Dia",
+                month: "Mês",
+              }}
+            />
+          </div>
 
-      <AppointmentPanel
-        appointmentId={selectedId}
-        occurrenceDate={selectedOccurrenceDate}
-        open={panelOpen}
-        onOpenChange={setPanelOpen}
-      />
+          <AppointmentPanel
+            appointmentId={selectedId}
+            occurrenceDate={selectedOccurrenceDate}
+            open={panelOpen}
+            onOpenChange={setPanelOpen}
+          />
 
-      <InstructorEventPanel
-        event={selectedInstructorEvent}
-        open={instructorEventPanelOpen}
-        onOpenChange={setInstructorEventPanelOpen}
-      />
+          <InstructorEventPanel
+            event={selectedInstructorEvent}
+            open={instructorEventPanelOpen}
+            onOpenChange={setInstructorEventPanelOpen}
+          />
 
-      <GroupDetailsDialog
-        groupId={selectedGroupId}
-        occurrenceDate={selectedGroupOccurrenceDate}
-        open={groupPanelOpen}
-        onOpenChange={setGroupPanelOpen}
-      />
+          <GroupDetailsDialog
+            groupId={selectedGroupId}
+            occurrenceDate={selectedGroupOccurrenceDate}
+            open={groupPanelOpen}
+            onOpenChange={setGroupPanelOpen}
+          />
 
-      {bookingSelection && (
-        <AppointmentFormDialog
-          key={bookingSelection.start.getTime()}
-          open
-          onOpenChange={(open) => {
-            if (!open) setBookingSelection(null);
-          }}
-          start={bookingSelection.start}
-          end={bookingSelection.end}
-          suggestedPlaceId={bookingSelection.suggestedPlaceId}
-          initialContactId={bookingSelection.initialContactId}
-          contacts={contacts}
-          places={places}
-          onPlaceCreated={(place) =>
-            setPlaces((current) => [...current, place])
-          }
-          onCreate={handleCreateBooking}
-          onCreateEvent={handleCreateEvent}
+          {bookingSelection && (
+            <AppointmentFormDialog
+              key={bookingSelection.start.getTime()}
+              open
+              onOpenChange={(open) => {
+                if (!open) setBookingSelection(null);
+              }}
+              start={bookingSelection.start}
+              end={bookingSelection.end}
+              suggestedPlaceId={bookingSelection.suggestedPlaceId}
+              initialContactId={bookingSelection.initialContactId}
+              contacts={contacts}
+              places={places}
+              onPlaceCreated={(place) =>
+                setPlaces((current) => [...current, place])
+              }
+              onCreate={handleCreateBooking}
+              onCreateEvent={handleCreateEvent}
+            />
+          )}
+        </>
+      )}
+      {activeTab === "confirmations" && (
+        <RevenueConfirmationQueue
+          dateFrom={confirmationDateFrom}
+          dateTo={confirmationDateTo}
         />
       )}
-
     </div>
   );
 }

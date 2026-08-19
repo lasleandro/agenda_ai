@@ -65,7 +65,6 @@ export function AppointmentPanel({
   useEffect(() => {
     if (!appointmentId || !open) return;
     let active = true;
-    setRevenue(null);
     fetchAppointment(appointmentId, occurrenceDate)
       .then((detail) => {
         if (!active) return;

@@ -92,3 +92,7 @@ joao@agenda.ai / agenda-dev-2026 — direct professional login (the existing "Jo
 - implementado: docs/ROADMAPS/place_stays_and_schedule_overlay_roadmap_v0.1_2026-08-15.md
 - pre-implementação de docs/ROADMAPS/scheduled_tasks_daily_agenda_roadmap_v0.1_2026-08-16.md
 - Adicionar cancelamento de aula por evento climático/chuva -> reposição automática
+
+- Pensar em um report financeiro semanal para o tenant
+- churn
+- ranking alunos com mais reposição/cancelamento

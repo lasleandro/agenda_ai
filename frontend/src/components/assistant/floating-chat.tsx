@@ -115,7 +115,7 @@ export function FloatingChat() {
           className={`fixed ${FLOAT_Z} flex h-[600px] max-h-[calc(100vh-8rem)] w-96 flex-col overflow-hidden rounded-lg border bg-background shadow-2xl`}
           style={panelStyle}
         >
-          <AssistantPanel open={open} onClose={() => setOpen(false)} />
+          <AssistantPanel onClose={() => setOpen(false)} />
         </div>
       )}
     </>

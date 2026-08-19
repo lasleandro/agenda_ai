@@ -50,10 +50,8 @@ const CANDIDATE_STATUS_COLORS: Record<CandidateStatus, string> = {
 };
 
 export function AssistantPanel({
-  open,
   onClose,
 }: {
-  open: boolean;
   onClose: () => void;
 }) {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);

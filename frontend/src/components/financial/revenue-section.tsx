@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import {
-  CheckCircle2,
   CircleDollarSign,
   ClipboardCheck,
   ReceiptText,
@@ -10,9 +9,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { RevenueLineChart } from "./analytics-charts";
-import { RevenueConfirmDialog } from "./revenue-confirm-dialog";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -20,13 +17,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { fetchRevenueCandidates, fetchRevenueSummary } from "@/lib/api";
+import { fetchRevenueSummary } from "@/lib/api";
 import { formatBrlFromCents } from "@/lib/financial-utils";
 import type {
   FinancialTimeSeriesPoint,
-  RevenueCandidateDetail,
-  RevenueCandidateList,
-  RevenueOccurrenceDetail,
   RevenueSummaryBreakdown,
   RevenueSummaryDetail,
 } from "@/lib/types";
@@ -114,31 +108,14 @@ export function RevenueSection({
   dateFrom: string;
   dateTo: string;
 }) {
-  const [candidateList, setCandidateList] =
-    useState<RevenueCandidateList | null>(null);
   const [summary, setSummary] = useState<RevenueSummaryDetail | null>(null);
-  const [selectedCandidate, setSelectedCandidate] =
-    useState<RevenueCandidateDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  async function load() {
-    const [candidates, revenue] = await Promise.all([
-      fetchRevenueCandidates(dateFrom, dateTo),
-      fetchRevenueSummary(dateFrom, dateTo),
-    ]);
-    setCandidateList(candidates);
-    setSummary(revenue);
-  }
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      fetchRevenueCandidates(dateFrom, dateTo),
-      fetchRevenueSummary(dateFrom, dateTo),
-    ])
-      .then(([candidates, revenue]) => {
+    fetchRevenueSummary(dateFrom, dateTo)
+      .then((revenue) => {
         if (!active) return;
-        setCandidateList(candidates);
         setSummary(revenue);
       })
       .catch((caught) => {
@@ -154,69 +131,12 @@ export function RevenueSection({
     };
   }, [dateFrom, dateTo]);
 
-  function confirmed(occurrence: RevenueOccurrenceDetail) {
-    setCandidateList((current) =>
-      current
-        ? {
-            ...current,
-            candidates: current.candidates.map((candidate) =>
-              candidate.source_type === occurrence.source_type &&
-              candidate.source_id === occurrence.source_id &&
-              candidate.occurrence_date === occurrence.occurrence_date
-                ? {
-                    ...candidate,
-                    recognized_occurrence_id: occurrence.id,
-                  }
-                : candidate
-            ),
-          }
-        : current
-    );
-    setSummary((current) => {
-      if (!current) return current;
-      return {
-        ...current,
-        occurrence_count: current.occurrence_count + 1,
-        participant_count:
-          current.participant_count + occurrence.participant_count,
-        billable_participant_count:
-          current.billable_participant_count +
-          occurrence.billable_participant_count,
-        quoted_total_cents:
-          current.quoted_total_cents + occurrence.quoted_total_cents,
-        subtotal_cents: current.subtotal_cents + occurrence.subtotal_cents,
-        adjustment_cents:
-          current.adjustment_cents + occurrence.adjustment_cents,
-        total_cents: current.total_cents + occurrence.total_cents,
-        time_series: current.time_series.map((point) =>
-          point.date === occurrence.occurrence_date
-            ? {
-                ...point,
-                occurrence_count: point.occurrence_count + 1,
-                total_cents: point.total_cents + occurrence.total_cents,
-              }
-            : point
-        ),
-        occurrences: [occurrence, ...current.occurrences],
-      };
-    });
-    load().catch((caught) =>
-      setError(
-        caught instanceof Error ? caught.message : "Falha ao atualizar receita"
-      )
-    );
-  }
-
-  if (error && (!candidateList || !summary)) {
+  if (error && !summary) {
     return <p className="text-sm text-destructive">{error}</p>;
   }
-  if (!candidateList || !summary) {
+  if (!summary) {
     return <p className="text-sm text-muted-foreground">Carregando receita...</p>;
   }
-
-  const pending = candidateList.candidates.filter(
-    (candidate) => candidate.recognized_occurrence_id === null
-  );
   const chartPoints: FinancialTimeSeriesPoint[] = summary.time_series.map(
     (point) => ({
       date: point.date,
@@ -287,63 +207,6 @@ export function RevenueSection({
           </Card>
         ))}
       </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Ocorrências aguardando confirmação</CardTitle>
-          <CardDescription>
-            Horários agendados não viram receita automaticamente.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {pending.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              Nenhuma ocorrência pendente neste período.
-            </p>
-          ) : (
-            <div className="divide-y">
-              {pending.map((candidate) => (
-                <div
-                  key={`${candidate.source_type}-${candidate.source_id}-${candidate.occurrence_date}`}
-                  className="flex flex-wrap items-center justify-between gap-3 py-3"
-                >
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-medium">{candidate.source_label}</p>
-                      <Badge variant="outline">
-                        {candidate.participants.length} pessoa(s)
-                      </Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {formatDateTime(candidate.starts_at)} ·{" "}
-                      {candidate.place_name ?? "Sem local"} ·{" "}
-                      {candidate.participants
-                        .map((participant) => participant.contact_name)
-                        .join(", ")}
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    disabled={!candidate.can_confirm}
-                    onClick={() => setSelectedCandidate(candidate)}
-                  >
-                    <CheckCircle2 className="size-4" />
-                    {candidate.can_confirm
-                      ? "Confirmar ocorrência"
-                      : "Aguardando a data"}
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-          {candidateList.total > candidateList.candidates.length && (
-            <p className="mt-3 text-xs text-muted-foreground">
-              Exibindo as primeiras {candidateList.candidates.length} de{" "}
-              {candidateList.total} ocorrências.
-            </p>
-          )}
-        </CardContent>
-      </Card>
 
       <div className="grid gap-5 xl:grid-cols-[1.3fr_1fr]">
         <Card>
@@ -463,18 +326,6 @@ export function RevenueSection({
           )}
         </CardContent>
       </Card>
-
-      {selectedCandidate && (
-        <RevenueConfirmDialog
-          key={`${selectedCandidate.source_type}-${selectedCandidate.source_id}-${selectedCandidate.occurrence_date}`}
-          candidate={selectedCandidate}
-          open
-          onOpenChange={(open) => {
-            if (!open) setSelectedCandidate(null);
-          }}
-          onConfirmed={confirmed}
-        />
-      )}
     </div>
   );
 }

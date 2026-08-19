@@ -61,7 +61,11 @@ export function AssignSlotDialog({
   }, [contact.home_place_id, selectedPlaceId]);
 
   useEffect(() => {
-    if (open) loadData();
+    if (!open) return;
+    const timer = window.setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [open, loadData]);
 
   // Filter: exclude assigned, full, and filter by selected place

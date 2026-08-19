@@ -1,4 +1,4 @@
-# Page: Minhas Regras (Operational Rules)
+# Page: Configurações (Tenant Definitions)
 
 **Route:** `/minhas-regras`
 **File:** `frontend/src/app/(protected)/minhas-regras/page.tsx`
@@ -9,9 +9,14 @@
 
 ## Overview
 
-Minhas Regras holds operational settings that scheduling and make-up
-credit logic enforce for every tenant, independent of whether the
-Financeiro module is enabled:
+The `/minhas-regras` route is presented as **Configurações** in the product.
+It is the tenant-facing home for operational definitions and, when enabled,
+financial definitions. The route name remains unchanged for bookmark
+compatibility.
+
+Operational settings are available to every tenant and are enforced by
+scheduling and make-up credit logic independently of whether the Financeiro
+module is enabled:
 
 - `assert_within_work_journey` (`app/services/appointments.py`) reads the
   work journey directly and fails open (unrestricted) only if no rows
@@ -23,9 +28,8 @@ Both settings previously lived only inside Financeiro's Configuração tab,
 which meant a tenant without `commercial_financials` could never see or
 change values that were still being enforced against them. This page
 fixes that by exposing them ungated, via `require_professional_id` alone.
-
-`PrimeTimeWindow` stays in Financeiro — it's a pricing/billing
-categorization construct, not a scheduling/eligibility gate.
+Finance-enabled tenants additionally see the existing financial configuration
+forms without changing their API or audit behavior.
 
 ---
 
@@ -35,6 +39,9 @@ categorization construct, not a scheduling/eligibility gate.
 |---|---|---|
 | `WorkJourneySection` | `components/rules/work-journey-section.tsx` | Define work and break intervals per weekday |
 | `CancellationNoticeSection` | `components/rules/cancellation-notice-section.tsx` | Set the make-up credit cancellation notice window |
+| `GlobalRatesSection` | `components/financial/global-rates-section.tsx` | Set default commercial status and participant rates |
+| `PrimeTimeSection` | `components/financial/prime-time-section.tsx` | Set premium-time windows |
+| `PlaceRatesSection` | `components/financial/place-rates-section.tsx` | Set generic and place-specific rate matrices |
 
 ---
 
@@ -56,6 +63,21 @@ categorization construct, not a scheduling/eligibility gate.
 - Endpoints: `GET /api/rules/cancellation-notice-hours`,
   `PATCH /api/rules/cancellation-notice-hours`
 
+### Finance-enabled definitions
+
+Tenants with `commercial_financials` see three additional tabs:
+
+- **Valores globais** — default commercial status and hourly rates by
+  participant count; `GET`/`PATCH /api/financial/settings`.
+- **Horários nobres** — weekday/time premium windows;
+  `PUT /api/financial/prime-time-windows`.
+- **Valores por local** — generic and per-place regular/prime rate matrices;
+  `GET /api/financial/configuration` plus the existing rates replacement
+  endpoints.
+
+These tabs are not rendered for a tenant without the financial module. Their
+existing server-side feature checks remain the authoritative protection.
+
 ---
 
 ## Data Sources
@@ -64,13 +86,16 @@ categorization construct, not a scheduling/eligibility gate.
 |---|---|
 | Work journey | `GET /api/rules/work-journey` |
 | Cancellation notice hours | `GET /api/rules/cancellation-notice-hours` |
+| Financial settings (feature-gated) | `GET /api/financial/settings` |
+| Financial configuration (feature-gated) | `GET /api/financial/configuration` |
 
 ---
 
 ## Visual Design
 
-The page uses a compact tab control to separate **Jornada de trabalho** from
-**Reposições**. Each tab retains its own save button. Work-journey days allow
-adding and removing pause rows; client-side validation prevents a pause outside
-the daily journey or overlapping pauses before the backend repeats the same
-enforcement.
+The page uses a compact tab control. Every tenant sees **Jornada de trabalho**
+and **Reposições**; finance-enabled tenants additionally see the three
+financial-definition tabs. Each tab retains its own save button. Work-journey
+days allow adding and removing pause rows; client-side validation prevents a
+pause outside the daily journey or overlapping pauses before the backend
+repeats the same enforcement.

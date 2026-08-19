@@ -26,7 +26,7 @@ const navItems = [
     feature: "commercial_financials",
   },
   { label: "Painel", icon: LayoutGrid, href: undefined },
-  { label: "Minhas Regras", icon: Settings, href: "/minhas-regras" },
+  { label: "Configurações", icon: Settings, href: "/minhas-regras" },
   { label: "Mock Chat", icon: MessageSquare, href: "/dev/mock-chat" },
 ];
 

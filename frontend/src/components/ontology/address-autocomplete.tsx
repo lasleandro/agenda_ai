@@ -26,7 +26,8 @@ export function AddressAutocomplete({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    setQuery(value);
+    const timer = window.setTimeout(() => setQuery(value), 0);
+    return () => window.clearTimeout(timer);
   }, [value]);
 
   useEffect(() => {
@@ -40,7 +41,6 @@ export function AddressAutocomplete({
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
   function handleSelect(result: GeocodeResult) {

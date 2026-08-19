@@ -7,14 +7,10 @@ import {
   CircleDollarSign,
   FlaskConical,
   ReceiptText,
-  Settings2,
 } from "lucide-react";
 import { FinancialDashboardSection } from "@/components/financial/financial-dashboard-section";
 import { FinancialMonthSummary } from "@/components/financial/financial-month-summary";
 import { FinancialSimulator } from "@/components/financial/financial-simulator";
-import { GlobalRatesSection } from "@/components/financial/global-rates-section";
-import { PlaceRatesSection } from "@/components/financial/place-rates-section";
-import { PrimeTimeSection } from "@/components/financial/prime-time-section";
 import { RevenueSection } from "@/components/financial/revenue-section";
 import {
   fetchFinancialDashboard,
@@ -27,14 +23,12 @@ import { fetchSession, sessionHasFeature } from "@/lib/auth";
 import type {
   FinancialConfigurationDetail,
   FinancialDashboardDetail,
-  GenericPlaceRateMatrixDetail,
   FinancialScenarioDetail,
   FinancialSettingsDetail,
-  PlaceRateMatrixDetail,
   RevenueSummaryDetail,
 } from "@/lib/types";
 
-type FinanceTab = "dashboard" | "revenue" | "simulator" | "configuration";
+type FinanceTab = "dashboard" | "revenue" | "simulator";
 
 function dateInputValue(value: Date) {
   const year = value.getFullYear();
@@ -144,25 +138,6 @@ export default function FinanceiroPage() {
     }
   }
 
-  function updatePlace(matrix: PlaceRateMatrixDetail) {
-    setConfiguration((current) =>
-      current
-        ? {
-            ...current,
-            places: current.places.map((place) =>
-              place.place_id === matrix.place_id ? matrix : place
-            ),
-          }
-        : current
-    );
-  }
-
-  function updateGenericPlace(matrix: GenericPlaceRateMatrixDetail) {
-    setConfiguration((current) =>
-      current ? { ...current, generic_place: matrix } : current
-    );
-  }
-
   if (
     error &&
     (!settings || !configuration || !dashboard || !monthRevenueSummary)
@@ -182,7 +157,6 @@ export default function FinanceiroPage() {
     { key: "dashboard", label: "Visão geral", icon: BarChart3 },
     { key: "revenue", label: "Receita", icon: ReceiptText },
     { key: "simulator", label: "Simulador", icon: FlaskConical },
-    { key: "configuration", label: "Configuração", icon: Settings2 },
   ];
 
   return (
@@ -193,7 +167,7 @@ export default function FinanceiroPage() {
           Financeiro
         </h1>
         <p className="text-sm text-muted-foreground">
-          Acompanhe capacidade, compare cenários e configure suas regras.
+          Acompanhe capacidade, receita e cenários.
         </p>
       </div>
 
@@ -265,28 +239,6 @@ export default function FinanceiroPage() {
             dateFrom={filters.dateFrom}
             dateTo={filters.dateTo}
           />
-        )}
-
-        {activeTab === "configuration" && (
-          <>
-            <GlobalRatesSection settings={settings} onSaved={setSettings} />
-            <PrimeTimeSection
-              windows={configuration.prime_time_windows}
-              onSaved={(windows) =>
-                setConfiguration((current) =>
-                  current
-                    ? { ...current, prime_time_windows: windows }
-                    : current
-                )
-              }
-            />
-            <PlaceRatesSection
-              genericPlace={configuration.generic_place}
-              places={configuration.places}
-              onSaved={updatePlace}
-              onGenericSaved={updateGenericPlace}
-            />
-          </>
         )}
       </div>
     </div>

@@ -20,7 +20,7 @@ A passive WhatsApp Business copilot that converts conversations between independ
 - [Agenda (Calendar)](docs/pages/agenda.md) — primary scheduling interface with FullCalendar week view, appointment creation, group management.
 - [Clientes (Contacts)](docs/pages/clientes.md) — customer list with search/groups, and detail page with level, address, courtesy appointments, fixed slots.
 - [Financeiro (Financial)](docs/pages/financeiro.md) — financial dashboard with revenue projections, rate configuration, what-if scenarios, and revenue occurrence confirmation.
-- [Minhas Regras (Operational Rules)](docs/pages/minhas_regras.md) — work journey and make-up cancellation notice window, ungated by the commercial_financials feature flag.
+- [Configurações (Tenant Definitions)](docs/pages/minhas_regras.md) — operational rules for every tenant plus financial definitions when the commercial_financials module is enabled.
 - [Chat / AI Assistant](docs/pages/chat.md) — floating chat panel accessible from every page, with tool call transparency and action confirmation.
 
 ### Roadmaps & Guides

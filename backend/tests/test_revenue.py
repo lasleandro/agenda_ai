@@ -164,7 +164,7 @@ def test_revenue_confirmation_snapshots_reporting_and_tenant_scope() -> None:
         db.add_all([place, *contacts])
         db.flush()
         today = datetime.now(TIMEZONE).date()
-        monday = today - timedelta(days=today.weekday())
+        monday = today - timedelta(days=today.weekday() + 7)
         created_at = datetime.combine(
             monday - timedelta(days=7),
             time(12),
@@ -401,4 +401,67 @@ def test_revenue_confirmation_snapshots_reporting_and_tenant_scope() -> None:
             [professional, other_professional],
             [owner, admin, other_owner, other_admin],
         )
+        db.close()
+
+
+def test_revenue_candidate_marks_future_occurrence_as_not_confirmable() -> None:
+    db = SessionLocal()
+    professional, owner, admin, cookies = _create_tenant(db)
+    try:
+        contact = Contact(
+            professional_id=professional.id,
+            phone=f"+55119{uuid.uuid4().hex[:8]}",
+            display_name="Cliente futuro",
+            normalized_name="cliente futuro",
+        )
+        db.add(contact)
+        db.flush()
+        start_at = datetime.combine(
+            datetime.now(TIMEZONE).date() + timedelta(days=1),
+            time(10),
+            tzinfo=TIMEZONE,
+        )
+        appointment = Appointment(
+            professional_id=professional.id,
+            contact_id=contact.id,
+            service="Aula futura",
+            start_at=start_at,
+            end_at=start_at + timedelta(hours=1),
+            status="confirmed",
+            source="dashboard",
+        )
+        db.add(appointment)
+        db.commit()
+
+        candidates = client.get(
+            "/api/financial/revenue/candidates",
+            params={
+                "date_from": start_at.date().isoformat(),
+                "date_to": start_at.date().isoformat(),
+            },
+            cookies=cookies,
+        )
+        assert candidates.status_code == 200
+        candidate = candidates.json()["candidates"][0]
+        assert candidate["can_confirm"] is False
+
+        confirmation = client.post(
+            "/api/financial/revenue/occurrences",
+            json={
+                "source_type": "appointment",
+                "source_id": str(appointment.id),
+                "occurrence_date": start_at.date().isoformat(),
+                "participant_outcomes": [
+                    {
+                        "contact_id": str(contact.id),
+                        "attendance_status": "attended",
+                        "billable": True,
+                    }
+                ],
+            },
+            cookies=cookies,
+        )
+        assert confirmation.status_code == 422
+    finally:
+        _cleanup(db, [professional], [owner, admin])
         db.close()

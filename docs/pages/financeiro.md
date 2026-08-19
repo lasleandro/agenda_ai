@@ -8,9 +8,10 @@
 
 ## Overview
 
-The Financeiro module is a comprehensive financial management dashboard
-for the instructor. It covers revenue projections, rate configuration,
-what-if scenario modeling, and revenue occurrence confirmation.
+The Financeiro module is a financial analysis dashboard for the instructor. It
+covers revenue projections, what-if scenario modeling, and revenue occurrence
+confirmation. Tenant financial definitions are configured under
+`/minhas-regras` (presented as **Configurações**).
 
 If the tenant does not have the `commercial_financials` feature enabled,
 this route redirects to the home page.
@@ -22,16 +23,13 @@ this route redirects to the home page.
 | Component | File | Purpose |
 |---|---|---|
 | `FinancialDashboardSection` | `components/financial/financial-dashboard-section.tsx` | Date-filtered overview with key metrics |
-| `RevenueSection` | `components/financial/revenue-section.tsx` | Revenue occurrence candidates list with confirm/deny |
+| `RevenueSection` | `components/financial/revenue-section.tsx` | Recognized revenue metrics, breakdowns, time series, and immutable history |
 | `FinancialSimulator` | `components/financial/financial-simulator.tsx` | What-if scenario modeling |
 | `SimulatedAgenda` | `components/financial/simulated-agenda.tsx` | Read-only monthly allocation for an evaluated scenario |
-| `GlobalRatesSection` | `components/financial/global-rates-section.tsx` | Edit per-participant-count hourly rates |
-| `PrimeTimeSection` | `components/financial/prime-time-section.tsx` | Configure prime-time windows |
-| `PlaceRatesSection` | `components/financial/place-rates-section.tsx` | Place-specific rate matrices |
 
 ---
 
-## Four Tabs
+## Three Tabs
 
 ### Visao Geral (Dashboard)
 
@@ -55,12 +53,12 @@ this route redirects to the home page.
 
 ### Receita (Revenue)
 
-- Lists revenue occurrence candidates for a date range
-- Each occurrence shows: date, label, participants, billable count,
-  estimated total
-- **Confirm** button: freezes occurrence → `POST /api/financial/revenue/occurrences`
-- **Deny** button: dismisses candidate (soft delete or status change)
-- Paginated, infinite scroll or load-more
+- Shows recognized revenue for the selected period, including metrics,
+  breakdowns, time series, and immutable occurrence snapshots.
+- Confirmation of whether a scheduled class happened is an operational action
+  under **Agenda → Confirmações**, not a Financeiro action. Confirmation still
+  freezes the resulting revenue snapshot through
+  `POST /api/financial/revenue/occurrences`.
 - **"Renda de eventos" stat tile**: sum of confirmed `InstructorEvent.income_cents`
   in the period (instructor events roadmap v0.1) — refereeing, workshops,
   clinics. Surfaced alongside, not merged into, the participant-priced
@@ -100,30 +98,6 @@ this route redirects to the home page.
 - **Save scenario** → `POST /api/financial/scenarios` for later comparison
 - **Load scenario** → `GET /api/financial/scenarios` to view saved scenarios
 
-### Configuracao (Configuration)
-
-Four sub-sections stacked vertically:
-
-**1. Global Rates**
-- Per-participant-count (1, 2, 3, 4 students) hourly rates in cents
-- Simple input grid with save button
-- Endpoint: included in `PUT /api/financial/settings`
-
-**2. Prime-Time Windows**
-- Define which days/times are "prime" (priced higher)
-- Multi-select days of week + time range pairs
-- Endpoint: `PUT /api/financial/prime-time-windows`
-
-**3. Place Rates**
-- For each place, define regular and prime rates per participant count
-- Matrix input: rows = participant counts, columns = time categories
-- Endpoint: `PUT /api/financial/places/{id}/rates`
-
-Work journey (daily schedule) and the make-up cancellation notice window
-moved to `docs/pages/minhas_regras.md` — they aren't feature-gated, since
-scheduling and make-up credit eligibility enforce them for every tenant
-regardless of `commercial_financials`.
-
 ---
 
 ## Data Sources
@@ -146,5 +120,4 @@ regardless of `commercial_financials`.
 - Dashboard: card-based metrics with large numbers and sparkline trends
 - Revenue: table-like list with status badges and action buttons
 - Simulator: form on left, results on right
-- Configuration: grouped form sections with inline save buttons
 - All amounts displayed in the instructor's configured currency

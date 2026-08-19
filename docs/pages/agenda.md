@@ -9,7 +9,9 @@
 
 The Agenda is the primary landing page and main scheduling interface.
 It displays a weekly calendar with calendar items (appointments, recurring
-classes, and instructor events) over place-stay background blocks.
+classes, and instructor events) over place-stay background blocks. Tenants
+with `commercial_financials` also receive a **Confirmações** subtab for
+closing out completed schedule occurrences.
 
 ---
 
@@ -18,6 +20,7 @@ classes, and instructor events) over place-stay background blocks.
 | Component | File | Purpose |
 |---|---|---|
 | `WeekCalendar` | `components/calendar/week-calendar.tsx` | FullCalendar-based week view. Click-to-create, click-to-view — no drag-to-reschedule; rescheduling a single occurrence is currently an AI-assistant-only action (`propose_reschedule_occurrence`) |
+| `RevenueConfirmationQueue` | `components/calendar/revenue-confirmation-queue.tsx` | Finance-enabled queue of completed, unrecognized schedule occurrences; opens the existing attendance/billing confirmation dialog |
 | `AppointmentFormDialog` | `components/calendar/appointment-form-dialog.tsx` | Modal form with an Aula/Evento toggle. Aula has an Individual/Grupo choice before customer selection; a group can start with 1 and select up to 4 customers. Evento creates a non-class `InstructorEvent` (event-type dropdown, optional income). No edit form for either — editing an existing appointment or event isn't wired up in the dashboard yet |
 | `AppointmentPanel` | `components/calendar/appointment-panel.tsx` | Slide-over read-only detail panel for a single appointment (date/time, place, service, participants, estimated revenue using the Financial rules, a "Reagendado" badge when viewing a rescheduled occurrence) — no cancel/edit actions live here |
 | `InstructorEventPanel` | `components/calendar/instructor-event-panel.tsx` | Read-only details for a non-class event: type, date/time, location, optional income, and note |
@@ -36,6 +39,7 @@ classes, and instructor events) over place-stay background blocks.
 | Places | `GET /api/places` |
 | Recurring slots | `GET /api/recurring-slots` |
 | Waitlist entries (open + matched) | `GET /api/waitlist-entries` |
+| Completed financial confirmation candidates (feature-gated) | `GET /api/financial/revenue/candidates?date_from=&date_to=` |
 
 ---
 
@@ -55,6 +59,7 @@ classes, and instructor events) over place-stay background blocks.
 | Refresh | Manual refresh button (spinning-icon button next to the event count), or automatically right after the AI assistant confirms a mutation | Re-fetches recurring slots + the visible date range |
 | Toggle Fila de Espera overlay | "Fila de espera" chip next to the event count (default off) | Client-side only, toggles the grey ghost cards already fetched |
 | Filter incomplete groups | "Grupos incompletos" chip next to the event count (default off) | Client-side only; shows booked group classes with 1–3 customers. Opening one shows current estimated revenue and four-person revenue capacity, with hover explanations. |
+| Confirm a completed occurrence | Agenda → Confirmações → select a completed unrecognized class, record attendance/billing outcome, then confirm | `POST /api/financial/revenue/occurrences` |
 | Book a waitlisted contact | Click a grey ghost card → `AppointmentFormDialog` opens pre-filled (contact/place/time) → save | `POST /api/appointments` then `POST /api/waitlist-entries/{id}/fulfill` |
 
 ---
@@ -76,6 +81,10 @@ classes, and instructor events) over place-stay background blocks.
 - **Instructor events**: Solid amber blocks, always visible (no toggle) —
   distinct from appointment-status colors and the grey waitlist cards.
   Read-only on click for now; no edit/cancel UI wired up yet.
+- **Confirmações subtab**: Available only with `commercial_financials`; it
+  lists completed, unrecognized occurrences from the current month in newest
+  first order. Future classes are intentionally excluded, even though they are
+  scheduled in Agenda.
 
 ---
 

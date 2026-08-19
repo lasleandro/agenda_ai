@@ -124,7 +124,7 @@ agenda_ai/
         financial_analytics.py  # Analytics endpoints
         instructor_events.py  # Non-class calendar entries (refereeing, workshops, clinics)
         revenue.py       # Revenue confirmation flow
-        rules.py         # Operational rules — work journey, make-up cancellation notice window (ungated)
+        rules.py         # Tenant operational rules — work journey, make-up cancellation notice window (ungated)
         waitlist.py      # Fila de Espera CRUD (list/create/cancel/fulfill)
         whatsapp.py      # Inbound webhook handler (routes to both the passive
                           # pipeline and the active agent channel by receiving number)
