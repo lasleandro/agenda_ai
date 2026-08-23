@@ -3,15 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  createMockCustomer,
   fetchConversation,
   fetchConversations,
   fetchMockConversation,
+  fetchMockCustomers,
   processConversationNow,
   resetMockConversation,
   sendMockMessage,
 } from "@/lib/api";
 import { fetchSession, login } from "@/lib/auth";
-import type { CandidateDetail, ConversationDetail, ConversationSummary } from "@/lib/types";
+import type { CandidateDetail, ConversationDetail, ConversationSummary, MockCustomer } from "@/lib/types";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -90,16 +92,19 @@ function MockChat() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [instructorPhone, setInstructorPhone] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [mockCustomers, setMockCustomers] = useState<MockCustomer[]>([]);
   const [liveConversations, setLiveConversations] = useState<ConversationSummary[]>([]);
   const [conversation, setConversation] = useState<ConversationDetail | null>(null);
   const [processing, setProcessing] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [creatingCustomer, setCreatingCustomer] = useState(false);
 
   // Polling and post-send refreshes can overlap; fetch responses aren't
   // guaranteed to resolve in request order. Only apply the response from
   // the most recently *initiated* request, so a slow stale response can't
   // clobber a newer one that already landed.
   const latestRequestId = useRef(0);
+  const latestMockLoadId = useRef(0);
 
   const refresh = useCallback(async (id: string) => {
     const requestId = ++latestRequestId.current;
@@ -113,8 +118,9 @@ function MockChat() {
     if (mode !== "mock") return;
 
     let active = true;
-    fetchMockConversation().then((info) => {
+    Promise.all([fetchMockCustomers(), fetchMockConversation()]).then(([{ customers }, info]) => {
       if (!active) return;
+      setMockCustomers(customers);
       setConversationId(info.conversation_id);
       setInstructorPhone(info.instructor_phone);
       setCustomerPhone(info.customer_phone);
@@ -154,7 +160,8 @@ function MockChat() {
   }, [conversationId, refresh]);
 
   async function handleSend(sender: "instructor" | "customer", text: string) {
-    await sendMockMessage(sender, text);
+    if (!customerPhone) return;
+    await sendMockMessage(sender, text, customerPhone);
     if (conversationId) await refresh(conversationId);
   }
 
@@ -176,12 +183,37 @@ function MockChat() {
     setConversation((current) => (current ? { ...current, messages: [], candidates: [] } : current));
     setRestarting(true);
     try {
-      await resetMockConversation();
+      await resetMockConversation(customerPhone);
       await refresh(conversationId);
     } catch {
       await refresh(conversationId);
     } finally {
       setRestarting(false);
+    }
+  }
+
+  async function handleMockCustomerChange(phone: string) {
+    const loadId = ++latestMockLoadId.current;
+    latestRequestId.current += 1;
+    setConversationId(null);
+    setConversation(null);
+    setCustomerPhone(phone);
+    const info = await fetchMockConversation(phone);
+    if (loadId !== latestMockLoadId.current) return;
+    setConversationId(info.conversation_id);
+    setInstructorPhone(info.instructor_phone);
+    setCustomerPhone(info.customer_phone);
+    await refresh(info.conversation_id);
+  }
+
+  async function handleCreateMockCustomer() {
+    setCreatingCustomer(true);
+    try {
+      const customer = await createMockCustomer();
+      setMockCustomers((current) => [...current, customer]);
+      await handleMockCustomerChange(customer.customer_phone);
+    } finally {
+      setCreatingCustomer(false);
     }
   }
 
@@ -203,11 +235,15 @@ function MockChat() {
     setConversation(null);
     setInstructorPhone("");
     setCustomerPhone("");
+    setMockCustomers([]);
     setMode(nextMode);
   }
 
   const messages = conversation?.messages ?? [];
   const isMock = mode === "mock";
+  const selectedMockCustomer = mockCustomers.find(
+    (customer) => customer.customer_phone === customerPhone
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
@@ -248,13 +284,31 @@ function MockChat() {
             </select>
           )}
           {isMock && (
-            <Button
-              variant="outline"
-              onClick={handleRestart}
-              disabled={!conversationId || restarting}
-            >
-              {restarting ? "Reiniciando..." : "Reiniciar conversa"}
-            </Button>
+            <>
+              <select
+                aria-label="Cliente simulado"
+                className="h-8 max-w-64 rounded-lg border border-input bg-background px-2 text-sm"
+                value={customerPhone}
+                onChange={(event) => handleMockCustomerChange(event.target.value)}
+                disabled={creatingCustomer || restarting}
+              >
+                {mockCustomers.map((customer) => (
+                  <option key={customer.customer_phone} value={customer.customer_phone}>
+                    {customer.customer_name}
+                  </option>
+                ))}
+              </select>
+              <Button variant="outline" onClick={handleCreateMockCustomer} disabled={creatingCustomer}>
+                {creatingCustomer ? "Gerando..." : "Novo cliente"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleRestart}
+                disabled={!conversationId || restarting}
+              >
+                {restarting ? "Reiniciando..." : "Reiniciar conversa"}
+              </Button>
+            </>
           )}
           <Button onClick={handleProcessNow} disabled={!conversationId || processing || restarting}>
             {processing ? "Processando..." : "Processar agora"}
@@ -264,7 +318,7 @@ function MockChat() {
 
       <div className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
         <ChatPanel
-          title={isMock ? "Cliente" : conversation?.contact_name ?? "Cliente"}
+          title={isMock ? selectedMockCustomer?.customer_name ?? "Cliente" : conversation?.contact_name ?? "Cliente"}
           phone={customerPhone}
           selfDirection="inbound"
           messages={messages}

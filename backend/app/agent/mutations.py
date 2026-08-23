@@ -33,10 +33,19 @@ from app.models import (
     OperatorActionCandidate,
     Place,
     RecurringSlot,
+    RecurringSlotOccurrenceParticipant,
     RecurringSlotParticipant,
     WaitlistEntry,
 )
-from app.services import appointment_participants, appointments, participants, schedule_overrides
+from app.services import (
+    appointment_participants,
+    appointments,
+    participants,
+    occurrence_class_formats,
+    recurring_slot_occurrence_participants,
+    schedule_overrides,
+)
+from app.services.schedule_conflicts import assert_no_scheduled_class_overlap
 from app.services import instructor_events as instructor_events_service
 from app.services.place_stays import resolve_place_stay
 from app.services import waitlist as waitlist_service
@@ -303,6 +312,299 @@ def _execute_remove_group_member(
 
 
 # ---------------------------------------------------------------------------
+# propose_add_group_occurrence_participant
+# ---------------------------------------------------------------------------
+
+def propose_add_group_occurrence_participant(
+    db: Session,
+    professional_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    correlation_id: uuid.UUID,
+    channel: str = "web",
+    *,
+    contact_id: str,
+    recurring_slot_id: str,
+    occurrence_date: str,
+) -> dict[str, Any]:
+    contact = (
+        db.query(Contact)
+        .filter(Contact.id == uuid.UUID(contact_id), Contact.professional_id == professional_id)
+        .first()
+    )
+    if contact is None:
+        return {"error": "Contact not found"}
+    slot = (
+        db.query(RecurringSlot)
+        .filter(
+            RecurringSlot.id == uuid.UUID(recurring_slot_id),
+            RecurringSlot.professional_id == professional_id,
+        )
+        .first()
+    )
+    if slot is None:
+        return {"error": "Group not found"}
+    if slot.slot_kind != "class" or slot.class_type != "group":
+        return {"error": "Dated participants can only be assigned to a recurring group"}
+    parsed_date = date.fromisoformat(occurrence_date)
+    is_permanent = (
+        db.query(RecurringSlotParticipant)
+        .filter(
+            RecurringSlotParticipant.recurring_slot_id == slot.id,
+            RecurringSlotParticipant.contact_id == contact.id,
+        )
+        .first()
+        is not None
+    )
+    if is_permanent:
+        return {"error": "Contact is already a permanent participant"}
+    existing = (
+        db.query(RecurringSlotOccurrenceParticipant)
+        .filter(
+            RecurringSlotOccurrenceParticipant.recurring_slot_id == slot.id,
+            RecurringSlotOccurrenceParticipant.contact_id == contact.id,
+            RecurringSlotOccurrenceParticipant.occurrence_date == parsed_date,
+        )
+        .first()
+    )
+    if existing is not None:
+        return {"error": "Contact is already in this occurrence"}
+    if (
+        recurring_slot_occurrence_participants.count_participants(
+            db, slot.id, parsed_date
+        )
+        >= slot.max_participants
+    ):
+        return {"error": "This occurrence is at full capacity"}
+
+    place_name = _place_name(db, slot.place_id)
+    preview_text = (
+        f"Adicionar {contact.display_name} somente à aula de {_group_label(slot)} "
+        f"em {parsed_date.strftime('%d/%m/%Y')} ({place_name}). "
+        "A participação permanente no grupo não será alterada."
+    )
+    candidate = candidates.propose(
+        db,
+        professional_id,
+        actor_user_id,
+        tool_name="propose_add_group_occurrence_participant",
+        arguments={
+            "contact_id": contact_id,
+            "recurring_slot_id": recurring_slot_id,
+            "occurrence_date": occurrence_date,
+        },
+        preview_text=preview_text,
+        affected_entities=[
+            {"entity_type": "contact", "entity_id": contact_id, "label": contact.display_name},
+            {"entity_type": "recurring_slot", "entity_id": recurring_slot_id, "label": _group_label(slot)},
+        ],
+        correlation_id=correlation_id,
+        channel=channel,
+    )
+    return _pending_result(candidate)
+
+
+def _execute_add_group_occurrence_participant(
+    db: Session, professional_id: uuid.UUID, candidate: OperatorActionCandidate
+) -> ExecutionResult:
+    args = candidate.resolved_arguments
+    contact = (
+        db.query(Contact)
+        .filter(
+            Contact.id == uuid.UUID(args["contact_id"]),
+            Contact.professional_id == professional_id,
+        )
+        .first()
+    )
+    slot = (
+        db.query(RecurringSlot)
+        .filter(
+            RecurringSlot.id == uuid.UUID(args["recurring_slot_id"]),
+            RecurringSlot.professional_id == professional_id,
+        )
+        .first()
+    )
+    if contact is None or slot is None:
+        raise ValueError("Contact or group no longer exists")
+    parsed_date = date.fromisoformat(args["occurrence_date"])
+    try:
+        schedule_overrides.get_target_occurrence(
+            db, professional_id, "recurring_slot", slot.id, parsed_date
+        )
+        participant = recurring_slot_occurrence_participants.add_participant(
+            db, professional_id, slot, contact, parsed_date
+        )
+    except HTTPException as exc:
+        raise ValueError(str(exc.detail)) from exc
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type="schedule.participant.added",
+        occurred_at=datetime.now(TIMEZONE),
+        actor_type="user",
+        actor_id=candidate.actor_user_id,
+        source_channel=candidate.channel,
+        entity_type="recurring_slot",
+        entity_id=slot.id,
+        correlation_id=candidate.correlation_id,
+        operator_action_candidate_id=candidate.id,
+        payload={
+            "contact_id": str(contact.id),
+            "participant_id": str(participant.id),
+            "occurrence_date": args["occurrence_date"],
+            "scope": "occurrence",
+        },
+        before_state=None,
+        after_state={"contact_id": str(contact.id)},
+    )
+    return ExecutionResult(
+        ok=True,
+        summary=(
+            f"{contact.display_name} adicionado(a) somente à aula de "
+            f"{args['occurrence_date']}."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# propose_create_group_slot
+# ---------------------------------------------------------------------------
+
+def propose_create_group_slot(
+    db: Session,
+    professional_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    correlation_id: uuid.UUID,
+    channel: str = "web",
+    *,
+    place_id: str,
+    start_at: str,
+    end_at: str,
+    is_recurring: bool,
+    max_participants: int = 4,
+    label: str | None = None,
+) -> dict[str, Any]:
+    try:
+        parsed_start = _parse_datetime(start_at).astimezone(TIMEZONE)
+        parsed_end = _parse_datetime(end_at).astimezone(TIMEZONE)
+        parsed_place_id = uuid.UUID(place_id)
+    except ValueError:
+        return {"error": "place_id and times must be valid"}
+    if parsed_end <= parsed_start or parsed_end.date() != parsed_start.date():
+        return {"error": "Group slot must end after it starts on the same date"}
+    if not 1 <= max_participants <= 4:
+        return {"error": "Participant capacity must be between 1 and 4"}
+    place = (
+        db.query(Place)
+        .filter(Place.id == parsed_place_id, Place.professional_id == professional_id)
+        .first()
+    )
+    if place is None:
+        return {"error": "Place not found"}
+    try:
+        assert_no_scheduled_class_overlap(
+            db,
+            professional_id,
+            parsed_start.weekday(),
+            parsed_start.time().replace(tzinfo=None),
+            parsed_end.time().replace(tzinfo=None),
+            "weekly" if is_recurring else "once",
+            None if is_recurring else parsed_start.date(),
+        )
+    except HTTPException as exc:
+        return {"error": exc.detail}
+
+    recurrence_label = "semanal" if is_recurring else "avulsa"
+    candidate = candidates.propose(
+        db,
+        professional_id,
+        actor_user_id,
+        tool_name="propose_create_group_slot",
+        arguments={
+            "place_id": place_id,
+            "start_at": start_at,
+            "end_at": end_at,
+            "is_recurring": is_recurring,
+            "max_participants": max_participants,
+            "label": label,
+        },
+        preview_text=(
+            f"Abrir turma {recurrence_label} em {place.name}, "
+            f"{parsed_start.strftime('%d/%m %H:%M')}–{parsed_end.strftime('%H:%M')}, "
+            f"com 0/{max_participants} alunos."
+        ),
+        affected_entities=[{"entity_type": "place", "entity_id": place_id, "label": place.name}],
+        correlation_id=correlation_id,
+        channel=channel,
+    )
+    return _pending_result(candidate)
+
+
+def _execute_create_group_slot(
+    db: Session, professional_id: uuid.UUID, candidate: OperatorActionCandidate
+) -> ExecutionResult:
+    args = candidate.resolved_arguments
+    try:
+        parsed_start = _parse_datetime(args["start_at"]).astimezone(TIMEZONE)
+        parsed_end = _parse_datetime(args["end_at"]).astimezone(TIMEZONE)
+        place_id = uuid.UUID(args["place_id"])
+    except ValueError as exc:
+        raise ValueError("Group slot details are no longer valid") from exc
+    place = (
+        db.query(Place)
+        .filter(Place.id == place_id, Place.professional_id == professional_id)
+        .first()
+    )
+    if place is None:
+        raise ValueError("Place no longer exists")
+    recurrence_type = "weekly" if args["is_recurring"] else "once"
+    try:
+        assert_no_scheduled_class_overlap(
+            db,
+            professional_id,
+            parsed_start.weekday(),
+            parsed_start.time().replace(tzinfo=None),
+            parsed_end.time().replace(tzinfo=None),
+            recurrence_type,
+            None if args["is_recurring"] else parsed_start.date(),
+        )
+    except HTTPException as exc:
+        raise ValueError(str(exc.detail)) from exc
+    slot = RecurringSlot(
+        professional_id=professional_id,
+        place_id=place.id,
+        day_of_week=parsed_start.weekday(),
+        start_time=parsed_start.time().replace(tzinfo=None),
+        end_time=parsed_end.time().replace(tzinfo=None),
+        label=args.get("label"),
+        class_type="group",
+        slot_kind="class",
+        max_participants=args["max_participants"],
+        recurrence_type=recurrence_type,
+        scheduled_date=None if args["is_recurring"] else parsed_start.date(),
+        valid_from=parsed_start.date() if args["is_recurring"] else None,
+    )
+    db.add(slot)
+    db.flush()
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type="schedule.series.created",
+        occurred_at=datetime.now(TIMEZONE),
+        actor_type="user",
+        actor_id=candidate.actor_user_id,
+        source_channel=candidate.channel,
+        entity_type="recurring_slot",
+        entity_id=slot.id,
+        correlation_id=candidate.correlation_id,
+        operator_action_candidate_id=candidate.id,
+        payload={"class_type": "group", "max_participants": slot.max_participants},
+        before_state=None,
+        after_state={"participant_count": 0},
+    )
+    return ExecutionResult(ok=True, summary=f"Turma aberta em {place.name} com 0/{slot.max_participants} alunos.")
+
+
+# ---------------------------------------------------------------------------
 # propose_add_appointment_participant / propose_remove_appointment_participant
 # ---------------------------------------------------------------------------
 
@@ -311,6 +613,235 @@ def _appointment_label(db: Session, appointment: Appointment) -> str:
     primary_name = primary.display_name if primary else "Desconhecido"
     local_start = appointment.start_at.astimezone(TIMEZONE)
     return f"{appointment.service} de {primary_name} em {local_start.strftime('%d/%m/%Y %H:%M')}"
+
+
+def propose_set_appointment_format(
+    db: Session,
+    professional_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    correlation_id: uuid.UUID,
+    channel: str = "web",
+    *,
+    appointment_id: str,
+    class_type: str,
+    max_participants: int,
+) -> dict[str, Any]:
+    appointment = (
+        db.query(Appointment)
+        .filter(
+            Appointment.id == uuid.UUID(appointment_id),
+            Appointment.professional_id == professional_id,
+        )
+        .first()
+    )
+    if appointment is None:
+        return {"error": "Appointment not found"}
+    if class_type not in {"individual", "group"}:
+        return {"error": "Class type must be individual or group"}
+    if not isinstance(max_participants, int) or not 1 <= max_participants <= 4:
+        return {"error": "Participant capacity must be between 1 and 4"}
+
+    participant_count = appointment_participants.count_participants(db, appointment.id)
+    if class_type == "individual" and max_participants != 1:
+        return {"error": "An individual class has capacity for one participant"}
+    if class_type == "individual" and participant_count != 1:
+        return {"error": "Remove additional participants before converting to individual"}
+    if participant_count > max_participants:
+        return {"error": "Configured capacity cannot be below the current participants"}
+    if (
+        appointment.class_type == class_type
+        and appointment.max_participants == max_participants
+    ):
+        return {"error": "Appointment already has this format and capacity"}
+
+    label = _appointment_label(db, appointment)
+    format_label = "grupo" if class_type == "group" else "individual"
+    preview_text = (
+        f"Alterar a aula ({label}) para {format_label} "
+        f"com capacidade para {max_participants} aluno(s)."
+    )
+    candidate = candidates.propose(
+        db,
+        professional_id,
+        actor_user_id,
+        tool_name="propose_set_appointment_format",
+        arguments={
+            "appointment_id": appointment_id,
+            "class_type": class_type,
+            "max_participants": max_participants,
+        },
+        preview_text=preview_text,
+        affected_entities=[
+            {"entity_type": "appointment", "entity_id": appointment_id, "label": label},
+        ],
+        correlation_id=correlation_id,
+        channel=channel,
+    )
+    return _pending_result(candidate)
+
+
+def _execute_set_appointment_format(
+    db: Session, professional_id: uuid.UUID, candidate: OperatorActionCandidate
+) -> ExecutionResult:
+    args = candidate.resolved_arguments
+    appointment = (
+        db.query(Appointment)
+        .filter(
+            Appointment.id == uuid.UUID(args["appointment_id"]),
+            Appointment.professional_id == professional_id,
+        )
+        .first()
+    )
+    if appointment is None:
+        raise ValueError("Appointment no longer exists")
+
+    before_state = {
+        "class_type": appointment.class_type,
+        "max_participants": appointment.max_participants,
+    }
+    try:
+        appointments.update_appointment_format(
+            db,
+            appointment,
+            class_type=args["class_type"],
+            max_participants=args["max_participants"],
+        )
+    except HTTPException as exc:
+        raise ValueError(str(exc.detail)) from exc
+
+    after_state = {
+        "class_type": appointment.class_type,
+        "max_participants": appointment.max_participants,
+    }
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type="schedule.appointment.updated",
+        occurred_at=datetime.now(TIMEZONE),
+        actor_type="user",
+        actor_id=candidate.actor_user_id,
+        source_channel=candidate.channel,
+        entity_type="appointment",
+        entity_id=appointment.id,
+        correlation_id=candidate.correlation_id,
+        operator_action_candidate_id=candidate.id,
+        payload={"operation": "class_format_updated"},
+        before_state=before_state,
+        after_state=after_state,
+    )
+    return ExecutionResult(
+        ok=True,
+        summary=f"Formato da aula atualizado: {_appointment_label(db, appointment)}.",
+    )
+
+
+def propose_set_occurrence_class_format(
+    db: Session,
+    professional_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    correlation_id: uuid.UUID,
+    channel: str = "web",
+    *,
+    target_type: str,
+    target_id: str,
+    occurrence_date: str,
+    class_type: str,
+    max_participants: int,
+) -> dict[str, Any]:
+    if target_type not in VALID_TARGET_TYPES:
+        return {"error": "target_type must be appointment or recurring_slot"}
+    try:
+        parsed_date = date.fromisoformat(occurrence_date)
+        target_uuid = uuid.UUID(target_id)
+    except ValueError:
+        return {"error": "target_id and occurrence_date must be valid"}
+    try:
+        occurrence = schedule_overrides.get_target_occurrence(
+            db, professional_id, target_type, target_uuid, parsed_date
+        )
+        occurrence_class_formats.validate_format(
+            class_type=class_type,
+            max_participants=max_participants,
+            participant_count=occurrence.participant_count,
+        )
+    except HTTPException as exc:
+        return {"error": exc.detail}
+    format_label = "grupo" if class_type == "group" else "individual"
+    candidate = candidates.propose(
+        db,
+        professional_id,
+        actor_user_id,
+        tool_name="propose_set_occurrence_class_format",
+        arguments={
+            "target_type": target_type,
+            "target_id": target_id,
+            "occurrence_date": occurrence_date,
+            "class_type": class_type,
+            "max_participants": max_participants,
+        },
+        preview_text=(
+            f"Alterar somente a aula de {parsed_date.strftime('%d/%m/%Y')} para "
+            f"{format_label}, com capacidade para {max_participants} aluno(s)."
+        ),
+        affected_entities=[{"entity_type": target_type, "entity_id": target_id, "label": occurrence.source_label}],
+        correlation_id=correlation_id,
+        channel=channel,
+    )
+    return _pending_result(candidate)
+
+
+def _execute_set_occurrence_class_format(
+    db: Session, professional_id: uuid.UUID, candidate: OperatorActionCandidate
+) -> ExecutionResult:
+    args = candidate.resolved_arguments
+    target_id = uuid.UUID(args["target_id"])
+    parsed_date = date.fromisoformat(args["occurrence_date"])
+    try:
+        occurrence = schedule_overrides.get_target_occurrence(
+            db, professional_id, args["target_type"], target_id, parsed_date
+        )
+        before_state = {
+            "class_type": occurrence.class_type,
+            "max_participants": occurrence.max_participants,
+        }
+        occurrence_class_formats.set_format(
+            db,
+            professional_id,
+            source_type=args["target_type"],
+            source_id=target_id,
+            occurrence_date=parsed_date,
+            class_type=args["class_type"],
+            max_participants=args["max_participants"],
+            participant_count=occurrence.participant_count,
+            actor_user_id=candidate.actor_user_id,
+            source=candidate.channel,
+        )
+        updated = schedule_overrides.get_target_occurrence(
+            db, professional_id, args["target_type"], target_id, parsed_date
+        )
+    except HTTPException as exc:
+        raise ValueError(str(exc.detail)) from exc
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type=(
+            "schedule.appointment.updated"
+            if args["target_type"] == "appointment"
+            else "schedule.series.updated"
+        ),
+        occurred_at=datetime.now(TIMEZONE),
+        actor_type="user",
+        actor_id=candidate.actor_user_id,
+        source_channel=candidate.channel,
+        entity_type=args["target_type"],
+        entity_id=target_id,
+        correlation_id=candidate.correlation_id,
+        operator_action_candidate_id=candidate.id,
+        payload={"operation": "occurrence_class_format_updated", "occurrence_date": args["occurrence_date"]},
+        before_state=before_state,
+        after_state={"class_type": updated.class_type, "max_participants": updated.max_participants},
+    )
+    return ExecutionResult(ok=True, summary=f"Formato alterado somente para {args['occurrence_date']}.")
 
 
 def propose_add_appointment_participant(
@@ -354,10 +885,12 @@ def propose_add_appointment_participant(
     )
     if already_participant:
         return {"error": "Contact is already in this appointment"}
-    if (
-        appointment_participants.count_participants(db, appointment.id)
-        >= appointment_participants.MAX_PARTICIPANTS
-    ):
+    capacity = (
+        appointment.max_participants
+        if appointment.class_type == "group"
+        else appointment_participants.DEFAULT_GROUP_MAX_PARTICIPANTS
+    )
+    if appointment_participants.count_participants(db, appointment.id) >= capacity:
         return {"error": "This appointment is at full capacity"}
 
     label = _appointment_label(db, appointment)
@@ -482,14 +1015,7 @@ def propose_remove_appointment_participant(
         return {"error": "Contact is not a participant of this appointment"}
 
     label = _appointment_label(db, appointment)
-    class_type_transition = (
-        {"from": "group", "to": "individual"}
-        if appointment_participants.count_participants(db, appointment.id) == 2
-        else None
-    )
     preview_text = f"Remover {contact.display_name} da aula ({label})."
-    if class_type_transition:
-        preview_text += " O formato mudará de grupo para individual."
     candidate = candidates.propose(
         db,
         professional_id,
@@ -498,7 +1024,6 @@ def propose_remove_appointment_participant(
         arguments={
             "contact_id": contact_id,
             "appointment_id": appointment_id,
-            "class_type_transition": class_type_transition,
         },
         preview_text=preview_text,
         affected_entities=[
@@ -686,6 +1211,7 @@ def propose_create_appointment(
     contact_ids: list[str] | None = None,
     class_type: str = "individual",
     billing_type: str = "billable",
+    is_recurring: bool = False,
     idempotency_key: str | None = None,
     commit: bool = True,
 ) -> dict[str, Any]:
@@ -758,11 +1284,19 @@ def propose_create_appointment(
         if place_resolution.stay_id is not None
         else "local informado como exceção"
     )
-    preview_text = (
-        f"Criar aula {class_type} de {service.strip()} para {participant_label} em "
-        f"{local_start.strftime('%d/%m/%Y %H:%M')}, {place.name} "
-        f"({place_context}){courtesy_label}."
-    )
+    weekday_name = WEEKDAY_NAMES[local_start.weekday()]
+    if is_recurring:
+        preview_text = (
+            f"Criar aula {class_type} semanal de {service.strip()} para {participant_label}, "
+            f"toda {weekday_name}, {local_start.strftime('%H:%M')}–{parsed_end.astimezone(TIMEZONE).strftime('%H:%M')}, "
+            f"{place.name} ({place_context}){courtesy_label}."
+        )
+    else:
+        preview_text = (
+            f"Criar aula {class_type} de {service.strip()} para {participant_label} em "
+            f"{local_start.strftime('%d/%m/%Y %H:%M')}, {place.name} "
+            f"({place_context}){courtesy_label}."
+        )
     candidate = candidates.propose(
         db,
         professional_id,
@@ -778,6 +1312,7 @@ def propose_create_appointment(
             "end_at": parsed_end.isoformat(),
             "service": service,
             "billing_type": billing_type,
+            "is_recurring": is_recurring,
         },
         preview_text=preview_text,
         affected_entities=[
@@ -824,6 +1359,7 @@ def _execute_create_appointment(
         service=args["service"],
         start_at=_parse_datetime(args["start_at"]),
         end_at=_parse_datetime(args["end_at"]),
+        is_recurring=args.get("is_recurring", False),
         class_type=args.get("class_type", "individual"),
         source="assistant",
         actor=f"user:{candidate.actor_user_id}",
@@ -856,6 +1392,9 @@ def _execute_create_appointment(
         operator_action_candidate_id=candidate.id,
         payload={
             "contact_ids": participant_ids,
+            "class_type": args.get("class_type", "individual"),
+            "is_recurring": args.get("is_recurring", False),
+            "recurrence_rule": appointment.recurrence_rule,
             "requested_place_id": args.get("requested_place_id"),
             "resolved_place_id": str(appointment.place_id),
         },
@@ -987,6 +1526,7 @@ def _execute_redeem_makeup_credit(
         end_at=_parse_datetime(args["end_at"]),
         source="assistant",
         actor=f"user:{candidate.actor_user_id}",
+        billing_type="courtesy",
     )
 
     now = datetime.now(TIMEZONE)
@@ -1833,6 +2373,41 @@ MUTATION_TOOL_SPECS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "propose_create_group_slot",
+            "description": "Propose opening an EMPTY group class slot (turma), once or weekly, at a registered place. It starts with zero customers and still occupies the instructor calendar. Use ONLY when the instructor explicitly says 'turma', 'grupo', or asks to open capacity. Do NOT use to schedule a named customer — a weekly cadence alone is not group intent. For a named customer on a recurring schedule, use propose_create_appointment with is_recurring=true instead. Requires explicit instructor confirmation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "place_id": {"type": "string"},
+                    "start_at": {"type": "string", "description": "ISO 8601 datetime."},
+                    "end_at": {"type": "string", "description": "ISO 8601 datetime."},
+                    "is_recurring": {"type": "boolean"},
+                    "max_participants": {"type": "integer", "minimum": 1, "maximum": 4},
+                    "label": {"type": "string"},
+                },
+                "required": ["place_id", "start_at", "end_at", "is_recurring"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_add_group_occurrence_participant",
+            "description": "Propose adding a sporadic contact to ONE dated occurrence of a recurring group, without changing the permanent group roster. Use for requests such as 'can Ana join the Tuesday 18h group next week?'. Requires explicit instructor confirmation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "contact_id": {"type": "string"},
+                    "recurring_slot_id": {"type": "string", "description": "The group's recurring_slot_id, from find_groups or get_schedule."},
+                    "occurrence_date": {"type": "string", "description": "ISO date of the specific class occurrence."},
+                },
+                "required": ["contact_id", "recurring_slot_id", "occurrence_date"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "propose_remove_group_member",
             "description": "Propose removing a contact from a recurring class group's roster. Requires explicit instructor confirmation before it takes effect.",
             "parameters": {
@@ -1867,7 +2442,7 @@ MUTATION_TOOL_SPECS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "propose_create_appointment",
-            "description": "Propose creating a one-off individual or group appointment. The place is inherited only when exactly one place stay covers the full interval; otherwise ask for an explicit place. Requires instructor confirmation.",
+            "description": "Propose creating an individual or group appointment for one or more named customers. Supports both one-off and weekly recurring bookings — pass is_recurring=true for weekly cadence. The place is inherited only when exactly one place stay covers the full interval; otherwise ask for an explicit place. Requires instructor confirmation.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1879,6 +2454,7 @@ MUTATION_TOOL_SPECS: list[dict[str, Any]] = [
                     "contact_ids": {"type": "array", "items": {"type": "string"}, "description": "One to four contacts, including contact_id. Required for a group."},
                     "class_type": {"type": "string", "enum": ["individual", "group"], "description": "Defaults to individual."},
                     "billing_type": {"type": "string", "enum": ["billable", "courtesy"], "description": "Optional — 'courtesy' marks this as a free/courtesy class that shouldn't generate revenue."},
+                    "is_recurring": {"type": "boolean", "description": "Create a weekly recurring appointment when true. Defaults to false. A single named customer defaults to an individual appointment."},
                 },
                 "required": ["contact_id", "start_at", "end_at", "service"],
             },
@@ -1949,6 +2525,40 @@ MUTATION_TOOL_SPECS: list[dict[str, Any]] = [
                     "new_place_id": {"type": "string", "description": "Optional — omit to keep the same place."},
                 },
                 "required": ["target_type", "target_id", "occurrence_date", "new_start_at", "new_end_at"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_set_occurrence_class_format",
+            "description": "Propose changing format/capacity for ONE dated appointment or recurring-class occurrence, without changing the parent series. Requires explicit instructor confirmation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_type": {"type": "string", "enum": ["appointment", "recurring_slot"]},
+                    "target_id": {"type": "string", "description": "The source_id from get_schedule."},
+                    "occurrence_date": {"type": "string", "description": "ISO date for the single occurrence."},
+                    "class_type": {"type": "string", "enum": ["individual", "group"]},
+                    "max_participants": {"type": "integer", "minimum": 1, "maximum": 4},
+                },
+                "required": ["target_type", "target_id", "occurrence_date", "class_type", "max_participants"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_set_appointment_format",
+            "description": "Propose changing an existing one-off appointment between individual and group format, including its total participant capacity. Use when an instructor wants to promote an individual appointment into a group slot before adding other customers. Get appointment_id from get_schedule where source_type is appointment. Requires explicit instructor confirmation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "appointment_id": {"type": "string", "description": "The appointment source_id from get_schedule, where source_type == appointment."},
+                    "class_type": {"type": "string", "enum": ["individual", "group"]},
+                    "max_participants": {"type": "integer", "minimum": 1, "maximum": 4},
+                },
+                "required": ["appointment_id", "class_type", "max_participants"],
             },
         },
     },
@@ -2045,6 +2655,8 @@ MUTATION_TOOL_SPECS: list[dict[str, Any]] = [
 
 MUTATION_TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
     "propose_add_group_member": propose_add_group_member,
+    "propose_create_group_slot": propose_create_group_slot,
+    "propose_add_group_occurrence_participant": propose_add_group_occurrence_participant,
     "propose_remove_group_member": propose_remove_group_member,
     "propose_update_contact": propose_update_contact,
     "propose_create_appointment": propose_create_appointment,
@@ -2052,6 +2664,8 @@ MUTATION_TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
     "propose_cancel_schedule": propose_cancel_schedule,
     "propose_note_participant_absence": propose_note_participant_absence,
     "propose_reschedule_occurrence": propose_reschedule_occurrence,
+    "propose_set_occurrence_class_format": propose_set_occurrence_class_format,
+    "propose_set_appointment_format": propose_set_appointment_format,
     "propose_add_appointment_participant": propose_add_appointment_participant,
     "propose_remove_appointment_participant": propose_remove_appointment_participant,
     "propose_add_waitlist_entry": propose_add_waitlist_entry,
@@ -2060,6 +2674,10 @@ MUTATION_TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
 }
 
 candidates.MUTATION_EXECUTORS["propose_add_group_member"] = _execute_add_group_member
+candidates.MUTATION_EXECUTORS["propose_create_group_slot"] = _execute_create_group_slot
+candidates.MUTATION_EXECUTORS[
+    "propose_add_group_occurrence_participant"
+] = _execute_add_group_occurrence_participant
 candidates.MUTATION_EXECUTORS["propose_remove_group_member"] = _execute_remove_group_member
 candidates.MUTATION_EXECUTORS[
     "propose_add_appointment_participant"
@@ -2067,6 +2685,9 @@ candidates.MUTATION_EXECUTORS[
 candidates.MUTATION_EXECUTORS[
     "propose_remove_appointment_participant"
 ] = _execute_remove_appointment_participant
+candidates.MUTATION_EXECUTORS[
+    "propose_set_appointment_format"
+] = _execute_set_appointment_format
 candidates.MUTATION_EXECUTORS["propose_update_contact"] = _execute_update_contact
 candidates.MUTATION_EXECUTORS["propose_create_appointment"] = _execute_create_appointment
 candidates.MUTATION_EXECUTORS["propose_redeem_makeup_credit"] = _execute_redeem_makeup_credit
@@ -2075,6 +2696,9 @@ candidates.MUTATION_EXECUTORS[
     "propose_note_participant_absence"
 ] = _execute_note_participant_absence
 candidates.MUTATION_EXECUTORS["propose_reschedule_occurrence"] = _execute_reschedule_occurrence
+candidates.MUTATION_EXECUTORS[
+    "propose_set_occurrence_class_format"
+] = _execute_set_occurrence_class_format
 candidates.MUTATION_EXECUTORS["propose_add_waitlist_entry"] = _execute_add_waitlist_entry
 candidates.MUTATION_EXECUTORS["propose_remove_waitlist_entry"] = _execute_remove_waitlist_entry
 candidates.MUTATION_EXECUTORS["propose_create_event"] = _execute_create_event

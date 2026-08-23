@@ -214,6 +214,24 @@ class RecurringSlotParticipantDetail(BaseModel):
     contact_name: str
 
 
+class RecurringSlotOccurrenceParticipantDetail(RecurringSlotParticipantDetail):
+    occurrence_date: date
+
+
+class RecurringOccurrenceParticipantDetail(RecurringSlotParticipantDetail):
+    enrollment_scope: Literal["series", "occurrence"]
+
+
+class RecurringGroupOccurrenceDetail(BaseModel):
+    recurring_slot_id: uuid.UUID
+    occurrence_date: date
+    class_type: str
+    max_participants: int
+    participant_count: int
+    available_seats: int
+    participants: list[RecurringOccurrenceParticipantDetail]
+
+
 class RecurringGroupDetail(RecurringSlotDetail):
     participants: list[RecurringSlotParticipantDetail]
 
@@ -352,6 +370,10 @@ class WaitlistEntryDetail(BaseModel):
     duration_minutes: int
     status: str
     note: str | None
+    fulfilled_appointment_id: uuid.UUID | None = None
+    fulfilled_recurring_slot_id: uuid.UUID | None = None
+    fulfilled_occurrence_date: date | None = None
+    fulfillment_scope: str | None = None
     created_at: datetime
 
 

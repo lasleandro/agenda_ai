@@ -4,6 +4,7 @@ phrase resolution, and the read tools. No LLM call is made — the
 orchestrator's tool-call loop is out of scope for automated tests."""
 
 from pathlib import Path
+import json
 import sys
 import uuid
 from datetime import date, datetime, time, timedelta
@@ -19,6 +20,7 @@ from app.models import (
     Place,
     Professional,
     RecurringSlot,
+    RecurringSlotOccurrenceParticipant,
     RecurringSlotParticipant,
     WorkJourneyInterval,
 )
@@ -63,6 +65,13 @@ def _cleanup(db, *, professionals: list[Professional]) -> None:
         return
     db.query(WorkJourneyInterval).filter(
         WorkJourneyInterval.professional_id.in_(professional_ids)
+    ).delete(synchronize_session=False)
+    db.query(RecurringSlotOccurrenceParticipant).filter(
+        RecurringSlotOccurrenceParticipant.recurring_slot_id.in_(
+            db.query(RecurringSlot.id).filter(
+                RecurringSlot.professional_id.in_(professional_ids)
+            )
+        )
     ).delete(synchronize_session=False)
     db.query(RecurringSlotParticipant).filter(
         RecurringSlotParticipant.recurring_slot_id.in_(
@@ -255,6 +264,240 @@ def test_resolve_groups_filters_by_weekday_and_member() -> None:
             db, professional.id, member_contact_id=contact.id
         )
         assert len(by_member) == 1
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_find_group_openings_returns_joinable_occurrence_not_free_time() -> None:
+    db = SessionLocal()
+    professional = _make_professional(db)
+    try:
+        place = _make_place(db, professional.id, "Clube")
+        member = _make_contact(db, professional.id, "Aluno Grupo")
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            class_type="group",
+            slot_kind="class",
+            max_participants=3,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        db.add(slot)
+        db.flush()
+        db.add(RecurringSlotParticipant(recurring_slot_id=slot.id, contact_id=member.id))
+        db.commit()
+
+        result = tools.find_group_openings(
+            db, professional.id, date=MONDAY.isoformat(), start_time="18:00"
+        )
+
+        assert result["joinable_groups"] == [
+            {
+                "source_type": "recurring_slot",
+                "source_id": str(slot.id),
+                "occurrence_date": MONDAY.isoformat(),
+                "starts_at": datetime.combine(MONDAY, time(18, 0), tzinfo=TIMEZONE).isoformat(),
+                "ends_at": datetime.combine(MONDAY, time(19, 0), tzinfo=TIMEZONE).isoformat(),
+                "label": "Grupo",
+                "place_id": str(place.id),
+                "place_name": "Clube",
+                "status": "scheduled",
+                "class_type": "group",
+                "is_exception": False,
+                "is_past": True,
+                "participants": [{"contact_id": str(member.id), "contact_name": "Aluno Grupo"}],
+                "participant_count": 1,
+                "max_participants": 3,
+                "available_seats": 2,
+                "enrollment_scopes": ["occurrence", "series"],
+            }
+        ]
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_empty_group_opening_is_found_without_filtering_by_new_student() -> None:
+    db = SessionLocal()
+    professional = _make_professional(db)
+    try:
+        place = _make_place(db, professional.id, "Clube")
+        new_student = _make_contact(db, professional.id, "Fernanda")
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            class_type="group",
+            slot_kind="class",
+            max_participants=4,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        db.add(slot)
+        db.commit()
+
+        existing_membership_matches = tools.find_groups(
+            db,
+            professional.id,
+            member_contact_id=str(new_student.id),
+            weekday=MONDAY.weekday(),
+        )
+        opening_matches = tools.find_group_openings(
+            db,
+            professional.id,
+            date=MONDAY.isoformat(),
+            start_time="18:00",
+        )
+
+        assert existing_membership_matches["matches"] == []
+        assert [item["source_id"] for item in opening_matches["joinable_groups"]] == [
+            str(slot.id)
+        ]
+        assert opening_matches["joinable_groups"][0]["available_seats"] == 4
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_find_group_openings_filters_by_evening_overlap() -> None:
+    db = SessionLocal()
+    professional = _make_professional(db)
+    try:
+        place = _make_place(db, professional.id, "Clube")
+        evening = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            class_type="group",
+            slot_kind="class",
+            max_participants=4,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        crossing = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(17, 30),
+            end_time=time(18, 30),
+            class_type="group",
+            slot_kind="class",
+            max_participants=4,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        morning = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(9, 0),
+            end_time=time(10, 0),
+            class_type="group",
+            slot_kind="class",
+            max_participants=4,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        db.add_all([evening, crossing, morning])
+        db.commit()
+
+        result = tools.find_group_openings(
+            db, professional.id, date=MONDAY.isoformat(), period="evening"
+        )
+
+        source_ids = {item["source_id"] for item in result["joinable_groups"]}
+        assert source_ids == {str(evening.id), str(crossing.id)}
+        assert result["period"] == "evening"
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_find_group_openings_uses_effective_dated_capacity() -> None:
+    db = SessionLocal()
+    professional = _make_professional(db)
+    try:
+        place = _make_place(db, professional.id, "Clube")
+        permanent = _make_contact(db, professional.id, "Aluno Permanente")
+        dated_guest = _make_contact(db, professional.id, "Aluno Avulso")
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            class_type="group",
+            slot_kind="class",
+            max_participants=2,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        db.add(slot)
+        db.flush()
+        db.add(RecurringSlotParticipant(recurring_slot_id=slot.id, contact_id=permanent.id))
+        db.add(
+            RecurringSlotOccurrenceParticipant(
+                professional_id=professional.id,
+                recurring_slot_id=slot.id,
+                contact_id=dated_guest.id,
+                occurrence_date=MONDAY,
+            )
+        )
+        db.commit()
+
+        full_date_result = tools.find_group_openings(
+            db, professional.id, date=MONDAY.isoformat()
+        )
+        next_week_result = tools.find_group_openings(
+            db, professional.id, date=(MONDAY + timedelta(days=7)).isoformat()
+        )
+
+        assert full_date_result["joinable_groups"] == []
+        assert [item["source_id"] for item in next_week_result["joinable_groups"]] == [
+            str(slot.id)
+        ]
+        assert next_week_result["joinable_groups"][0]["participant_count"] == 1
+        assert next_week_result["joinable_groups"][0]["available_seats"] == 1
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_find_group_openings_ignores_work_journey() -> None:
+    db = SessionLocal()
+    professional = _make_professional(db)
+    try:
+        place = _make_place(db, professional.id, "Clube")
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            class_type="group",
+            slot_kind="class",
+            max_participants=4,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        db.add(slot)
+        db.commit()
+
+        result = tools.find_group_openings(
+            db, professional.id, date=MONDAY.isoformat()
+        )
+
+        assert [item["source_id"] for item in result["joinable_groups"]] == [str(slot.id)]
+        assert result["joinable_groups"][0]["available_seats"] == 4
     finally:
         _cleanup(db, professionals=[professional])
         db.close()
@@ -697,6 +940,199 @@ def test_resolve_date_phrase_tool_wraps_temporal_module() -> None:
 
         unresolved = tools.resolve_date_phrase(db, professional.id, phrase="algo aleatorio")
         assert unresolved["recognized"] is False
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Tool-spec contract tests (recurring individual booking roadmap v0.1)
+# ---------------------------------------------------------------------------
+
+
+def test_appointment_tool_spec_includes_is_recurring() -> None:
+    from app.agent.mutations import MUTATION_TOOL_SPECS
+
+    spec = next(s for s in MUTATION_TOOL_SPECS if s["function"]["name"] == "propose_create_appointment")
+    params = spec["function"]["parameters"]["properties"]
+    assert "is_recurring" in params
+    assert params["is_recurring"]["type"] == "boolean"
+
+
+def test_group_slot_tool_spec_forbids_named_customers() -> None:
+    from app.agent.mutations import MUTATION_TOOL_SPECS
+
+    spec = next(s for s in MUTATION_TOOL_SPECS if s["function"]["name"] == "propose_create_group_slot")
+    description = spec["function"]["description"]
+    assert "EMPTY" in description or "empty" in description.lower() or "vazia" in description.lower()
+    assert "named customer" in description.lower() or "cliente" in description.lower()
+
+
+def test_appointment_tool_spec_description_supports_weekly() -> None:
+    from app.agent.mutations import MUTATION_TOOL_SPECS
+
+    spec = next(s for s in MUTATION_TOOL_SPECS if s["function"]["name"] == "propose_create_appointment")
+    description = spec["function"]["description"]
+    assert "weekly" in description.lower() or "recurring" in description.lower() or "semanal" in description.lower()
+
+
+def test_orchestrator_prompt_contains_precedence_rule() -> None:
+    from app.agent.orchestrator import SYSTEM_PROMPT_TEMPLATE
+
+    assert "propose_create_appointment" in SYSTEM_PROMPT_TEMPLATE
+    assert "is_recurring" in SYSTEM_PROMPT_TEMPLATE
+    assert "turma" in SYSTEM_PROMPT_TEMPLATE
+    assert "grupo" in SYSTEM_PROMPT_TEMPLATE
+    assert "precedência" in SYSTEM_PROMPT_TEMPLATE.lower() or "precedencia" in SYSTEM_PROMPT_TEMPLATE.lower()
+
+
+def test_orchestrator_prompt_contains_followup_inheritance_rule() -> None:
+    from app.agent.orchestrator import SYSTEM_PROMPT_TEMPLATE
+
+    assert "pode seguir" in SYSTEM_PROMPT_TEMPLATE
+    assert "confirme" in SYSTEM_PROMPT_TEMPLATE
+
+
+def test_group_lookup_tool_specs_explain_new_student_flow() -> None:
+    from app.agent.tools import TOOL_SPECS
+
+    groups_spec = next(spec for spec in TOOL_SPECS if spec["function"]["name"] == "find_groups")
+    openings_spec = next(
+        spec for spec in TOOL_SPECS if spec["function"]["name"] == "find_group_openings"
+    )
+
+    assert "already" in groups_spec["function"]["description"].lower()
+    assert "new student" in openings_spec["function"]["description"].lower()
+    assert "do not use" in groups_spec["function"]["parameters"]["properties"][
+        "member_contact_id"
+    ]["description"].lower()
+
+
+def test_orchestrator_prompt_routes_new_student_to_group_openings() -> None:
+    from app.agent.orchestrator import SYSTEM_PROMPT_TEMPLATE
+
+    assert "find_group_openings" in SYSTEM_PROMPT_TEMPLATE
+    assert "member_contact_id" in SYSTEM_PROMPT_TEMPLATE
+    assert "turmas vazias" in SYSTEM_PROMPT_TEMPLATE
+
+
+def test_group_vacancy_tool_spec_supports_period() -> None:
+    from app.agent.tools import TOOL_SPECS
+
+    spec = next(s for s in TOOL_SPECS if s["function"]["name"] == "find_group_openings")
+    params = spec["function"]["parameters"]["properties"]
+    assert "period" in params
+    assert params["period"]["enum"] == ["morning", "afternoon", "evening"]
+    description = spec["function"]["description"]
+    assert "vagas" in description or "vacancy" in description.lower()
+    assert "never reports free instructor time" in description.lower()
+
+
+def test_orchestrator_prompt_routes_group_vacancy_questions() -> None:
+    from app.agent.orchestrator import SYSTEM_PROMPT_TEMPLATE
+
+    assert "find_group_openings PRIMEIRO" in SYSTEM_PROMPT_TEMPLATE
+    assert "NUNCA chame" in SYSTEM_PROMPT_TEMPLATE
+    assert "find_instructor_openings" in SYSTEM_PROMPT_TEMPLATE
+    assert "vagas" in SYSTEM_PROMPT_TEMPLATE
+    assert "HOJE" in SYSTEM_PROMPT_TEMPLATE
+
+
+def test_agent_group_vacancy_question_uses_group_openings_not_free_time(monkeypatch) -> None:
+    import app.agent.orchestrator as orchestrator
+
+    db = SessionLocal()
+    professional = _make_professional(db)
+    try:
+        place = _make_place(db, professional.id, "Clube")
+        today = datetime.now(TIMEZONE).date()
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=today.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            class_type="group",
+            slot_kind="class",
+            max_participants=4,
+            recurrence_type="weekly",
+            valid_from=today,
+        )
+        db.add(slot)
+        db.commit()
+
+        class _FakeFunction:
+            def __init__(self, name: str, arguments: str) -> None:
+                self.name = name
+                self.arguments = arguments
+
+        class _FakeToolCall:
+            def __init__(self, call_id: str, name: str, arguments: str) -> None:
+                self.id = call_id
+                self.function = _FakeFunction(name, arguments)
+
+        class _FakeMessage:
+            def __init__(self, content: str = "", tool_calls: list | None = None) -> None:
+                self.content = content
+                self.tool_calls = tool_calls or []
+
+        class _FakeChoice:
+            def __init__(self, message: _FakeMessage) -> None:
+                self.message = message
+
+        class _FakeResponse:
+            def __init__(self, message: _FakeMessage) -> None:
+                self.choices = [_FakeChoice(message)]
+
+        class _FakeCompletions:
+            def __init__(self, script: list) -> None:
+                self._script = script
+                self._index = 0
+
+            def create(self, **kwargs):
+                response = self._script[self._index]
+                self._index += 1
+                return response
+
+        class _FakeChat:
+            def __init__(self, script: list) -> None:
+                self.completions = _FakeCompletions(script)
+
+        class _FakeClient:
+            def __init__(self, script: list) -> None:
+                self.chat = _FakeChat(script)
+
+        script = [
+            _FakeResponse(
+                _FakeMessage(
+                    "",
+                    [_FakeToolCall("call_1", "resolve_date_phrase", json.dumps({"phrase": "hoje à noite"}))],
+                )
+            ),
+            _FakeResponse(
+                _FakeMessage(
+                    "",
+                    [_FakeToolCall("call_2", "find_group_openings", json.dumps({"date": today.isoformat(), "period": "evening"}))],
+                )
+            ),
+            _FakeResponse(_FakeMessage("Hoje à noite há uma turma com vaga.")),
+        ]
+        monkeypatch.setattr(orchestrator, "get_azure_client", lambda: _FakeClient(script))
+
+        response = orchestrator.run_agent_turn(
+            db,
+            professional.id,
+            uuid.uuid4(),
+            [{"role": "user", "content": "quais vagas tenho em grupos à noite?"}],
+        )
+
+        names = [call.name for call in response.tool_calls]
+        assert names == ["resolve_date_phrase", "find_group_openings"]
+        assert "find_instructor_openings" not in names
+
+        openings_call = response.tool_calls[1]
+        assert openings_call.arguments["period"] == "evening"
+        assert openings_call.arguments["date"] == today.isoformat()
     finally:
         _cleanup(db, professionals=[professional])
         db.close()

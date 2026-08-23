@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from app.models import RecurringSlot, RecurringSlotParticipant
+from app.models import RecurringSlot
 
 
 def schedule_overlap_filter(day_of_week: int, recurrence_type: str, scheduled_date):
@@ -77,10 +77,6 @@ def assert_no_scheduled_class_overlap(
 ) -> None:
     query = (
         db.query(RecurringSlot)
-        .join(
-            RecurringSlotParticipant,
-            RecurringSlotParticipant.recurring_slot_id == RecurringSlot.id,
-        )
         .filter(
             RecurringSlot.professional_id == professional_id,
             RecurringSlot.slot_kind == "class",

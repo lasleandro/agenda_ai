@@ -20,6 +20,7 @@ import type {
   EventType,
   InstructorEventInput,
   Place,
+  RecurringSlotInput,
 } from "@/lib/types";
 
 function formatSelection(start: Date, end: Date): string {
@@ -33,6 +34,23 @@ function formatSelection(start: Date, end: Date): string {
   return `${date}, ${time(start)}–${time(end)}`;
 }
 
+function localDateValue(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function localTimeValue(value: Date): string {
+  const hours = String(value.getHours()).padStart(2, "0");
+  const minutes = String(value.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}:00`;
+}
+
+function toPythonDay(value: Date): number {
+  return (value.getDay() + 6) % 7;
+}
+
 export function AppointmentFormDialog({
   open,
   onOpenChange,
@@ -44,6 +62,7 @@ export function AppointmentFormDialog({
   places,
   onPlaceCreated,
   onCreate,
+  onCreateGroupSlot,
   onCreateEvent,
 }: {
   open: boolean;
@@ -56,6 +75,7 @@ export function AppointmentFormDialog({
   places: Place[];
   onPlaceCreated: (place: Place) => void;
   onCreate: (input: AppointmentCreateInput) => Promise<void>;
+  onCreateGroupSlot: (input: RecurringSlotInput) => Promise<void>;
   onCreateEvent: (input: InstructorEventInput) => Promise<void>;
 }) {
   const [mode, setMode] = useState<"class" | "event">("class");
@@ -64,6 +84,7 @@ export function AppointmentFormDialog({
   const [groupContactIds, setGroupContactIds] = useState<string[]>(
     initialContactId ? [initialContactId] : []
   );
+  const [maxParticipants, setMaxParticipants] = useState(4);
   const [placeId, setPlaceId] = useState(suggestedPlaceId ?? "");
   const [service, setService] = useState("Aula de tênis");
   const [isRecurring, setIsRecurring] = useState(false);
@@ -77,14 +98,39 @@ export function AppointmentFormDialog({
   async function handleSaveClass() {
     const participantIds =
       classType === "group" ? groupContactIds : contactId ? [contactId] : [];
-    if (!participantIds.length || !placeId || !service.trim()) {
+    if (!placeId || !service.trim()) {
       setError("Selecione o cliente, o local e informe o serviço");
+      return;
+    }
+    if (classType === "individual" && !participantIds.length) {
+      setError("Selecione um cliente");
+      return;
+    }
+    if (participantIds.length > maxParticipants) {
+      setError("A capacidade deve comportar todos os clientes selecionados");
       return;
     }
 
     setSaving(true);
     setError(null);
     try {
+      if (classType === "group" && participantIds.length === 0) {
+        await onCreateGroupSlot({
+          place_id: placeId,
+          day_of_week: toPythonDay(start),
+          start_time: localTimeValue(start),
+          end_time: localTimeValue(end),
+          label: service.trim(),
+          class_type: "group",
+          slot_kind: "class",
+          max_participants: maxParticipants,
+          recurrence_type: isRecurring ? "weekly" : "once",
+          scheduled_date: isRecurring ? null : localDateValue(start),
+          valid_from: isRecurring ? localDateValue(start) : null,
+        });
+        onOpenChange(false);
+        return;
+      }
       await onCreate({
         contact_id: participantIds[0],
         contact_ids: participantIds,
@@ -94,6 +140,7 @@ export function AppointmentFormDialog({
         end_at: end.toISOString(),
         is_recurring: isRecurring,
         class_type: classType,
+        max_participants: classType === "group" ? maxParticipants : 1,
         billing_type: isCourtesy ? "courtesy" : "billable",
       });
       onOpenChange(false);
@@ -130,7 +177,9 @@ export function AppointmentFormDialog({
     }
   }
 
-  const canBook = contacts.length > 0 && places.length > 0;
+  const canBook = classType === "group"
+    ? places.length > 0
+    : contacts.length > 0 && places.length > 0;
 
   function handleClassTypeChange(nextType: "individual" | "group") {
     setClassType(nextType);
@@ -149,8 +198,8 @@ export function AppointmentFormDialog({
       );
       return;
     }
-    if (groupContactIds.length >= 4) {
-      setError("Um grupo pode ter no máximo quatro clientes");
+    if (groupContactIds.length >= maxParticipants) {
+      setError("A capacidade da turma foi atingida");
       return;
     }
     setError(null);
@@ -222,7 +271,7 @@ export function AppointmentFormDialog({
 
               <div className="space-y-1.5">
                 <Label>
-                  {classType === "group" ? "Clientes (1 a 4)" : "Cliente"}
+                  {classType === "group" ? "Clientes (0 a 4)" : "Cliente"}
                 </Label>
                 {classType === "group" ? (
                   <>
@@ -246,7 +295,7 @@ export function AppointmentFormDialog({
                       ))}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Selecione os clientes atuais. O grupo pode começar com uma pessoa.
+                      Selecione os clientes atuais. A turma pode começar sem alunos.
                     </p>
                   </>
                 ) : (
@@ -292,6 +341,25 @@ export function AppointmentFormDialog({
                   onChange={(event) => setService(event.target.value)}
                 />
               </div>
+
+              {classType === "group" && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="booking-capacity">Máx. alunos</Label>
+                  <Input
+                    id="booking-capacity"
+                    type="number"
+                    min={Math.max(1, groupContactIds.length)}
+                    max={4}
+                    value={maxParticipants}
+                    onChange={(event) => {
+                      const nextCapacity = Number(event.target.value);
+                      if (nextCapacity >= groupContactIds.length && nextCapacity <= 4) {
+                        setMaxParticipants(nextCapacity);
+                      }
+                    }}
+                  />
+                </div>
+              )}
 
               <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border px-3 py-2">
                 <span>

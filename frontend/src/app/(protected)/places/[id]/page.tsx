@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   CircleDollarSign,
+  Copy,
   Pencil,
   Plus,
   Trash2,
@@ -51,6 +52,7 @@ export default function PlaceDetailPage() {
   const [editPlaceOpen, setEditPlaceOpen] = useState(false);
   const [slotDialogOpen, setSlotDialogOpen] = useState(false);
   const [editingSlot, setEditingSlot] = useState<RecurringSlot | null>(null);
+  const [duplicateSlot, setDuplicateSlot] = useState<RecurringSlot | null>(null);
   const [financialEnabled, setFinancialEnabled] = useState(false);
   const [placeRates, setPlaceRates] =
     useState<PlaceRateMatrixDetail | null>(null);
@@ -177,6 +179,7 @@ export default function PlaceDetailPage() {
           size="sm"
           onClick={() => {
             setEditingSlot(null);
+            setDuplicateSlot(null);
             setSlotDialogOpen(true);
           }}
         >
@@ -191,22 +194,37 @@ export default function PlaceDetailPage() {
 
       <div className="space-y-2">
         {slots?.map((slot) => (
-          <button
+          <div
             key={slot.id}
-            onClick={() => {
-              setEditingSlot(slot);
-              setSlotDialogOpen(true);
-            }}
-            className="flex w-full flex-col items-start gap-2 rounded-lg border border-border bg-card px-4 py-3 text-left text-sm hover:border-indigo-400 sm:flex-row sm:items-center sm:justify-between"
+            className="flex flex-col items-start gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm hover:border-indigo-400 sm:flex-row sm:items-center sm:justify-between"
           >
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <button
+              onClick={() => {
+                setDuplicateSlot(null);
+                setEditingSlot(slot);
+                setSlotDialogOpen(true);
+              }}
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 text-left"
+            >
               <span className="font-medium">{formatSlotDay(slot)}</span>
               <span className="text-muted-foreground">
                 {formatTime(slot.start_time)}–{formatTime(slot.end_time)}
               </span>
               {slot.label && <span className="text-muted-foreground">· {slot.label}</span>}
-            </div>
-          </button>
+            </button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setEditingSlot(null);
+                setDuplicateSlot(slot);
+                setSlotDialogOpen(true);
+              }}
+            >
+              <Copy className="h-3.5 w-3.5" />
+              Duplicar
+            </Button>
+          </div>
         ))}
       </div>
 
@@ -220,10 +238,17 @@ export default function PlaceDetailPage() {
       )}
 
       <RecurringSlotFormDialog
-        key={`${editingSlot?.id ?? "new"}-${slotDialogOpen ? "open" : "closed"}`}
+        key={`${editingSlot?.id ?? duplicateSlot?.id ?? "new"}-${slotDialogOpen ? "open" : "closed"}`}
         open={slotDialogOpen}
-        onOpenChange={setSlotDialogOpen}
+        onOpenChange={(open) => {
+          setSlotDialogOpen(open);
+          if (!open) {
+            setEditingSlot(null);
+            setDuplicateSlot(null);
+          }
+        }}
         slot={editingSlot}
+        duplicateSlot={duplicateSlot}
         fixedPlaceId={placeId}
         onSaved={() => reload()}
         onDeleted={() => reload()}

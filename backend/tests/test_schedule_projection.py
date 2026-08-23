@@ -15,8 +15,10 @@ from app.models import (
     Place,
     Professional,
     RecurringSlot,
+    RecurringSlotOccurrenceParticipant,
     RecurringSlotParticipant,
     ScheduleOccurrenceOverride,
+    ScheduleOccurrenceClassOverride,
 )
 from app.services.scheduling import TIMEZONE, list_schedule_occurrences
 
@@ -60,12 +62,18 @@ def _cleanup(db, *, professionals: list[Professional]) -> None:
     db.query(ScheduleOccurrenceOverride).filter(
         ScheduleOccurrenceOverride.professional_id.in_(professional_ids)
     ).delete(synchronize_session=False)
+    db.query(ScheduleOccurrenceClassOverride).filter(
+        ScheduleOccurrenceClassOverride.professional_id.in_(professional_ids)
+    ).delete(synchronize_session=False)
     db.query(RecurringSlotParticipant).filter(
         RecurringSlotParticipant.recurring_slot_id.in_(
             db.query(RecurringSlot.id).filter(
                 RecurringSlot.professional_id.in_(professional_ids)
             )
         )
+    ).delete(synchronize_session=False)
+    db.query(RecurringSlotOccurrenceParticipant).filter(
+        RecurringSlotOccurrenceParticipant.professional_id.in_(professional_ids)
     ).delete(synchronize_session=False)
     db.query(RecurringSlot).filter(
         RecurringSlot.professional_id.in_(professional_ids)
@@ -169,6 +177,127 @@ def test_recurring_class_slot_expands_and_excludes_availability_only_slots() -> 
         assert all(o.source_type == "recurring_slot" for o in occurrences)
         assert all(o.source_id == class_slot.id for o in occurrences)
         assert all(o.status == "scheduled" for o in occurrences)
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_empty_recurring_group_projects_as_busy_group_occurrences() -> None:
+    db = SessionLocal()
+    professional = _make_professional(db)
+    try:
+        place = _make_place(db, professional.id)
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            class_type="group",
+            slot_kind="class",
+            max_participants=4,
+            recurrence_type="weekly",
+            created_at=datetime.combine(MONDAY, time(8, 0), tzinfo=TIMEZONE),
+        )
+        db.add(slot)
+        db.commit()
+
+        occurrences = list_schedule_occurrences(db, professional.id, MONDAY, MONDAY)
+
+        assert len(occurrences) == 1
+        assert occurrences[0].source_id == slot.id
+        assert occurrences[0].class_type == "group"
+        assert occurrences[0].max_participants == 4
+        assert occurrences[0].participants == []
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_recurring_group_occurrence_includes_dated_guest_only_on_that_date() -> None:
+    db = SessionLocal()
+    professional = _make_professional(db)
+    try:
+        place = _make_place(db, professional.id)
+        permanent = _make_contact(db, professional.id)
+        guest = _make_contact(db, professional.id)
+        guest.display_name = "Convidada"
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            class_type="group",
+            slot_kind="class",
+            max_participants=3,
+            recurrence_type="weekly",
+            created_at=datetime.combine(MONDAY, time(8, 0), tzinfo=TIMEZONE),
+        )
+        db.add(slot)
+        db.flush()
+        db.add(RecurringSlotParticipant(recurring_slot_id=slot.id, contact_id=permanent.id))
+        db.add(
+            RecurringSlotOccurrenceParticipant(
+                professional_id=professional.id,
+                recurring_slot_id=slot.id,
+                contact_id=guest.id,
+                occurrence_date=MONDAY + timedelta(days=7),
+            )
+        )
+        db.commit()
+
+        occurrences = list_schedule_occurrences(
+            db, professional.id, MONDAY, MONDAY + timedelta(days=7)
+        )
+
+        assert [
+            [participant.contact_name for participant in occurrence.participants]
+            for occurrence in occurrences
+        ] == [["Aluno"], ["Aluno", "Convidada"]]
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_occurrence_class_override_changes_only_selected_recurring_class() -> None:
+    db = SessionLocal()
+    professional = _make_professional(db)
+    try:
+        place = _make_place(db, professional.id)
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            class_type="individual",
+            slot_kind="class",
+            max_participants=1,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        db.add(slot)
+        db.flush()
+        db.add(
+            ScheduleOccurrenceClassOverride(
+                professional_id=professional.id,
+                recurring_slot_id=slot.id,
+                occurrence_date=MONDAY + timedelta(days=7),
+                class_type="group",
+                max_participants=3,
+            )
+        )
+        db.commit()
+
+        occurrences = list_schedule_occurrences(
+            db, professional.id, MONDAY, MONDAY + timedelta(days=7)
+        )
+
+        assert [(item.class_type, item.max_participants) for item in occurrences] == [
+            ("individual", 1),
+            ("group", 3),
+        ]
     finally:
         _cleanup(db, professionals=[professional])
         db.close()

@@ -38,6 +38,18 @@ class WaitlistEntry(Base):
             "desired_end_time > desired_start_time",
             name="ck_waitlist_entries_time_range",
         ),
+        CheckConstraint(
+            "(fulfilled_recurring_slot_id IS NULL) = (fulfilled_occurrence_date IS NULL)",
+            name="ck_waitlist_entries_recurring_fulfillment_pair",
+        ),
+        CheckConstraint(
+            "fulfilled_appointment_id IS NULL OR fulfilled_recurring_slot_id IS NULL",
+            name="ck_waitlist_entries_one_fulfillment_target",
+        ),
+        CheckConstraint(
+            "fulfillment_scope IS NULL OR fulfillment_scope IN ('occurrence', 'series')",
+            name="ck_waitlist_entries_fulfillment_scope",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -63,6 +75,11 @@ class WaitlistEntry(Base):
     fulfilled_appointment_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("appointments.id"), nullable=True
     )
+    fulfilled_recurring_slot_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("recurring_slots.id"), nullable=True
+    )
+    fulfilled_occurrence_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    fulfillment_scope: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

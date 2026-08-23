@@ -21,9 +21,11 @@ from app.models import (
     AppointmentTransition,
     Contact,
     EntityAlias,
+    OperationalEvent,
     Place,
     Professional,
     RecurringSlot,
+    RecurringSlotOccurrenceParticipant,
     RecurringSlotParticipant,
     User,
 )
@@ -61,6 +63,9 @@ def _login_new_tenant(db):
 def _cleanup(db, *, professionals, users):
     professional_ids = [p.id for p in professionals]
     if professional_ids:
+        db.query(OperationalEvent).filter(
+            OperationalEvent.professional_id.in_(professional_ids)
+        ).delete(synchronize_session=False)
         db.query(AppointmentParticipant).filter(
             AppointmentParticipant.appointment_id.in_(
                 db.query(Appointment.id).filter(
@@ -85,6 +90,9 @@ def _cleanup(db, *, professionals, users):
             RecurringSlotParticipant.recurring_slot_id.in_(
                 db.query(RecurringSlot.id).filter(RecurringSlot.professional_id.in_(professional_ids))
             )
+        ).delete(synchronize_session=False)
+        db.query(RecurringSlotOccurrenceParticipant).filter(
+            RecurringSlotOccurrenceParticipant.professional_id.in_(professional_ids)
         ).delete(synchronize_session=False)
         db.query(RecurringSlot).filter(RecurringSlot.professional_id.in_(professional_ids)).delete(
             synchronize_session=False
@@ -424,6 +432,184 @@ def test_dashboard_can_create_incomplete_group_with_one_to_four_contacts() -> No
             "group",
         ]
         assert [len(row["participants"]) for row in calendar.json()["appointments"]] == [1, 2]
+        assert [row["max_participants"] for row in calendar.json()["appointments"]] == [4, 4]
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_dashboard_can_create_empty_recurring_group_slot() -> None:
+    db = SessionLocal()
+    professional, user, cookies = _login_new_tenant(db)
+    try:
+        place_res = client.post("/api/places", json={"name": "Clube"}, cookies=cookies)
+        assert place_res.status_code == 201
+
+        created = client.post(
+            "/api/recurring-slots",
+            json={
+                "place_id": place_res.json()["id"],
+                "day_of_week": 1,
+                "start_time": "18:00:00",
+                "end_time": "19:00:00",
+                "slot_kind": "class",
+                "class_type": "group",
+                "max_participants": 4,
+                "label": "Turma das 18h",
+            },
+            cookies=cookies,
+        )
+        assert created.status_code == 201
+        assert created.json()["class_type"] == "group"
+        assert created.json()["participant_count"] == 0
+        assert created.json()["max_participants"] == 4
+
+        conflicting = client.post(
+            "/api/recurring-slots",
+            json={
+                "place_id": place_res.json()["id"],
+                "day_of_week": 1,
+                "start_time": "18:30:00",
+                "end_time": "19:30:00",
+                "slot_kind": "class",
+                "class_type": "group",
+                "max_participants": 4,
+            },
+            cookies=cookies,
+        )
+        assert conflicting.status_code == 409
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_dashboard_promotes_appointment_to_group_without_recreating_it() -> None:
+    db = SessionLocal()
+    professional, user, cookies = _login_new_tenant(db)
+    try:
+        place = Place(
+            professional_id=professional.id,
+            name="Clube",
+            normalized_name="clube",
+        )
+        contact = Contact(
+            professional_id=professional.id,
+            phone=_random_phone(),
+            display_name="Maria",
+            normalized_name="maria",
+        )
+        db.add_all([place, contact])
+        db.commit()
+
+        created = client.post(
+            "/api/appointments",
+            json={
+                "contact_id": str(contact.id),
+                "place_id": str(place.id),
+                "service": "Aula",
+                "start_at": "2026-08-10T08:00:00-03:00",
+                "end_at": "2026-08-10T09:00:00-03:00",
+            },
+            cookies=cookies,
+        )
+        assert created.status_code == 201
+
+        promoted = client.patch(
+            f"/api/appointments/{created.json()['id']}/format",
+            json={"class_type": "group", "max_participants": 3},
+            cookies=cookies,
+        )
+        assert promoted.status_code == 200
+        assert promoted.json()["id"] == created.json()["id"]
+        assert promoted.json()["class_type"] == "group"
+        assert promoted.json()["max_participants"] == 3
+        assert [participant["contact_id"] for participant in promoted.json()["participants"]] == [
+            str(contact.id)
+        ]
+
+        event = (
+            db.query(OperationalEvent)
+            .filter(
+                OperationalEvent.professional_id == professional.id,
+                OperationalEvent.event_type == "schedule.appointment.updated",
+            )
+            .one()
+        )
+        assert event.before_state == {"class_type": "individual", "max_participants": 1}
+        assert event.after_state == {"class_type": "group", "max_participants": 3}
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_dashboard_adds_sporadic_customer_to_one_group_occurrence() -> None:
+    db = SessionLocal()
+    professional, user, cookies = _login_new_tenant(db)
+    try:
+        place = client.post("/api/places", json={"name": "Clube"}, cookies=cookies)
+        assert place.status_code == 201
+        contact = Contact(
+            professional_id=professional.id,
+            phone=_random_phone(),
+            display_name="Visitante",
+            normalized_name="visitante",
+        )
+        db.add(contact)
+        db.commit()
+        slot = client.post(
+            "/api/recurring-slots",
+            json={
+                "place_id": place.json()["id"],
+                "day_of_week": 0,
+                "start_time": "18:00:00",
+                "end_time": "19:00:00",
+                "slot_kind": "class",
+                "class_type": "group",
+                "max_participants": 2,
+                "valid_from": "2026-08-03",
+            },
+            cookies=cookies,
+        )
+        assert slot.status_code == 201
+        slot_id = slot.json()["id"]
+
+        add_guest = client.post(
+            f"/api/recurring-slots/{slot_id}/occurrences/2026-08-10/participants",
+            json={"contact_id": str(contact.id)},
+            cookies=cookies,
+        )
+        assert add_guest.status_code == 201
+        assert add_guest.json()["occurrence_date"] == "2026-08-10"
+
+        occurrence = client.get(
+            f"/api/recurring-slots/{slot_id}/occurrences/2026-08-10",
+            cookies=cookies,
+        )
+        assert occurrence.status_code == 200
+        assert occurrence.json()["participant_count"] == 1
+        assert occurrence.json()["participants"] == [
+            {
+                "id": str(contact.id),
+                "contact_id": str(contact.id),
+                "contact_name": "Visitante",
+                "enrollment_scope": "occurrence",
+            }
+        ]
+
+        calendar = client.get(
+            "/api/calendar?start_date=2026-08-03&end_date=2026-08-10",
+            cookies=cookies,
+        )
+        assert calendar.status_code == 200
+        occurrences = calendar.json()["recurring_classes"]
+        assert [len(item["participants"]) for item in occurrences] == [0, 1]
+        assert occurrences[1]["participants"][0]["display_name"] == "Visitante"
+
+        remove_guest = client.delete(
+            f"/api/recurring-slots/{slot_id}/occurrences/2026-08-10/participants/{contact.id}",
+            cookies=cookies,
+        )
+        assert remove_guest.status_code == 204
     finally:
         _cleanup(db, professionals=[professional], users=[user])
         db.close()

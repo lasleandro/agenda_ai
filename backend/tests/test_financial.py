@@ -3,7 +3,7 @@
 from pathlib import Path
 import sys
 import uuid
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -14,10 +14,12 @@ from app.database import SessionLocal
 from app.main import app
 from app.models import (
     Appointment,
+    MakeupClassCredit,
+    OperationalEvent,
     Contact,
     FinancialChangeAuditLog,
-    FinancialRate,
     FinancialScenario,
+    InstructorEvent,
     Place,
     PlaceFinancialRate,
     PrimeTimeWindow,
@@ -25,12 +27,14 @@ from app.models import (
     ProfessionalFinancialSettings,
     RecurringSlot,
     RecurringSlotParticipant,
+    ScheduleOccurrenceOverride,
     TenantFeature,
     TenantFeatureAuditLog,
     User,
     WorkJourneyInterval,
 )
 from app.services.financial_capacity import build_capacity_segments, load_prime_ranges
+from app.services.scheduling import TIMEZONE
 
 client = TestClient(app)
 
@@ -104,9 +108,6 @@ def _cleanup(db, *, professionals, users) -> None:
         ).delete(synchronize_session=False)
         db.query(WorkJourneyInterval).filter(
             WorkJourneyInterval.professional_id.in_(professional_ids)
-        ).delete(synchronize_session=False)
-        db.query(FinancialRate).filter(
-            FinancialRate.professional_id.in_(professional_ids)
         ).delete(synchronize_session=False)
         db.query(ProfessionalFinancialSettings).filter(
             ProfessionalFinancialSettings.professional_id.in_(professional_ids)
@@ -278,22 +279,29 @@ def test_financial_inheritance_zero_and_multi_group_context() -> None:
 
         settings = client.patch(
             "/api/financial/settings",
-            json={
-                "default_commercial_status": "active",
-                "rates": [
-                    {"participant_count": 1, "hourly_rate_cents": 3000},
-                    {"participant_count": 2, "hourly_rate_cents": 5000},
-                ],
-            },
+            json={"default_commercial_status": "active"},
             cookies=cookies,
         )
         assert settings.status_code == 200
-        assert settings.json()["rates"] == [
-            {"participant_count": 1, "hourly_rate_cents": 3000},
-            {"participant_count": 2, "hourly_rate_cents": 5000},
-            {"participant_count": 3, "hourly_rate_cents": None},
-            {"participant_count": 4, "hourly_rate_cents": None},
-        ]
+        default_rates = client.put(
+            "/api/financial/rates/default",
+            json={
+                "rates": [
+                    {
+                        "time_category": "regular",
+                        "participant_count": 1,
+                        "hourly_rate_cents": 3000,
+                    },
+                    {
+                        "time_category": "regular",
+                        "participant_count": 2,
+                        "hourly_rate_cents": 5000,
+                    },
+                ]
+            },
+            cookies=cookies,
+        )
+        assert default_rates.status_code == 200
 
         group_one_update = client.patch(
             f"/api/financial/groups/{group_one.id}",
@@ -417,11 +425,12 @@ def test_financial_endpoints_require_feature_and_tenant_scope() -> None:
         )
         assert cross_tenant.status_code == 404
 
-        invalid_rate = client.patch(
-            "/api/financial/settings",
+        invalid_rate = client.put(
+            "/api/financial/rates/default",
             json={
                 "rates": [
                     {
+                        "time_category": "regular",
                         "participant_count": 1,
                         "hourly_rate_cents": 100_000_001,
                     }
@@ -505,18 +514,13 @@ def test_financial_configuration_prime_place_and_journey() -> None:
 
         global_rates = client.patch(
             "/api/financial/settings",
-            json={
-                "rates": [
-                    {"participant_count": 1, "hourly_rate_cents": 4000},
-                    {"participant_count": 2, "hourly_rate_cents": 3000},
-                ]
-            },
+            json={"default_commercial_status": "active"},
             cookies=cookies,
         )
         assert global_rates.status_code == 200
 
         generic_rates = client.put(
-            "/api/financial/generic-place/rates",
+            "/api/financial/rates/default",
             json={
                 "rates": [
                     {
@@ -529,6 +533,11 @@ def test_financial_configuration_prime_place_and_journey() -> None:
                         "participant_count": 1,
                         "hourly_rate_cents": 5500,
                     },
+                    {
+                        "time_category": "regular",
+                        "participant_count": 2,
+                        "hourly_rate_cents": 3000,
+                    },
                 ]
             },
             cookies=cookies,
@@ -538,7 +547,7 @@ def test_financial_configuration_prime_place_and_journey() -> None:
             (rate["time_category"], rate["participant_count"]): rate
             for rate in generic_rates.json()["rates"]
         }
-        assert generic_matrix[("regular", 1)]["source"] == "generic"
+        assert generic_matrix[("regular", 1)]["source"] == "default"
         assert generic_matrix[("regular", 1)]["effective_hourly_rate_cents"] == 4500
 
         generic_quote = client.post(
@@ -556,8 +565,8 @@ def test_financial_configuration_prime_place_and_journey() -> None:
             (segment["time_category"], segment["hourly_rate_cents"], segment["source"])
             for segment in generic_quote.json()["segments"]
         ] == [
-            ("prime", 5500, "generic"),
-            ("regular", 4500, "generic"),
+            ("prime", 5500, "default"),
+            ("regular", 4500, "default"),
         ]
 
         place_rates = client.put(
@@ -588,8 +597,8 @@ def test_financial_configuration_prime_place_and_journey() -> None:
             (rate["time_category"], rate["participant_count"]): rate
             for rate in place_rates.json()["rates"]
         }
-        assert matrix[("regular", 1)]["effective_hourly_rate_cents"] == 4000
-        assert matrix[("regular", 1)]["source"] == "tenant"
+        assert matrix[("regular", 1)]["effective_hourly_rate_cents"] == 4500
+        assert matrix[("regular", 1)]["source"] == "default"
         assert matrix[("prime", 1)]["effective_hourly_rate_cents"] == 6000
         assert matrix[("prime", 1)]["source"] == "place"
         assert matrix[("regular", 2)]["effective_hourly_rate_cents"] == 0
@@ -618,9 +627,9 @@ def test_financial_configuration_prime_place_and_journey() -> None:
             for segment in quote.json()["segments"]
         ] == [
             ("prime", 30, 6000, "place", 3000),
-            ("regular", 30, 4000, "tenant", 2000),
+            ("regular", 30, 4500, "default", 2250),
         ]
-        assert quote.json()["total_cents"] == 5000
+        assert quote.json()["total_cents"] == 5250
 
         invalid_break = client.put(
             "/api/rules/work-journey",
@@ -695,9 +704,8 @@ def test_financial_configuration_prime_place_and_journey() -> None:
             )
         }
         assert {
-            "tenant_financial_settings",
             "prime_time_windows",
-            "place_financial_rates",
+            "financial_rates",
             "work_journey",
         }.issubset(audited_types)
     finally:
@@ -778,14 +786,22 @@ def test_financial_dashboard_capacity_scenarios_and_tenant_scope() -> None:
         )
         db.commit()
 
-        rates = client.patch(
-            "/api/financial/settings",
+        rates = client.put(
+            "/api/financial/rates/default",
             json={
                 "rates": [
-                    {"participant_count": 1, "hourly_rate_cents": 1000},
-                    {"participant_count": 2, "hourly_rate_cents": 800},
-                    {"participant_count": 3, "hourly_rate_cents": 700},
-                    {"participant_count": 4, "hourly_rate_cents": 600},
+                    {
+                        "time_category": time_category,
+                        "participant_count": participant_count,
+                        "hourly_rate_cents": rate,
+                    }
+                    for time_category in ("regular", "prime")
+                    for participant_count, rate in (
+                        (1, 1000),
+                        (2, 800),
+                        (3, 700),
+                        (4, 600),
+                    )
                 ]
             },
             cookies=cookies,
@@ -1037,21 +1053,16 @@ def test_financial_dashboard_top_line_uses_work_journey_not_recurring_slots() ->
         db.add_all([place, contact])
         db.flush()
 
-        rates = client.patch(
-            "/api/financial/settings",
-            json={"rates": [{"participant_count": 1, "hourly_rate_cents": 1000}]},
-            cookies=cookies,
-        )
-        assert rates.status_code == 200
         generic_rates = client.put(
-            "/api/financial/generic-place/rates",
+            "/api/financial/rates/default",
             json={
                 "rates": [
                     {
-                        "time_category": "regular",
+                        "time_category": time_category,
                         "participant_count": 1,
                         "hourly_rate_cents": 2500,
                     }
+                    for time_category in ("regular", "prime")
                 ]
             },
             cookies=cookies,
@@ -1099,7 +1110,7 @@ def test_financial_dashboard_top_line_uses_work_journey_not_recurring_slots() ->
         assert body["available_minutes"] == 240
         assert body["booked_minutes"] == 60
         assert body["occupancy_pct"] == 25.0
-        assert body["projected_revenue_cents"] == 1000
+        assert body["projected_revenue_cents"] == 2500
 
         preview = client.get(
             "/api/financial/revenue/preview",
@@ -1112,7 +1123,7 @@ def test_financial_dashboard_top_line_uses_work_journey_not_recurring_slots() ->
         )
         assert preview.status_code == 200
         assert preview.json() == {
-            "estimated_revenue_cents": 1000,
+            "estimated_revenue_cents": 2500,
             "participant_count": 1,
         }
 
@@ -1169,25 +1180,28 @@ def test_financial_dashboard_top_line_uses_work_journey_not_recurring_slots() ->
         }
 
         clear_generic_rates = client.put(
-            "/api/financial/generic-place/rates",
+            "/api/financial/rates/default",
             json={"rates": []},
             cookies=cookies,
         )
         assert clear_generic_rates.status_code == 200
-        global_fallback = client.get(
+        # With the unified model there is no separate tenant-global tier
+        # below the default matrix — clearing the default rows leaves this
+        # unattributed capacity unpriced.
+        no_default_rate = client.get(
             "/api/financial/dashboard",
             params={"date_from": "2026-08-10", "date_to": "2026-08-10"},
             cookies=cookies,
         )
-        assert global_fallback.status_code == 200
-        fallback_body = global_fallback.json()
-        fallback_individual = next(
+        assert no_default_rate.status_code == 200
+        no_default_body = no_default_rate.json()
+        no_default_individual = next(
             preset
-            for preset in fallback_body["capacity_presets"]
+            for preset in no_default_body["capacity_presets"]
             if preset["key"] == "all_individual"
         )
-        assert fallback_individual["projected_revenue_cents"] == 4000
-        assert fallback_body["capacity_sources"][1]["projected_revenue_cents"] == 4000
+        assert no_default_individual["projected_revenue_cents"] == 0
+        assert no_default_body["capacity_sources"][1]["projected_revenue_cents"] == 0
 
         # With a place filter applied, top-line figures must fall back to
         # the place-scoped (stay-based) accounting — otherwise
@@ -1222,6 +1236,186 @@ def test_financial_dashboard_top_line_uses_work_journey_not_recurring_slots() ->
             },
         ]
     finally:
+        db.query(Appointment).filter(
+            Appointment.professional_id == professional.id
+        ).delete(synchronize_session=False)
+        _cleanup(db, professionals=[professional], users=[owner, admin])
+        db.close()
+
+
+def test_financial_operational_analytics_classifies_outcomes_and_rankings() -> None:
+    db = SessionLocal()
+    professional, owner, admin, cookies = _create_tenant(db, enabled=True)
+    try:
+        place = Place(
+            professional_id=professional.id,
+            name="Sala operacional",
+            normalized_name="sala operacional",
+        )
+        contact = Contact(
+            professional_id=professional.id,
+            phone=f"+55119{uuid.uuid4().hex[:8]}",
+            display_name="Cliente de métricas",
+            normalized_name="cliente de metricas",
+        )
+        db.add_all([place, contact])
+        db.flush()
+        today = datetime.now(TIMEZONE).date()
+        executed_date = today - timedelta(days=1)
+        scheduled_date = today + timedelta(days=1)
+        cancelled_with_makeup_date = today
+        cancelled_without_makeup_date = today + timedelta(days=7)
+        executed_appointment = Appointment(
+            professional_id=professional.id,
+            contact_id=contact.id,
+            place_id=place.id,
+            service="Aula executada",
+            start_at=datetime.combine(executed_date, time(12), tzinfo=TIMEZONE),
+            end_at=datetime.combine(executed_date, time(13), tzinfo=TIMEZONE),
+            status="confirmed",
+        )
+        scheduled_appointment = Appointment(
+            professional_id=professional.id,
+            contact_id=contact.id,
+            place_id=place.id,
+            service="Aula agendada",
+            start_at=datetime.combine(scheduled_date, time(12), tzinfo=TIMEZONE),
+            end_at=datetime.combine(scheduled_date, time(13), tzinfo=TIMEZONE),
+            status="confirmed",
+        )
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=cancelled_with_makeup_date.weekday(),
+            start_time=time(10),
+            end_time=time(11),
+            slot_kind="class",
+            class_type="individual",
+            max_participants=1,
+            recurrence_type="weekly",
+            valid_from=cancelled_with_makeup_date,
+            valid_until=cancelled_without_makeup_date,
+        )
+        db.add_all([executed_appointment, scheduled_appointment, slot])
+        db.flush()
+        db.add(RecurringSlotParticipant(recurring_slot_id=slot.id, contact_id=contact.id))
+        cancelled_with_makeup = ScheduleOccurrenceOverride(
+            professional_id=professional.id,
+            recurring_slot_id=slot.id,
+            occurrence_date=cancelled_with_makeup_date,
+            override_type="cancelled",
+        )
+        cancelled_without_makeup = ScheduleOccurrenceOverride(
+            professional_id=professional.id,
+            recurring_slot_id=slot.id,
+            occurrence_date=cancelled_without_makeup_date,
+            override_type="cancelled",
+        )
+        db.add_all([cancelled_with_makeup, cancelled_without_makeup])
+        db.flush()
+        cancellation_event = OperationalEvent(
+            professional_id=professional.id,
+            event_type="schedule.occurrence.cancelled",
+            occurred_at=datetime.combine(cancelled_with_makeup_date, time(9), tzinfo=TIMEZONE),
+            actor_type="user",
+            actor_id=owner.id,
+            source_channel="web",
+            entity_type="recurring_slot",
+            entity_id=slot.id,
+            correlation_id=uuid.uuid4(),
+            payload={"occurrence_date": cancelled_with_makeup_date.isoformat()},
+        )
+        db.add(cancellation_event)
+        db.flush()
+        db.add(
+            MakeupClassCredit(
+                professional_id=professional.id,
+                contact_id=contact.id,
+                origin_event_id=cancellation_event.id,
+                origin_recurring_slot_id=slot.id,
+                origin_occurrence_date=cancelled_with_makeup_date,
+            )
+        )
+        db.add_all(
+            [
+                InstructorEvent(
+                    professional_id=professional.id,
+                    event_type="workshop",
+                    title="Evento realizado",
+                    start_at=datetime.combine(executed_date, time(15), tzinfo=TIMEZONE),
+                    end_at=datetime.combine(executed_date, time(17), tzinfo=TIMEZONE),
+                    income_cents=20000,
+                    status="confirmed",
+                ),
+                InstructorEvent(
+                    professional_id=professional.id,
+                    event_type="clinic",
+                    title="Evento futuro",
+                    start_at=datetime.combine(scheduled_date, time(15), tzinfo=TIMEZONE),
+                    end_at=datetime.combine(scheduled_date, time(17), tzinfo=TIMEZONE),
+                    status="confirmed",
+                ),
+                InstructorEvent(
+                    professional_id=professional.id,
+                    event_type="other",
+                    title="Evento cancelado",
+                    start_at=datetime.combine(scheduled_date, time(18), tzinfo=TIMEZONE),
+                    end_at=datetime.combine(scheduled_date, time(19), tzinfo=TIMEZONE),
+                    status="cancelled",
+                ),
+            ]
+        )
+        db.commit()
+
+        response = client.get(
+            "/api/financial/operational-analytics",
+            params={
+                "date_from": executed_date.isoformat(),
+                "date_to": cancelled_without_makeup_date.isoformat(),
+            },
+            cookies=cookies,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["class_outcomes"] == {
+            "total_scheduled_count": 4,
+            "upcoming_count": 1,
+            "executed_count": 1,
+            "canceled_with_makeup_count": 1,
+            "canceled_without_makeup_count": 1,
+        }
+        assert body["instructor_event_outcomes"] == {
+            "scheduled_count": 2,
+            "completed_count": 1,
+            "canceled_count": 1,
+            "confirmed_income_cents": 20000,
+        }
+        assert body["most_frequent_customers"] == [
+            {
+                "contact_id": str(contact.id),
+                "contact_name": "Cliente de métricas",
+                "executed_count": 1,
+                "scheduled_count": 1,
+                "canceled_count": 2,
+                "cancellation_rate_pct": 50,
+            }
+        ]
+        assert body["highest_cancellation_rate_customers"] == body[
+            "most_frequent_customers"
+        ]
+    finally:
+        db.query(MakeupClassCredit).filter(
+            MakeupClassCredit.professional_id == professional.id
+        ).delete(synchronize_session=False)
+        db.query(ScheduleOccurrenceOverride).filter(
+            ScheduleOccurrenceOverride.professional_id == professional.id
+        ).delete(synchronize_session=False)
+        db.query(OperationalEvent).filter(
+            OperationalEvent.professional_id == professional.id
+        ).delete(synchronize_session=False)
+        db.query(InstructorEvent).filter(
+            InstructorEvent.professional_id == professional.id
+        ).delete(synchronize_session=False)
         db.query(Appointment).filter(
             Appointment.professional_id == professional.id
         ).delete(synchronize_session=False)

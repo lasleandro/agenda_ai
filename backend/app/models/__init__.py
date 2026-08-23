@@ -16,7 +16,6 @@ from app.models.impersonation_log import ImpersonationLog  # noqa: F401
 from app.models.tenant_feature import TenantFeature  # noqa: F401
 from app.models.tenant_feature_audit_log import TenantFeatureAuditLog  # noqa: F401
 from app.models.professional_financial_settings import ProfessionalFinancialSettings  # noqa: F401
-from app.models.financial_rate import FinancialRate  # noqa: F401
 from app.models.financial_change_audit_log import FinancialChangeAuditLog  # noqa: F401
 from app.models.financial_scenario import FinancialScenario  # noqa: F401
 from app.models.prime_time_window import PrimeTimeWindow  # noqa: F401
@@ -27,8 +26,14 @@ from app.models.revenue_occurrence_participant import RevenueOccurrenceParticipa
 from app.models.revenue_occurrence_line import RevenueOccurrenceLine  # noqa: F401
 from app.models.recurring_slot import RecurringSlot  # noqa: F401
 from app.models.recurring_slot_participant import RecurringSlotParticipant  # noqa: F401
+from app.models.recurring_slot_occurrence_participant import (  # noqa: F401
+    RecurringSlotOccurrenceParticipant,
+)
 from app.models.entity_alias import EntityAlias  # noqa: F401
 from app.models.schedule_occurrence_override import ScheduleOccurrenceOverride  # noqa: F401
+from app.models.schedule_occurrence_class_override import (  # noqa: F401
+    ScheduleOccurrenceClassOverride,
+)
 from app.models.operator_action_candidate import OperatorActionCandidate  # noqa: F401
 from app.models.operational_event import OperationalEvent  # noqa: F401
 from app.models.assistant_settings import AssistantSettings  # noqa: F401

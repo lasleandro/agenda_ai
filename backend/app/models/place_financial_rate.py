@@ -1,4 +1,11 @@
-"""Sparse regular/prime per-participant hourly-rate overrides by place."""
+"""Unified rate matrix: per-place overrides plus the default matrix.
+
+Rows with ``place_id IS NULL`` are the universal default (replaced the old
+"global" 4-cell ``financial_rates`` table and the ``generic_place_rates``
+JSONB column, both dropped — see
+docs/ROADMAPS/pricing_model_unification_tracking_v0.1_2026-08-19.md).
+Rows with a real ``place_id`` are per-place overrides.
+"""
 
 import uuid
 from datetime import datetime
@@ -49,8 +56,8 @@ class PlaceFinancialRate(Base):
     professional_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("professionals.id"), nullable=False
     )
-    place_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("places.id"), nullable=False
+    place_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("places.id"), nullable=True
     )
     time_category: Mapped[str] = mapped_column(String(20), nullable=False)
     participant_count: Mapped[int] = mapped_column(SmallInteger, nullable=False)

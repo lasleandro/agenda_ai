@@ -1,6 +1,8 @@
 import type {
   ActionCandidateResultResponse,
   AppointmentDetail,
+  AppointmentFormatInput,
+  OccurrenceClassFormatDetail,
   AppointmentCreateInput,
   AssistantChatResponse,
   AssistantMessage,
@@ -13,6 +15,7 @@ import type {
   CustomerFinancialDetail,
   FinancialConfigurationDetail,
   FinancialDashboardDetail,
+  FinancialOperationalAnalyticsDetail,
   FinancialScenarioDetail,
   FinancialScenarioInput,
   FinancialScenarioList,
@@ -22,9 +25,10 @@ import type {
   ContactUpdateInput,
   ConversationDetail,
   ConversationListResponse,
+  MockCustomer,
+  MockCustomerListResponse,
   MockConversationInfo,
   GroupFinancialDetail,
-  GenericPlaceRateMatrixDetail,
   PlaceRateInput,
   PlaceRateMatrixDetail,
   Place,
@@ -37,6 +41,8 @@ import type {
   RecurringSlotInput,
   RecurringSlotListResponse,
   RecurringSlotParticipant,
+  RecurringSlotOccurrenceParticipant,
+  RecurringGroupOccurrenceDetail,
   SlotKind,
   RevenueCandidateList,
   RevenueOccurrenceCreateInput,
@@ -114,16 +120,57 @@ export async function fetchAppointment(
 export const createAppointment = (body: AppointmentCreateInput) =>
   apiRequest<AppointmentDetail>("/api/appointments", { method: "POST", body });
 
+export const updateAppointmentFormat = (id: string, body: AppointmentFormatInput) =>
+  apiRequest<AppointmentDetail>(`/api/appointments/${id}/format`, {
+    method: "PATCH",
+    body,
+  });
+
+export const updateOccurrenceClassFormat = (
+  sourceType: "appointment" | "recurring_slot",
+  sourceId: string,
+  occurrenceDate: string,
+  body: AppointmentFormatInput
+) =>
+  apiRequest<OccurrenceClassFormatDetail>(
+    `/api/schedule-occurrences/${sourceType}/${sourceId}/${occurrenceDate}/format`,
+    { method: "PATCH", body }
+  );
+
 // ---------------------------------------------------------------------------
 // Dev-only mock WhatsApp chat (DEBUG=true backend only, see app/api/dev_mock.py)
 // ---------------------------------------------------------------------------
 
-export async function fetchMockConversation(): Promise<MockConversationInfo> {
-  const res = await fetch(`${API_BASE}/api/dev/mock-conversation`, {
+export async function fetchMockConversation(
+  customerPhone?: string
+): Promise<MockConversationInfo> {
+  const query = customerPhone ? `?customer_phone=${encodeURIComponent(customerPhone)}` : "";
+  const res = await fetch(`${API_BASE}/api/dev/mock-conversation${query}`, {
     credentials: "include",
   });
   if (!res.ok) {
     throw new Error(`Failed to fetch mock conversation: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchMockCustomers(): Promise<MockCustomerListResponse> {
+  const res = await fetch(`${API_BASE}/api/dev/mock-customers`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch mock customers: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function createMockCustomer(): Promise<MockCustomer> {
+  const res = await fetch(`${API_BASE}/api/dev/mock-customers`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to create mock customer: ${res.statusText}`);
   }
   return res.json();
 }
@@ -150,23 +197,26 @@ export async function fetchConversations(): Promise<ConversationListResponse> {
 
 export async function sendMockMessage(
   sender: "instructor" | "customer",
-  text: string
+  text: string,
+  customerPhone: string
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/dev/mock-messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify({ sender, text }),
+    body: JSON.stringify({ sender, text, customer_phone: customerPhone }),
   });
   if (!res.ok) {
     throw new Error(`Failed to send mock message: ${res.statusText}`);
   }
 }
 
-export async function resetMockConversation(): Promise<void> {
+export async function resetMockConversation(customerPhone: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/dev/mock-conversation/reset`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     credentials: "include",
+    body: JSON.stringify({ customer_phone: customerPhone }),
   });
   if (!res.ok) {
     throw new Error(`Failed to reset mock conversation: ${res.statusText}`);
@@ -326,6 +376,10 @@ export const fetchRecurringSlots = (placeId?: string, slotKind?: SlotKind) => {
 };
 export const fetchRecurringGroup = (id: string) =>
   apiRequest<RecurringGroupDetail>(`/api/recurring-slots/${id}`);
+export const fetchRecurringGroupOccurrence = (id: string, occurrenceDate: string) =>
+  apiRequest<RecurringGroupOccurrenceDetail>(
+    `/api/recurring-slots/${id}/occurrences/${occurrenceDate}`
+  );
 export const createRecurringSlot = (body: RecurringSlotInput) =>
   apiRequest<RecurringSlot>("/api/recurring-slots", { method: "POST", body });
 export const createRecurringSlots = (body: RecurringSlotBulkInput) =>
@@ -345,6 +399,24 @@ export const removeSlotParticipant = (slotId: string, contactId: string) =>
   apiRequest<void>(`/api/recurring-slots/${slotId}/participants/${contactId}`, {
     method: "DELETE",
   });
+export const addOccurrenceParticipant = (
+  slotId: string,
+  occurrenceDate: string,
+  contactId: string
+) =>
+  apiRequest<RecurringSlotOccurrenceParticipant>(
+    `/api/recurring-slots/${slotId}/occurrences/${occurrenceDate}/participants`,
+    { method: "POST", body: { contact_id: contactId } }
+  );
+export const removeOccurrenceParticipant = (
+  slotId: string,
+  occurrenceDate: string,
+  contactId: string
+) =>
+  apiRequest<void>(
+    `/api/recurring-slots/${slotId}/occurrences/${occurrenceDate}/participants/${contactId}`,
+    { method: "DELETE" }
+  );
 
 export const fetchWaitlistEntries = (params?: { status?: string; contactId?: string }) => {
   const query = new URLSearchParams();
@@ -363,6 +435,20 @@ export const fulfillWaitlistEntry = (id: string, appointmentId: string) =>
   apiRequest<WaitlistEntry>(`/api/waitlist-entries/${id}/fulfill`, {
     method: "POST",
     body: { appointment_id: appointmentId },
+  });
+export const fulfillWaitlistEntryWithGroup = (
+  id: string,
+  recurringSlotId: string,
+  occurrenceDate: string,
+  enrollmentScope: "occurrence" | "series"
+) =>
+  apiRequest<WaitlistEntry>(`/api/waitlist-entries/${id}/fulfill-group`, {
+    method: "POST",
+    body: {
+      recurring_slot_id: recurringSlotId,
+      occurrence_date: occurrenceDate,
+      enrollment_scope: enrollmentScope,
+    },
   });
 
 export const fetchAppointmentCandidates = (status = "detected") =>
@@ -425,7 +511,6 @@ export const fetchFinancialSettings = () =>
   apiRequest<FinancialSettingsDetail>("/api/financial/settings");
 export const updateFinancialSettings = (body: {
   default_commercial_status?: string;
-  rates?: { participant_count: number; hourly_rate_cents: number | null }[];
 }) =>
   apiRequest<FinancialSettingsDetail>("/api/financial/settings", {
     method: "PATCH",
@@ -443,8 +528,8 @@ export const replacePlaceRates = (placeId: string, rates: PlaceRateInput[]) =>
     method: "PUT",
     body: { rates },
   });
-export const replaceGenericPlaceRates = (rates: PlaceRateInput[]) =>
-  apiRequest<GenericPlaceRateMatrixDetail>("/api/financial/generic-place/rates", {
+export const replaceDefaultRates = (rates: PlaceRateInput[]) =>
+  apiRequest<PlaceRateMatrixDetail>("/api/financial/rates/default", {
     method: "PUT",
     body: { rates },
   });
@@ -481,6 +566,19 @@ export const fetchFinancialDashboard = (
   placeIds.forEach((placeId) => params.append("place_id", placeId));
   return apiRequest<FinancialDashboardDetail>(
     `/api/financial/dashboard?${params.toString()}`
+  );
+};
+
+export const fetchFinancialOperationalAnalytics = (
+  dateFrom: string,
+  dateTo: string
+) => {
+  const params = new URLSearchParams({
+    date_from: dateFrom,
+    date_to: dateTo,
+  });
+  return apiRequest<FinancialOperationalAnalyticsDetail>(
+    `/api/financial/operational-analytics?${params.toString()}`
   );
 };
 

@@ -1,34 +1,28 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import {
-  BarChart3,
-  CircleDollarSign,
-  FlaskConical,
-  ReceiptText,
-} from "lucide-react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { BarChart3, CircleDollarSign, ReceiptText } from "lucide-react";
 import { FinancialDashboardSection } from "@/components/financial/financial-dashboard-section";
-import { FinancialMonthSummary } from "@/components/financial/financial-month-summary";
-import { FinancialSimulator } from "@/components/financial/financial-simulator";
+import {
+  FinancialPeriodControls,
+  type FinancialPeriod,
+} from "@/components/financial/financial-period-controls";
 import { RevenueSection } from "@/components/financial/revenue-section";
 import {
-  fetchFinancialDashboard,
   fetchFinancialConfiguration,
-  fetchFinancialScenarios,
-  fetchFinancialSettings,
-  fetchRevenueSummary,
+  fetchFinancialDashboard,
+  fetchFinancialOperationalAnalytics,
 } from "@/lib/api";
 import { fetchSession, sessionHasFeature } from "@/lib/auth";
 import type {
   FinancialConfigurationDetail,
   FinancialDashboardDetail,
-  FinancialScenarioDetail,
-  FinancialSettingsDetail,
-  RevenueSummaryDetail,
+  FinancialOperationalAnalyticsDetail,
 } from "@/lib/types";
 
-type FinanceTab = "dashboard" | "revenue" | "simulator";
+type FinanceView = "dashboard" | "revenue";
 
 function dateInputValue(value: Date) {
   const year = value.getFullYear();
@@ -50,22 +44,33 @@ function initialFilters() {
   };
 }
 
+function FinancialPageSkeleton() {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto p-4 md:p-6">
+      <div className="mx-auto w-full max-w-7xl space-y-5">
+        <div className="h-14 animate-pulse rounded-xl bg-muted" />
+        <div className="h-28 animate-pulse rounded-xl bg-muted" />
+        <div className="h-52 animate-pulse rounded-xl bg-muted" />
+      </div>
+    </div>
+  );
+}
+
 export default function FinanceiroPage() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<FinanceTab>("dashboard");
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [filters, setFilters] = useState(initialFilters);
-  const [settings, setSettings] = useState<FinancialSettingsDetail | null>(null);
   const [configuration, setConfiguration] =
     useState<FinancialConfigurationDetail | null>(null);
   const [dashboard, setDashboard] =
     useState<FinancialDashboardDetail | null>(null);
-  const [monthDashboard, setMonthDashboard] =
-    useState<FinancialDashboardDetail | null>(null);
-  const [monthRevenueSummary, setMonthRevenueSummary] =
-    useState<RevenueSummaryDetail | null>(null);
-  const [scenarios, setScenarios] = useState<FinancialScenarioDetail[]>([]);
+  const [operationalAnalytics, setOperationalAnalytics] =
+    useState<FinancialOperationalAnalyticsDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const activeView: FinanceView =
+    searchParams.get("view") === "receita" ? "revenue" : "dashboard";
 
   useEffect(() => {
     let active = true;
@@ -77,26 +82,15 @@ export default function FinanceiroPage() {
       }
       try {
         const initial = initialFilters();
-        const [
-          settingsResult,
-          configurationResult,
-          dashboardResult,
-          scenariosResult,
-          revenueSummaryResult,
-        ] = await Promise.all([
-          fetchFinancialSettings(),
+        const [configurationResult, dashboardResult, analyticsResult] = await Promise.all([
           fetchFinancialConfiguration(),
           fetchFinancialDashboard(initial.dateFrom, initial.dateTo),
-          fetchFinancialScenarios(),
-          fetchRevenueSummary(initial.dateFrom, initial.dateTo),
+          fetchFinancialOperationalAnalytics(initial.dateFrom, initial.dateTo),
         ]);
         if (!active) return;
-        setSettings(settingsResult);
         setConfiguration(configurationResult);
         setDashboard(dashboardResult);
-        setMonthDashboard(dashboardResult);
-        setScenarios(scenariosResult.scenarios);
-        setMonthRevenueSummary(revenueSummaryResult);
+        setOperationalAnalytics(analyticsResult);
       } catch (caught) {
         if (active) {
           setError(
@@ -120,13 +114,17 @@ export default function FinanceiroPage() {
     setRefreshing(true);
     setError(null);
     try {
-      const result = await fetchFinancialDashboard(
-        nextFilters.dateFrom,
-        nextFilters.dateTo,
-        nextFilters.placeId ? [nextFilters.placeId] : []
-      );
+      const [result, analyticsResult] = await Promise.all([
+        fetchFinancialDashboard(
+          nextFilters.dateFrom,
+          nextFilters.dateTo,
+          nextFilters.placeId ? [nextFilters.placeId] : []
+        ),
+        fetchFinancialOperationalAnalytics(nextFilters.dateFrom, nextFilters.dateTo),
+      ]);
       setFilters(nextFilters);
       setDashboard(result);
+      setOperationalAnalytics(analyticsResult);
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -138,61 +136,75 @@ export default function FinanceiroPage() {
     }
   }
 
-  if (
-    error &&
-    (!settings || !configuration || !dashboard || !monthRevenueSummary)
-  ) {
+  function selectView(view: FinanceView) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (view === "revenue") {
+      params.set("view", "receita");
+    } else {
+      params.delete("view");
+    }
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }
+
+  if (error && (!configuration || !dashboard || !operationalAnalytics)) {
     return <div className="p-6 text-sm text-destructive">{error}</div>;
   }
 
-  if (!settings || !configuration || !dashboard || !monthRevenueSummary) {
-    return <div className="p-6 text-sm text-muted-foreground">Carregando...</div>;
+  if (!configuration || !dashboard || !operationalAnalytics) {
+    return <FinancialPageSkeleton />;
   }
 
-  const tabs: {
-    key: FinanceTab;
+  const views: {
+    key: FinanceView;
     label: string;
     icon: typeof BarChart3;
   }[] = [
     { key: "dashboard", label: "Visão geral", icon: BarChart3 },
-    { key: "revenue", label: "Receita", icon: ReceiptText },
-    { key: "simulator", label: "Simulador", icon: FlaskConical },
+    { key: "revenue", label: "Realizado", icon: ReceiptText },
   ];
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto p-4 md:p-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
-          <CircleDollarSign className="h-5 w-5 text-primary" />
-          Financeiro
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Acompanhe capacidade, receita e cenários.
-        </p>
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4 md:p-6">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+        <header className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
+              <CircleDollarSign className="size-5 text-primary" />
+              Financeiro
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Acompanhe receita, ocupação e capacidade.
+            </p>
+          </div>
+          <Link
+            href="/financeiro/simulador"
+            className="inline-flex h-8 items-center rounded-lg border border-border px-3 text-sm font-medium transition-colors hover:bg-muted"
+          >
+            Abrir simulador
+          </Link>
+        </header>
 
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-5">
-        {monthDashboard && (
-          <FinancialMonthSummary
-            monthDashboard={monthDashboard}
-            monthRevenueSummary={monthRevenueSummary}
-          />
-        )}
+        <FinancialPeriodControls
+          period={{ dateFrom: filters.dateFrom, dateTo: filters.dateTo }}
+          refreshing={refreshing}
+          onApply={(period: FinancialPeriod) =>
+            applyFilters({ ...period, placeId: filters.placeId })
+          }
+        />
 
-        <div
-          className="flex w-fit gap-1 rounded-lg border bg-muted/30 p-1"
-          role="tablist"
+        <nav
+          className="grid w-full grid-cols-2 rounded-lg border bg-muted/30 p-1 sm:flex sm:w-fit"
           aria-label="Áreas do Financeiro"
         >
-          {tabs.map(({ key, label, icon: Icon }) => (
+          {views.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
               type="button"
-              role="tab"
-              aria-selected={activeTab === key}
-              onClick={() => setActiveTab(key)}
-              className={`flex h-8 items-center gap-1.5 rounded-md px-3 text-sm transition-colors ${
-                activeTab === key
+              aria-current={activeView === key ? "page" : undefined}
+              onClick={() => selectView(key)}
+              className={`flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-sm transition-colors ${
+                activeView === key
                   ? "bg-background font-medium shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               }`}
@@ -201,44 +213,32 @@ export default function FinanceiroPage() {
               {label}
             </button>
           ))}
-        </div>
+        </nav>
 
         {error && (
-          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          <div
+            className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+            role="alert"
+          >
             {error}
           </div>
         )}
 
-        {activeTab === "dashboard" && (
+        {activeView === "dashboard" ? (
           <FinancialDashboardSection
-            key={`${filters.dateFrom}-${filters.dateTo}-${filters.placeId}`}
             dashboard={dashboard}
-            filters={filters}
-            places={configuration.places}
-            refreshing={refreshing}
-            onApplyFilters={applyFilters}
-          />
-        )}
-
-        {activeTab === "simulator" && (
-          <FinancialSimulator
-            key={`${filters.dateFrom}-${filters.dateTo}-${filters.placeId}`}
-            dashboard={dashboard}
-            settings={settings}
-            configuration={configuration}
             dateFrom={filters.dateFrom}
             dateTo={filters.dateTo}
             placeId={filters.placeId}
-            initialScenarios={scenarios}
+            places={configuration.places}
+            operationalAnalytics={operationalAnalytics}
+            refreshing={refreshing}
+            onPlaceChange={(placeId) =>
+              applyFilters({ ...filters, placeId })
+            }
           />
-        )}
-
-        {activeTab === "revenue" && (
-          <RevenueSection
-            key={`${filters.dateFrom}-${filters.dateTo}`}
-            dateFrom={filters.dateFrom}
-            dateTo={filters.dateTo}
-          />
+        ) : (
+          <RevenueSection dateFrom={filters.dateFrom} dateTo={filters.dateTo} />
         )}
       </div>
     </div>

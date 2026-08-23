@@ -18,6 +18,7 @@ export interface AppointmentSummary {
   source: string;
   recurrence_rule: string | null;
   class_type?: "individual" | "group";
+  max_participants?: number;
   participants?: AppointmentParticipantSummary[];
   billing_type?: "billable" | "courtesy";
   // The specific dated occurrence this row represents — pass back to
@@ -42,6 +43,7 @@ export interface AppointmentDetail {
   source: string;
   recurrence_rule: string | null;
   class_type?: "individual" | "group";
+  max_participants?: number;
   participants?: AppointmentParticipantSummary[];
   occurrence_date?: string | null;
   is_exception?: boolean;
@@ -86,8 +88,23 @@ export interface InstructorEventInput {
   note?: string | null;
 }
 
+export interface RecurringClassOccurrenceSummary {
+  recurring_slot_id: string;
+  occurrence_date: string;
+  start_at: string;
+  end_at: string;
+  label: string;
+  place_id: string | null;
+  place_name: string | null;
+  class_type: "individual" | "group";
+  max_participants: number;
+  participants: AppointmentParticipantSummary[];
+  is_exception: boolean;
+}
+
 export interface CalendarResponse {
   appointments: AppointmentSummary[];
+  recurring_classes: RecurringClassOccurrenceSummary[];
   events: InstructorEvent[];
 }
 
@@ -100,7 +117,23 @@ export interface AppointmentCreateInput {
   end_at: string;
   is_recurring: boolean;
   class_type?: "individual" | "group";
+  max_participants?: number;
   billing_type?: "billable" | "courtesy";
+}
+
+export interface AppointmentFormatInput {
+  class_type: "individual" | "group";
+  max_participants: number;
+}
+
+export interface OccurrenceClassFormatDetail {
+  source_type: "appointment" | "recurring_slot";
+  source_id: string;
+  occurrence_date: string;
+  class_type: "individual" | "group";
+  max_participants: number;
+  participant_count: number;
+  available_seats: number;
 }
 
 /** Mirror of the FastAPI MessageDetail schema. */
@@ -202,6 +235,16 @@ export interface MockConversationInfo {
   conversation_id: string;
   instructor_phone: string;
   customer_phone: string;
+}
+
+export interface MockCustomer {
+  conversation_id: string;
+  customer_name: string;
+  customer_phone: string;
+}
+
+export interface MockCustomerListResponse {
+  customers: MockCustomer[];
 }
 
 /** Mirror of the FastAPI TenantSummary schema — one tile in the admin grid. */
@@ -363,15 +406,9 @@ export interface GroupFinancialDetail extends EffectiveCommercialValues {
   participants: GroupParticipantFinancialDetail[];
 }
 
-export interface GlobalRateDetail {
-  participant_count: number;
-  hourly_rate_cents: number | null;
-}
-
 export interface FinancialSettingsDetail {
   default_commercial_status: CommercialStatus;
   currency: string;
-  rates: GlobalRateDetail[];
 }
 
 export interface PrimeTimeWindowInput {
@@ -395,16 +432,12 @@ export interface PlaceRateInput {
 
 export interface PlaceRateDetail extends PlaceRateInput {
   effective_hourly_rate_cents: number | null;
-  source: "place" | "generic" | "tenant" | "unset";
+  source: "place" | "default" | "unset";
 }
 
 export interface PlaceRateMatrixDetail {
-  place_id: string;
-  place_name: string;
-  rates: PlaceRateDetail[];
-}
-
-export interface GenericPlaceRateMatrixDetail {
+  place_id: string | null;
+  place_name?: string | null;
   rates: PlaceRateDetail[];
 }
 
@@ -421,7 +454,7 @@ export interface WorkJourneyIntervalDetail extends WorkJourneyIntervalInput {
 
 export interface FinancialConfigurationDetail {
   prime_time_windows: PrimeTimeWindowDetail[];
-  generic_place: GenericPlaceRateMatrixDetail;
+  default_rates: PlaceRateMatrixDetail;
   places: PlaceRateMatrixDetail[];
 }
 
@@ -491,6 +524,9 @@ export interface FinancialDashboardDetail {
   participant_hours: number;
   projected_revenue_cents: number;
   unpriced_booking_count: number;
+  makeup_booking_count: number;
+  makeup_booked_minutes: number;
+  makeup_opportunity_cost_cents: number;
   observed_participant_mix: ParticipantMixItem[];
   time_series: FinancialTimeSeriesPoint[];
   by_place: FinancialMetricBreakdown[];
@@ -499,6 +535,38 @@ export interface FinancialDashboardDetail {
   by_time_category: FinancialMetricBreakdown[];
   capacity_presets: CapacityPresetDetail[];
   capacity_sources: CapacitySourceDetail[];
+}
+
+export interface FinancialClassOutcomesDetail {
+  total_scheduled_count: number;
+  upcoming_count: number;
+  executed_count: number;
+  canceled_with_makeup_count: number;
+  canceled_without_makeup_count: number;
+}
+
+export interface FinancialInstructorEventOutcomesDetail {
+  scheduled_count: number;
+  completed_count: number;
+  canceled_count: number;
+  confirmed_income_cents: number;
+}
+
+export interface FinancialCustomerRankingDetail {
+  contact_id: string;
+  contact_name: string;
+  executed_count: number;
+  scheduled_count: number;
+  canceled_count: number;
+  cancellation_rate_pct: number;
+}
+
+export interface FinancialOperationalAnalyticsDetail {
+  period: { date_from: string; date_to: string };
+  class_outcomes: FinancialClassOutcomesDetail;
+  instructor_event_outcomes: FinancialInstructorEventOutcomesDetail;
+  most_frequent_customers: FinancialCustomerRankingDetail[];
+  highest_cancellation_rate_customers: FinancialCustomerRankingDetail[];
 }
 
 export type FinancialScenarioMode =
@@ -592,6 +660,7 @@ export type RevenueRateSource =
   | "customer"
   | "group"
   | "place"
+  | "default"
   | "generic"
   | "tenant"
   | "unset";
@@ -853,6 +922,24 @@ export interface RecurringSlotParticipant {
   contact_name: string;
 }
 
+export interface RecurringSlotOccurrenceParticipant extends RecurringSlotParticipant {
+  occurrence_date: string;
+}
+
+export interface RecurringOccurrenceParticipant extends RecurringSlotParticipant {
+  enrollment_scope: "series" | "occurrence";
+}
+
+export interface RecurringGroupOccurrenceDetail {
+  recurring_slot_id: string;
+  occurrence_date: string;
+  class_type: ClassType;
+  max_participants: number;
+  participant_count: number;
+  available_seats: number;
+  participants: RecurringOccurrenceParticipant[];
+}
+
 export interface RecurringGroupDetail extends RecurringSlot {
   participants: RecurringSlotParticipant[];
 }
@@ -968,6 +1055,10 @@ export interface WaitlistEntry {
   duration_minutes: number;
   status: WaitlistEntryStatus;
   note: string | null;
+  fulfilled_appointment_id: string | null;
+  fulfilled_recurring_slot_id: string | null;
+  fulfilled_occurrence_date: string | null;
+  fulfillment_scope: "occurrence" | "series" | null;
   created_at: string;
 }
 

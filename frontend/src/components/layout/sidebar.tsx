@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Calendar, CircleDollarSign, Users, Settings, LayoutGrid, LogOut, MapPin, MessageSquare, Repeat } from "lucide-react";
+import { Calendar, CircleDollarSign, Users, Settings, LogOut, MapPin, MessageSquare, Repeat, FlaskConical } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -12,7 +12,6 @@ import {
   type SessionUser,
 } from "@/lib/auth";
 
-// href: undefined means "not built yet" — rendered but not a real link.
 // Mock Chat is a dev-only testing aid (see README "Dev tool — mock WhatsApp
 // chat"); remove this entry once real WhatsApp traffic replaces it.
 const navItems = [
@@ -24,8 +23,14 @@ const navItems = [
     icon: CircleDollarSign,
     href: "/financeiro",
     feature: "commercial_financials",
+    exact: true,
   },
-  { label: "Painel", icon: LayoutGrid, href: undefined },
+  {
+    label: "Simulador financeiro",
+    icon: FlaskConical,
+    href: "/financeiro/simulador",
+    feature: "commercial_financials",
+  },
   { label: "Configurações", icon: Settings, href: "/minhas-regras" },
   { label: "Mock Chat", icon: MessageSquare, href: "/dev/mock-chat" },
 ];
@@ -101,7 +106,9 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           .map((item) => {
           const active =
             item.href != null &&
-            (item.href === "/" ? pathname === "/" : pathname.startsWith(item.href));
+            (item.href === "/" || item.exact
+              ? pathname === item.href
+              : pathname.startsWith(item.href));
           const className = cn(
             "w-full flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
             active ? "text-white" : "text-[var(--sidebar-text)] hover:text-white",

@@ -18,10 +18,12 @@ import type {
 import {
   createAppointment,
   createInstructorEvent,
+  createRecurringSlot,
   fetchCalendar,
   fetchContacts,
   fetchPlaces,
   fetchRecurringSlots,
+  fetchWorkJourney,
   fetchWaitlistEntries,
   fulfillWaitlistEntry,
 } from "@/lib/api";
@@ -37,8 +39,11 @@ import type {
   InstructorEvent,
   InstructorEventInput,
   Place,
+  RecurringClassOccurrenceSummary,
   RecurringSlot,
+  RecurringSlotInput,
   WaitlistEntry,
+  WorkJourneyIntervalDetail,
 } from "@/lib/types";
 import { AppointmentFormDialog } from "./appointment-form-dialog";
 import { AppointmentPanel } from "./appointment-panel";
@@ -75,6 +80,10 @@ function slotToEvent(slot: RecurringSlot): EventInput {
   const levelLabel = slot.level
     ? ` · ${CONTACT_LEVEL_LABELS[slot.level] ?? slot.level}`
     : "";
+  const groupCapacityLabel =
+    isScheduledClass && slot.class_type === "group"
+      ? ` · ${slot.participant_count}/${slot.max_participants}`
+      : "";
   const schedule = slot.recurrence_type === "once" && slot.scheduled_date
     ? {
         start: `${slot.scheduled_date}T${slot.start_time}`,
@@ -91,7 +100,7 @@ function slotToEvent(slot: RecurringSlot): EventInput {
   return {
     id: `slot-${slot.id}`,
     title: isScheduledClass
-      ? `${slot.label || (slot.class_type === "group" ? "Grupo" : "Aula")} · ${slot.place_name}${levelLabel}`
+      ? `${slot.label || (slot.class_type === "group" ? "Grupo" : "Aula")} · ${slot.place_name}${groupCapacityLabel}${levelLabel}`
       : `${slot.place_name}${courtLabel}`,
     ...schedule,
     display: isScheduledClass ? "auto" : "background",
@@ -106,12 +115,34 @@ function slotToEvent(slot: RecurringSlot): EventInput {
   };
 }
 
+function pauseToEvent(interval: WorkJourneyIntervalDetail): EventInput {
+  return {
+    id: `pause-${interval.id}`,
+    title: "Pausa",
+    daysOfWeek: [toFullCalendarDay(interval.day_of_week)],
+    startTime: interval.start_time.slice(0, 5),
+    endTime: interval.end_time.slice(0, 5),
+    display: "background",
+    overlap: true,
+    backgroundColor: "#e2e8f0",
+    classNames: ["agenda-pause-slot"],
+    extendedProps: { kind: "work_journey_pause" },
+  };
+}
+
 function appointmentToEvent(appointment: AppointmentSummary): EventInput {
   const colors = STATUS_COLORS[appointment.status] ?? STATUS_COLORS.tentative;
   const placeLabel = appointment.place_name ? ` · ${appointment.place_name}` : "";
   const participantNames = appointment.participants?.length
     ? appointment.participants.map((p) => p.display_name).join(" + ")
     : appointment.contact_name;
+  const participantCount = appointment.participants?.length ?? 1;
+  const maxParticipants = appointment.max_participants ?? (
+    appointment.class_type === "group" ? 4 : 1
+  );
+  const formatLabel = appointment.class_type === "group"
+    ? ` · Grupo ${participantCount}/${maxParticipants}`
+    : " · Individual";
   const schedule = appointment.recurrence_rule === "FREQ=WEEKLY"
     ? {
         daysOfWeek: [new Date(appointment.start_at).getDay()],
@@ -126,7 +157,7 @@ function appointmentToEvent(appointment: AppointmentSummary): EventInput {
   const courtesyTag = appointment.billing_type === "courtesy" ? " (Cortesia)" : "";
   return {
     id: appointment.id,
-    title: `${participantNames} · ${appointment.service}${placeLabel}${courtesyTag}`,
+    title: `${participantNames} · ${appointment.service}${formatLabel}${placeLabel}${courtesyTag}`,
     ...schedule,
     backgroundColor: colors.bg,
     borderColor: colors.border,
@@ -139,7 +170,39 @@ function appointmentToEvent(appointment: AppointmentSummary): EventInput {
       source: appointment.source,
       occurrenceDate: appointment.occurrence_date,
       classType: appointment.class_type ?? "individual",
-      participantCount: appointment.participants?.length ?? 1,
+      participantCount,
+      maxParticipants,
+    },
+  };
+}
+
+function recurringClassOccurrenceToEvent(
+  occurrence: RecurringClassOccurrenceSummary
+): EventInput {
+  const participantCount = occurrence.participants.length;
+  const participantNames = occurrence.participants.length
+    ? occurrence.participants.map((participant) => participant.display_name).join(" + ")
+    : "Turma sem alunos";
+  const placeLabel = occurrence.place_name ? ` · ${occurrence.place_name}` : "";
+  const formatLabel = occurrence.class_type === "group"
+    ? ` · Grupo ${participantCount}/${occurrence.max_participants}`
+    : " · Individual";
+  return {
+    id: `recurring-${occurrence.recurring_slot_id}-${occurrence.occurrence_date}`,
+    title: `${participantNames} · ${occurrence.label}${formatLabel}${placeLabel}`,
+    start: occurrence.start_at,
+    end: occurrence.end_at,
+    backgroundColor: "#4f46e5",
+    borderColor: "#4338ca",
+    textColor: "#ffffff",
+    classNames: ["agenda-scheduled-group", "cursor-pointer"],
+    extendedProps: {
+      kind: "recurring_occurrence",
+      recurringSlotId: occurrence.recurring_slot_id,
+      occurrenceDate: occurrence.occurrence_date,
+      classType: occurrence.class_type,
+      participantCount,
+      maxParticipants: occurrence.max_participants,
     },
   };
 }
@@ -230,6 +293,7 @@ interface BookingSelection {
 export function WeekCalendar() {
   const [events, setEvents] = useState<EventInput[]>([]);
   const [slots, setSlots] = useState<RecurringSlot[]>([]);
+  const [workJourney, setWorkJourney] = useState<WorkJourneyIntervalDetail[]>([]);
   const [places, setPlaces] = useState<Place[]>([]);
   const [contacts, setContacts] = useState<ContactSummary[]>([]);
   const [waitlistEntries, setWaitlistEntries] = useState<WaitlistEntry[]>([]);
@@ -248,6 +312,7 @@ export function WeekCalendar() {
   const [selectedGroupOccurrenceDate, setSelectedGroupOccurrenceDate] = useState<
     string | undefined
   >(undefined);
+  const [selectedGroupParticipantCount, setSelectedGroupParticipantCount] = useState<number>();
   const [groupPanelOpen, setGroupPanelOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [financialEnabled, setFinancialEnabled] = useState(false);
@@ -288,6 +353,7 @@ export function WeekCalendar() {
 
   useEffect(() => {
     reloadSlots();
+    fetchWorkJourney().then(setWorkJourney);
     fetchPlaces().then((res) => setPlaces(res.places));
     fetchContacts().then((res) => setContacts(res.contacts));
     fetchWaitlistEntries().then((res) =>
@@ -302,6 +368,7 @@ export function WeekCalendar() {
       const data = await fetchCalendar(startDate, endDate);
       const mapped = [
         ...data.appointments.map(appointmentToEvent),
+        ...data.recurring_classes.map(recurringClassOccurrenceToEvent),
         ...data.events.map(instructorEventToEvent),
       ];
       setEvents(mapped);
@@ -323,6 +390,7 @@ export function WeekCalendar() {
     try {
       await Promise.all([
         reloadSlots(),
+        fetchWorkJourney().then(setWorkJourney),
         api ? loadRange(api.view.activeStart, api.view.activeEnd) : Promise.resolve(),
       ]);
     } finally {
@@ -340,11 +408,19 @@ export function WeekCalendar() {
   }, [handleRefresh]);
 
   const handleEventClick = useCallback((arg: EventClickArg) => {
+    if (arg.event.extendedProps.kind === "recurring_occurrence") {
+      setSelectedGroupId(arg.event.extendedProps.recurringSlotId as string);
+      setSelectedGroupOccurrenceDate(arg.event.extendedProps.occurrenceDate as string);
+      setSelectedGroupParticipantCount(arg.event.extendedProps.participantCount as number);
+      setGroupPanelOpen(true);
+      return;
+    }
     if (arg.event.extendedProps.kind === "recurring_slot") {
       const slot = arg.event.extendedProps.slot as RecurringSlot;
       if (slot.slot_kind !== "class") return;
       setSelectedGroupId(slot.id);
       setSelectedGroupOccurrenceDate(arg.event.startStr.slice(0, 10));
+      setSelectedGroupParticipantCount(slot.participant_count);
       setGroupPanelOpen(true);
       return;
     }
@@ -370,13 +446,19 @@ export function WeekCalendar() {
   }, []);
 
   const handleEventMount = useCallback((arg: EventMountArg) => {
-    if (arg.event.extendedProps.kind !== "recurring_slot") return;
-    if (arg.event.extendedProps.slot.slot_kind === "class") return;
+    const kind = arg.event.extendedProps.kind;
+    if (kind === "recurring_slot" && arg.event.extendedProps.slot.slot_kind === "class") return;
+    if (kind !== "recurring_slot" && kind !== "work_journey_pause") return;
     const label = document.createElement("span");
-    label.className = "agenda-place-slot-label";
+    label.className = kind === "work_journey_pause"
+      ? "agenda-pause-slot-label"
+      : "agenda-place-slot-label";
     label.textContent = arg.event.title;
     arg.el.appendChild(label);
-    arg.el.setAttribute("aria-label", `Local reservado: ${arg.event.title}`);
+    arg.el.setAttribute(
+      "aria-label",
+      kind === "work_journey_pause" ? "Pausa na jornada" : `Local reservado: ${arg.event.title}`
+    );
   }, []);
 
   const openBooking = useCallback(
@@ -425,6 +507,7 @@ export function WeekCalendar() {
         source: "dashboard",
         recurrence_rule: input.is_recurring ? "FREQ=WEEKLY" : null,
         class_type: input.class_type,
+        max_participants: input.max_participants,
         participants: input.contact_ids?.map((id) => ({
           contact_id: id,
           display_name: contacts.find((item) => item.id === id)?.display_name ?? "Cliente",
@@ -502,20 +585,64 @@ export function WeekCalendar() {
     [places]
   );
 
+  const handleCreateGroupSlot = useCallback(
+    async (input: RecurringSlotInput) => {
+      const place = places.find((item) => item.id === input.place_id);
+      const temporaryId = `group-slot-${crypto.randomUUID()}`;
+      const optimistic: RecurringSlot = {
+        id: temporaryId,
+        place_id: input.place_id,
+        place_name: place?.name ?? "Local",
+        day_of_week: input.day_of_week,
+        start_time: input.start_time,
+        end_time: input.end_time,
+        label: input.label ?? null,
+        group_name: input.group_name ?? null,
+        class_type: "group",
+        slot_kind: "class",
+        level: input.level ?? null,
+        max_participants: input.max_participants ?? 4,
+        recurrence_type: input.recurrence_type ?? "weekly",
+        scheduled_date: input.scheduled_date ?? null,
+        valid_from: input.valid_from ?? null,
+        valid_until: input.valid_until ?? null,
+        status: "active",
+        participant_count: 0,
+      };
+      setSlots((current) => [...current, optimistic]);
+      try {
+        const saved = await createRecurringSlot(input);
+        setSlots((current) =>
+          current.map((slot) => (slot.id === temporaryId ? saved : slot))
+        );
+        calendarRef.current?.getApi().unselect();
+      } catch (requestError) {
+        setSlots((current) => current.filter((slot) => slot.id !== temporaryId));
+        throw requestError;
+      }
+    },
+    [places]
+  );
+
   const eventCountLabel = useMemo(
     () => {
       const scheduledCount =
-        events.length + slots.filter((slot) => slot.slot_kind === "class").length;
+        events.length;
       return `${scheduledCount} agendamento${scheduledCount === 1 ? "" : "s"}`;
     },
-    [events, slots]
+    [events]
   );
 
   const calendarEvents: EventInput[] = useMemo(
     () => {
       const allEvents = [
         ...events,
-        ...slots.map(slotToEvent),
+        ...slots
+          .filter((slot) => slot.slot_kind === "availability")
+          .map(slotToEvent),
+        ...workJourney
+          .filter((interval) => interval.interval_type === "break")
+          .map(pauseToEvent),
         ...(showWaitlist ? waitlistEntries.map(waitlistEntryToEvent) : []),
       ];
       if (!showIncompleteGroups) return allEvents;
@@ -525,18 +652,23 @@ export function WeekCalendar() {
           return (
             slot.slot_kind === "class" &&
             slot.class_type === "group" &&
-            slot.participant_count > 0 &&
-            slot.participant_count < 4
+            slot.participant_count < slot.max_participants
           );
         }
+        if (event.extendedProps?.kind === "recurring_occurrence") {
+          return (
+            event.extendedProps.classType === "group" &&
+            event.extendedProps.participantCount < event.extendedProps.maxParticipants
+          );
+        }
+        if (event.extendedProps?.kind === "work_journey_pause") return true;
         return (
           event.extendedProps?.classType === "group" &&
-          event.extendedProps?.participantCount > 0 &&
-          event.extendedProps?.participantCount < 4
+          event.extendedProps?.participantCount < event.extendedProps?.maxParticipants
         );
       });
     },
-    [events, slots, showWaitlist, waitlistEntries, showIncompleteGroups]
+    [events, slots, workJourney, showWaitlist, waitlistEntries, showIncompleteGroups]
   );
   const now = new Date();
   const confirmationDateFrom = localDateInput(
@@ -621,7 +753,7 @@ export function WeekCalendar() {
                     : "border-border text-muted-foreground hover:text-foreground"
                 }`}
               >
-                Grupos incompletos
+                Turmas com vagas
               </button>
               <Button
                 variant="ghost"
@@ -703,6 +835,15 @@ export function WeekCalendar() {
           <GroupDetailsDialog
             groupId={selectedGroupId}
             occurrenceDate={selectedGroupOccurrenceDate}
+            occurrenceParticipantCount={selectedGroupParticipantCount}
+            contacts={contacts}
+            waitlistEntries={waitlistEntries}
+            onOccurrenceParticipantAdded={() =>
+              setSelectedGroupParticipantCount((current) => (current ?? 0) + 1)
+            }
+            onWaitlistFulfilled={(entryId) =>
+              setWaitlistEntries((current) => current.filter((entry) => entry.id !== entryId))
+            }
             open={groupPanelOpen}
             onOpenChange={setGroupPanelOpen}
           />
@@ -724,6 +865,7 @@ export function WeekCalendar() {
                 setPlaces((current) => [...current, place])
               }
               onCreate={handleCreateBooking}
+              onCreateGroupSlot={handleCreateGroupSlot}
               onCreateEvent={handleCreateEvent}
             />
           )}

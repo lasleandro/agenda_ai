@@ -193,7 +193,7 @@ orchestrator.
 - **Calendar item:** an appointment, recurring class, or instructor event
   that occupies time on the Agenda.
 - **Recurring class:** a `RecurringSlot` with `slot_kind="class"`, with its
-  own format and roster.
+  own format, configured capacity, standing roster, and optional dated guests.
 - **Instructor event:** a non-class `InstructorEvent`, such as a clinic,
   workshop, or tournament.
 
@@ -205,6 +205,7 @@ erDiagram
   Professional ||--o{ Appointment : owns
   Professional ||--o{ RecurringSlot : owns
   Professional ||--o{ ScheduleOccurrenceOverride : owns
+  Professional ||--o{ ScheduleOccurrenceClassOverride : owns
 
   Contact ||--o{ Appointment : is_primary
   Place ||--o{ Appointment : location
@@ -221,6 +222,7 @@ erDiagram
   Message ||--o{ AppointmentEvidence : is_evidence
 
   RecurringSlot ||--o{ RecurringSlotParticipant : enrolls
+  RecurringSlot ||--o{ RecurringSlotOccurrenceParticipant : has_guest
   Contact ||--o{ RecurringSlotParticipant : assigned_to
 
   Appointment {
@@ -394,7 +396,6 @@ pass — nothing currently sets either one; a credit above
 ```mermaid
 erDiagram
   Professional ||--|| ProfessionalFinancialSettings : configures
-  Professional ||--o{ FinancialRate : defines
   Professional ||--o{ PlaceFinancialRate : defines
   Professional ||--o{ RevenueOccurrence : records
   Professional ||--o{ PrimeTimeWindow : defines
@@ -414,17 +415,10 @@ erDiagram
     int cancellation_notice_hours
   }
 
-  FinancialRate {
-    uuid id PK
-    uuid professional_id FK
-    int participant_count "1-4"
-    int hourly_rate_cents
-  }
-
   PlaceFinancialRate {
     uuid id PK
     uuid professional_id FK
-    uuid place_id FK
+    uuid place_id FK "nullable — NULL is the tenant-wide default row"
     string time_category "regular | prime"
     int participant_count "1-4"
     int hourly_rate_cents

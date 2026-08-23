@@ -8,8 +8,8 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.database import SessionLocal
-from app.chat.pipeline import _auto_execute_authoritative_create
-from app.models import Appointment, AppointmentCandidate, AppointmentTransition, Contact, OperationalEvent, Place, Professional, RecurringSlot, User
+from app.chat.pipeline import _auto_execute_authoritative_candidate
+from app.models import Appointment, AppointmentCandidate, AppointmentTransition, Contact, OperationalEvent, Place, Professional, RecurringSlot, ScheduleOccurrenceOverride, User
 from app.services.candidate_resolution import CandidateOverrides, resolve_candidate
 from app.services.scheduling import TIMEZONE
 
@@ -31,14 +31,17 @@ def _setup_candidate(operation: str = "create"):
     )
     db.add(contact)
     db.commit()
+    candidate_start = (datetime.now(TIMEZONE) + timedelta(days=2)).replace(
+        hour=10, minute=0, second=0, microsecond=0
+    )
     candidate = AppointmentCandidate(
         professional_id=professional.id,
         contact_id=contact.id,
         action=operation,
         operation=operation,
         confirmation_status="instructor_confirmed",
-        proposed_start_at=datetime.now().astimezone() + timedelta(days=2),
-        proposed_end_at=datetime.now().astimezone() + timedelta(days=2, hours=1),
+        proposed_start_at=candidate_start,
+        proposed_end_at=candidate_start + timedelta(hours=1),
         service="tennis_lesson",
         status="detected",
         ambiguities=[],
@@ -50,6 +53,7 @@ def _setup_candidate(operation: str = "create"):
 
 def _cleanup(db, professional: Professional) -> None:
     db.query(OperationalEvent).filter_by(professional_id=professional.id).delete()
+    db.query(ScheduleOccurrenceOverride).filter_by(professional_id=professional.id).delete()
     db.query(AppointmentCandidate).filter_by(professional_id=professional.id).delete()
     db.query(AppointmentTransition).filter(
         AppointmentTransition.appointment_id.in_(
@@ -187,7 +191,7 @@ def test_authoritative_resolved_create_is_auto_executed() -> None:
         db.commit()
         _add_covering_stay(db, professional, place, candidate)
 
-        assert _auto_execute_authoritative_create(db, candidate)
+        assert _auto_execute_authoritative_candidate(db, candidate)
         db.commit()
         db.refresh(candidate)
 
@@ -230,6 +234,50 @@ def test_resolve_candidate_reschedule_maps_existing_appointment() -> None:
         assert resolution.operation == "reschedule"
         assert resolution.arguments["target_id"] == str(appointment.id)
         assert resolution.arguments["target_type"] == "appointment"
+    finally:
+        _cleanup(db, professional)
+
+
+def test_authoritative_resolved_reschedule_is_auto_executed() -> None:
+    db, professional, contact, candidate = _setup_candidate("reschedule")
+    try:
+        place = Place(professional_id=professional.id, name="Clube", normalized_name="clube")
+        user = User(
+            professional_id=professional.id,
+            email=f"{uuid.uuid4().hex}@example.test",
+            hashed_password="not-used-in-this-test",
+            role="professional",
+        )
+        db.add_all([place, user])
+        db.flush()
+        appointment = Appointment(
+            professional_id=professional.id,
+            contact_id=contact.id,
+            place_id=place.id,
+            service="tennis_lesson",
+            start_at=datetime.now().astimezone() + timedelta(days=1),
+            end_at=datetime.now().astimezone() + timedelta(days=1, hours=1),
+            status="confirmed",
+            source="dashboard",
+        )
+        db.add(appointment)
+        db.flush()
+        candidate.existing_appointment_id = appointment.id
+        db.commit()
+        _add_covering_stay(db, professional, place, candidate)
+
+        assert _auto_execute_authoritative_candidate(db, candidate)
+        db.commit()
+        db.refresh(candidate)
+
+        assert candidate.status == "fulfilled"
+        assert candidate.resulting_appointment_id == appointment.id
+        override = db.query(ScheduleOccurrenceOverride).filter_by(
+            professional_id=professional.id,
+            appointment_id=appointment.id,
+        ).one()
+        assert override.replacement_start_at == candidate.proposed_start_at
+        assert override.replacement_end_at == candidate.proposed_end_at
     finally:
         _cleanup(db, professional)
 

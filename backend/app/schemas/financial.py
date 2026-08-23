@@ -40,14 +40,8 @@ class GroupFinancialDetail(EffectiveCommercialValues):
     participants: list[GroupParticipantFinancialDetail]
 
 
-class GlobalRateInput(BaseModel):
-    participant_count: int = Field(ge=1, le=4)
-    hourly_rate_cents: int | None = Field(default=None, ge=0, le=100_000_000)
-
-
 class FinancialSettingsUpdate(BaseModel):
     default_commercial_status: CommercialStatus | None = None
-    rates: list[GlobalRateInput] | None = None
 
     @field_validator("default_commercial_status")
     @classmethod
@@ -59,29 +53,10 @@ class FinancialSettingsUpdate(BaseModel):
             raise ValueError("Default commercial status cannot be null")
         return status
 
-    @field_validator("rates")
-    @classmethod
-    def validate_unique_participant_counts(
-        cls,
-        rates: list[GlobalRateInput] | None,
-    ) -> list[GlobalRateInput] | None:
-        if rates is None:
-            return None
-        counts = [rate.participant_count for rate in rates]
-        if len(counts) != len(set(counts)):
-            raise ValueError("Participant counts must not contain duplicates")
-        return rates
-
-
-class GlobalRateDetail(BaseModel):
-    participant_count: int
-    hourly_rate_cents: int | None
-
 
 class FinancialSettingsDetail(BaseModel):
     default_commercial_status: CommercialStatus
     currency: str
-    rates: list[GlobalRateDetail]
 
 
 class PrimeTimeWindowInput(BaseModel):
@@ -136,22 +111,18 @@ class PlaceRatesReplace(BaseModel):
 
 class PlaceRateDetail(PlaceRateInput):
     effective_hourly_rate_cents: int | None
-    source: Literal["place", "generic", "tenant", "unset"]
+    source: Literal["place", "default", "unset"]
 
 
 class PlaceRateMatrixDetail(BaseModel):
-    place_id: uuid.UUID
-    place_name: str
-    rates: list[PlaceRateDetail]
-
-
-class GenericPlaceRateMatrixDetail(BaseModel):
+    place_id: uuid.UUID | None
+    place_name: str | None = None
     rates: list[PlaceRateDetail]
 
 
 class FinancialConfigurationDetail(BaseModel):
     prime_time_windows: list[PrimeTimeWindowDetail]
-    generic_place: GenericPlaceRateMatrixDetail
+    default_rates: PlaceRateMatrixDetail
     places: list[PlaceRateMatrixDetail]
 
 
@@ -175,7 +146,7 @@ class PricingQuoteSegment(BaseModel):
     duration_minutes: int
     time_category: Literal["regular", "prime"]
     hourly_rate_cents: int | None
-    source: Literal["place", "generic", "tenant", "unset"]
+    source: Literal["place", "default", "unset"]
     segment_total_cents: int | None
 
 
@@ -241,6 +212,9 @@ class FinancialDashboardDetail(BaseModel):
     participant_hours: float
     projected_revenue_cents: int
     unpriced_booking_count: int
+    makeup_booking_count: int
+    makeup_booked_minutes: int
+    makeup_opportunity_cost_cents: int
     observed_participant_mix: list[ParticipantMixItem]
     time_series: list[FinancialTimeSeriesPoint]
     by_place: list[FinancialMetricBreakdown]
@@ -249,6 +223,43 @@ class FinancialDashboardDetail(BaseModel):
     by_time_category: list[FinancialMetricBreakdown]
     capacity_presets: list[CapacityPresetDetail]
     capacity_sources: list[CapacitySourceDetail]
+
+
+class FinancialPeriodDetail(BaseModel):
+    date_from: date
+    date_to: date
+
+
+class FinancialClassOutcomesDetail(BaseModel):
+    total_scheduled_count: int
+    upcoming_count: int
+    executed_count: int
+    canceled_with_makeup_count: int
+    canceled_without_makeup_count: int
+
+
+class FinancialInstructorEventOutcomesDetail(BaseModel):
+    scheduled_count: int
+    completed_count: int
+    canceled_count: int
+    confirmed_income_cents: int
+
+
+class FinancialCustomerRankingDetail(BaseModel):
+    contact_id: uuid.UUID
+    contact_name: str
+    executed_count: int
+    scheduled_count: int
+    canceled_count: int
+    cancellation_rate_pct: float
+
+
+class FinancialOperationalAnalyticsDetail(BaseModel):
+    period: FinancialPeriodDetail
+    class_outcomes: FinancialClassOutcomesDetail
+    instructor_event_outcomes: FinancialInstructorEventOutcomesDetail
+    most_frequent_customers: list[FinancialCustomerRankingDetail]
+    highest_cancellation_rate_customers: list[FinancialCustomerRankingDetail]
 
 
 class ScenarioRateOverride(BaseModel):
@@ -375,10 +386,15 @@ class FinancialScenarioList(BaseModel):
 
 AttendanceStatus = Literal["attended", "no_show", "cancelled"]
 RevenueSourceType = Literal["appointment", "recurring_slot"]
+# "generic"/"tenant" are legacy values from the pre-unification pricing
+# model (see docs/ROADMAPS/pricing_model_unification_tracking_v0.1_2026-08-19.md);
+# kept readable for historical RevenueOccurrenceLine snapshots. New writes
+# use "default".
 RevenueRateSource = Literal[
     "customer",
     "group",
     "place",
+    "default",
     "generic",
     "tenant",
     "unset",

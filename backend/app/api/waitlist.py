@@ -12,12 +12,14 @@ philosophy as OperatorActionCandidate/MakeupClassCredit.
 """
 
 import uuid
+from datetime import date, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import require_professional_id
+from app.api.dependencies import require_authenticated, require_professional_id
 from app.database import SessionLocal
 from app.models import Contact, Place, WaitlistEntry
 from app.schemas.ontology import (
@@ -26,10 +28,18 @@ from app.schemas.ontology import (
     WaitlistEntryListResponse,
 )
 from app.services import waitlist as waitlist_service
+from app.services.operational_events import record_event
+from app.services.scheduling import TIMEZONE
 
 
 class WaitlistEntryFulfill(BaseModel):
     appointment_id: uuid.UUID
+
+
+class WaitlistEntryGroupFulfill(BaseModel):
+    recurring_slot_id: uuid.UUID
+    occurrence_date: date
+    enrollment_scope: Literal["occurrence", "series"]
 
 router = APIRouter(prefix="/api/waitlist-entries", tags=["waitlist"])
 
@@ -56,6 +66,10 @@ def _to_detail(entry: WaitlistEntry, contact_name: str, place_name: str | None) 
         duration_minutes=entry.duration_minutes,
         status=entry.status,
         note=entry.note,
+        fulfilled_appointment_id=entry.fulfilled_appointment_id,
+        fulfilled_recurring_slot_id=entry.fulfilled_recurring_slot_id,
+        fulfilled_occurrence_date=entry.fulfilled_occurrence_date,
+        fulfillment_scope=entry.fulfillment_scope,
         created_at=entry.created_at,
     )
 
@@ -142,4 +156,52 @@ def fulfill_waitlist_entry(
         detail = str(exc)
         status_code = 404 if detail == "Waitlist entry not found" else 409
         raise HTTPException(status_code=status_code, detail=detail)
+    return _detail_for(db, entry)
+
+
+@router.post("/{entry_id}/fulfill-group", response_model=WaitlistEntryDetail)
+def fulfill_waitlist_entry_with_group(
+    entry_id: uuid.UUID,
+    body: WaitlistEntryGroupFulfill,
+    db: Session = Depends(get_db),
+    professional_id: uuid.UUID = Depends(require_professional_id),
+    user: dict = Depends(require_authenticated),
+):
+    try:
+        entry = waitlist_service.fulfill_group_occurrence(
+            db,
+            professional_id,
+            entry_id=entry_id,
+            recurring_slot_id=body.recurring_slot_id,
+            occurrence_date=body.occurrence_date,
+            enrollment_scope=body.enrollment_scope,
+        )
+    except waitlist_service.WaitlistValidationError as exc:
+        detail = str(exc)
+        status_code = 404 if detail in {
+            "Waitlist entry not found",
+            "Recurring group not found",
+            "Scheduled group occurrence not found",
+            "Waitlist contact not found",
+        } else 409
+        raise HTTPException(status_code=status_code, detail=detail)
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type="schedule.participant.added",
+        occurred_at=datetime.now(TIMEZONE),
+        actor_type="user",
+        actor_id=uuid.UUID(user["user_id"]),
+        source_channel="web",
+        entity_type="recurring_slot",
+        entity_id=body.recurring_slot_id,
+        correlation_id=uuid.uuid4(),
+        payload={
+            "contact_id": str(entry.contact_id),
+            "occurrence_date": body.occurrence_date.isoformat(),
+            "scope": body.enrollment_scope,
+            "waitlist_entry_id": str(entry.id),
+        },
+    )
+    db.commit()
     return _detail_for(db, entry)

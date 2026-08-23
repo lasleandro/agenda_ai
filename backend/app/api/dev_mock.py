@@ -29,11 +29,13 @@ from app.database import SessionLocal
 from app.models import (
     AppointmentCandidate,
     AppointmentEvidence,
+    Contact,
     Conversation,
     Message,
     PendingProcessing,
     Professional,
 )
+from app.services.text_normalization import normalize_name
 from app.schemas.api import CandidateDetail
 from app.chat.ingestion import (
     get_or_create_contact,
@@ -45,8 +47,17 @@ from app.chat.pipeline import process_conversation
 
 router = APIRouter(prefix="/api/dev", tags=["dev"])
 
-MOCK_CUSTOMER_PHONE = "+5500000000001"
+MOCK_CUSTOMER_PHONE_PREFIX = "+550000000"
+MOCK_CUSTOMER_PHONE = f"{MOCK_CUSTOMER_PHONE_PREFIX}001"
 MOCK_CUSTOMER_NAME = "Cliente Teste (mock)"
+MOCK_CUSTOMER_NAMES = (
+    "Ana Martins",
+    "Bruno Costa",
+    "Camila Rocha",
+    "Diego Almeida",
+    "Fernanda Lima",
+    "Gabriel Souza",
+)
 
 
 def get_db() -> Session:
@@ -70,10 +81,60 @@ def _get_professional(db: Session, professional_id: uuid.UUID) -> Professional:
 class MockMessageRequest(BaseModel):
     sender: Literal["instructor", "customer"]
     text: str
+    customer_phone: str | None = None
+
+
+class MockCustomerRequest(BaseModel):
+    customer_phone: str | None = None
+
+
+def _get_mock_customer(
+    db: Session, professional_id: uuid.UUID, customer_phone: str | None
+) -> tuple[str, str]:
+    phone = customer_phone or MOCK_CUSTOMER_PHONE
+    contact = (
+        db.query(Contact)
+        .filter(
+            Contact.professional_id == professional_id,
+            Contact.phone == phone,
+            Contact.phone.like(f"{MOCK_CUSTOMER_PHONE_PREFIX}%"),
+        )
+        .first()
+    )
+    if contact is None and phone == MOCK_CUSTOMER_PHONE:
+        contact = get_or_create_contact(db, professional_id, phone, MOCK_CUSTOMER_NAME)
+    if contact is None:
+        raise HTTPException(status_code=404, detail="Mock customer not found")
+    return contact.phone, contact.display_name
+
+
+def _create_mock_customer(db: Session, professional_id: uuid.UUID) -> tuple[str, str, str]:
+    """Create one tenant-scoped customer and its empty mock conversation."""
+    while True:
+        phone = f"{MOCK_CUSTOMER_PHONE_PREFIX}{uuid.uuid4().int % 1_000_000:06d}"
+        if not db.query(Contact.id).filter(Contact.phone == phone).first():
+            break
+
+    name = MOCK_CUSTOMER_NAMES[uuid.uuid4().int % len(MOCK_CUSTOMER_NAMES)]
+    contact = Contact(
+        professional_id=professional_id,
+        phone=phone,
+        display_name=f"{name} (mock)",
+        normalized_name=normalize_name(name),
+    )
+    db.add(contact)
+    db.flush()
+    conversation = get_or_create_conversation(db, professional_id, contact.id)
+    db.commit()
+    return str(conversation.id), phone, contact.display_name
 
 
 def _build_message(
-    instructor_phone: str, sender: Literal["instructor", "customer"], text: str
+    instructor_phone: str,
+    customer_phone: str,
+    customer_name: str,
+    sender: Literal["instructor", "customer"],
+    text: str,
 ) -> WhatsAppMessageEvent:
     now = datetime.now(timezone.utc)
     msg_id = f"mock_{uuid.uuid4().hex}"
@@ -83,12 +144,12 @@ def _build_message(
             provider_key="mock",
             provider_message_id=msg_id,
             direction="inbound",
-            from_phone=MOCK_CUSTOMER_PHONE,
+            from_phone=customer_phone,
             to_phone=instructor_phone,
             text=text,
             sent_at=now,
             raw_payload={"mock": True},
-            contact_name=MOCK_CUSTOMER_NAME,
+            contact_name=customer_name,
         )
 
     return WhatsAppMessageEvent(
@@ -96,7 +157,7 @@ def _build_message(
         provider_message_id=msg_id,
         direction="outbound",
         from_phone=instructor_phone,
-        to_phone=MOCK_CUSTOMER_PHONE,
+        to_phone=customer_phone,
         text=text,
         sent_at=now,
         raw_payload={"mock": True},
@@ -105,19 +166,69 @@ def _build_message(
 
 @router.get("/mock-conversation")
 def get_mock_conversation(
+    customer_phone: str | None = None,
     db: Session = Depends(get_db),
     professional_id: uuid.UUID = Depends(require_professional_id),
 ):
     """Get-or-create the single mock conversation, so the frontend has a
     conversation_id to poll even before any message has been sent."""
     professional = _get_professional(db, professional_id)
-    contact = get_or_create_contact(db, professional.id, MOCK_CUSTOMER_PHONE, MOCK_CUSTOMER_NAME)
+    customer_phone, _ = _get_mock_customer(db, professional.id, customer_phone)
+    contact = get_or_create_contact(db, professional.id, customer_phone, None)
     conversation = get_or_create_conversation(db, professional.id, contact.id)
     db.commit()
     return {
         "conversation_id": conversation.id,
         "instructor_phone": professional.assistant_phone,
-        "customer_phone": MOCK_CUSTOMER_PHONE,
+        "customer_phone": customer_phone,
+    }
+
+
+@router.get("/mock-customers")
+def list_mock_customers(
+    db: Session = Depends(get_db),
+    professional_id: uuid.UUID = Depends(require_professional_id),
+):
+    """List this tenant's generated mock customers and their conversations."""
+    professional = _get_professional(db, professional_id)
+    default_phone, _ = _get_mock_customer(db, professional.id, None)
+    default_contact = get_or_create_contact(db, professional.id, default_phone, None)
+    get_or_create_conversation(db, professional.id, default_contact.id)
+    customers = (
+        db.query(Contact, Conversation)
+        .join(Conversation, Conversation.contact_id == Contact.id)
+        .filter(
+            Contact.professional_id == professional.id,
+            Contact.phone.like(f"{MOCK_CUSTOMER_PHONE_PREFIX}%"),
+        )
+        .order_by(Contact.created_at.asc())
+        .all()
+    )
+    db.commit()
+    return {
+        "customers": [
+            {
+                "conversation_id": conversation.id,
+                "customer_name": contact.display_name,
+                "customer_phone": contact.phone,
+            }
+            for contact, conversation in customers
+        ]
+    }
+
+
+@router.post("/mock-customers")
+def create_mock_customer(
+    db: Session = Depends(get_db),
+    professional_id: uuid.UUID = Depends(require_professional_id),
+):
+    """Generate a new mock customer with an independent conversation."""
+    professional = _get_professional(db, professional_id)
+    conversation_id, customer_phone, customer_name = _create_mock_customer(db, professional.id)
+    return {
+        "conversation_id": conversation_id,
+        "customer_name": customer_name,
+        "customer_phone": customer_phone,
     }
 
 
@@ -128,8 +239,18 @@ def send_mock_message(
     professional_id: uuid.UUID = Depends(require_professional_id),
 ):
     professional = _get_professional(db, professional_id)
+    customer_phone, customer_name = _get_mock_customer(
+        db, professional.id, body.customer_phone
+    )
     message = ingest_normalized_message(
-        db, _build_message(professional.assistant_phone, body.sender, body.text)
+        db,
+        _build_message(
+            professional.assistant_phone,
+            customer_phone,
+            customer_name,
+            body.sender,
+            body.text,
+        ),
     )
     if message is None:
         raise HTTPException(status_code=500, detail="Failed to ingest mock message")
@@ -138,12 +259,16 @@ def send_mock_message(
 
 @router.post("/mock-conversation/reset")
 def reset_mock_conversation(
+    body: MockCustomerRequest | None = None,
     db: Session = Depends(get_db),
     professional_id: uuid.UUID = Depends(require_professional_id),
 ):
     """Clear the dev mock conversation so a new scenario can be tested."""
     professional = _get_professional(db, professional_id)
-    contact = get_or_create_contact(db, professional.id, MOCK_CUSTOMER_PHONE, MOCK_CUSTOMER_NAME)
+    customer_phone, _ = _get_mock_customer(
+        db, professional.id, body.customer_phone if body else None
+    )
+    contact = get_or_create_contact(db, professional.id, customer_phone, None)
     conversation = get_or_create_conversation(db, professional.id, contact.id)
 
     candidate_ids = [

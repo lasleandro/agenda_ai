@@ -17,7 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { replaceGenericPlaceRates, replacePlaceRates } from "@/lib/api";
+import { replaceDefaultRates, replacePlaceRates } from "@/lib/api";
 import {
   centsToRateInput,
   formatBrlFromCents,
@@ -25,7 +25,6 @@ import {
 } from "@/lib/financial-utils";
 import type {
   FinancialTimeCategory,
-  GenericPlaceRateMatrixDetail,
   PlaceRateMatrixDetail,
 } from "@/lib/types";
 
@@ -186,38 +185,38 @@ export function PlaceRateEditor({
       matrix={matrix}
       savedMessage="Salvar valores do local"
       valueLabel="Valor do local"
-      onSave={async (rates) => onSaved(await replacePlaceRates(matrix.place_id, rates))}
+      onSave={async (rates) => onSaved(await replacePlaceRates(matrix.place_id as string, rates))}
     />
   );
 }
 
-function GenericPlaceRateEditor({
+function DefaultRateEditor({
   matrix,
   onSaved,
 }: {
-  matrix: GenericPlaceRateMatrixDetail;
-  onSaved: (matrix: GenericPlaceRateMatrixDetail) => void;
+  matrix: PlaceRateMatrixDetail;
+  onSaved: (matrix: PlaceRateMatrixDetail) => void;
 }) {
   return (
     <RatesEditor
       matrix={matrix}
       savedMessage="Salvar valores padrão"
       valueLabel="Valor padrão"
-      onSave={async (rates) => onSaved(await replaceGenericPlaceRates(rates))}
+      onSave={async (rates) => onSaved(await replaceDefaultRates(rates))}
     />
   );
 }
 
 export function PlaceRatesSection({
-  genericPlace,
+  defaultRates,
   places,
   onSaved,
-  onGenericSaved,
+  onDefaultSaved,
 }: {
-  genericPlace: GenericPlaceRateMatrixDetail;
+  defaultRates: PlaceRateMatrixDetail;
   places: PlaceRateMatrixDetail[];
   onSaved: (matrix: PlaceRateMatrixDetail) => void;
-  onGenericSaved: (matrix: GenericPlaceRateMatrixDetail) => void;
+  onDefaultSaved: (matrix: PlaceRateMatrixDetail) => void;
 }) {
   const [selectedPlaceId, setSelectedPlaceId] = useState("");
   const selected = places.find((place) => place.place_id === selectedPlaceId) ?? null;
@@ -228,7 +227,7 @@ export function PlaceRatesSection({
         <CardTitle>Valores por local</CardTitle>
         <CardDescription>
           Defina os valores padrão para compromissos sem local ou valores específicos
-          para cada local. Campos vazios herdam a tabela global.
+          para cada local. Campos vazios herdam a tabela padrão.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -240,16 +239,16 @@ export function PlaceRatesSection({
           >
             <option value="">Padrão — sem local definido</option>
               {places.map((place) => (
-                <option key={place.place_id} value={place.place_id}>
+                <option key={place.place_id} value={place.place_id ?? ""}>
                   {place.place_name}
                 </option>
               ))}
           </select>
           {selectedPlaceId === "" ? (
-            <GenericPlaceRateEditor
-              key="generic-place"
-              matrix={genericPlace}
-              onSaved={onGenericSaved}
+            <DefaultRateEditor
+              key="default-rates"
+              matrix={defaultRates}
+              onSaved={onDefaultSaved}
             />
           ) : selected ? (
               <PlaceRateEditor

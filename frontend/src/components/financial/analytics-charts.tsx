@@ -44,6 +44,12 @@ export function RevenueLineChart({
   const path = coordinates
     .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
     .join(" ");
+  const description = points
+    .map(
+      (point) =>
+        `${point.date}: ${formatBrlFromCents(point.projected_revenue_cents)}`
+    )
+    .join("; ");
 
   return (
     <div>
@@ -53,6 +59,7 @@ export function RevenueLineChart({
         role="img"
         aria-label={ariaLabel}
       >
+        <desc>{description || "Sem pontos de receita no período."}</desc>
         {[0.25, 0.5, 0.75, 1].map((ratio) => {
           const y = height - padding - ratio * (height - padding * 2);
           return (
@@ -135,6 +142,12 @@ export function MonthlyRevenueBarChart({
   const barGap = 12;
   const barWidth =
     (width - padding * 2 - barGap * (points.length - 1)) / points.length;
+  const description = points
+    .map(
+      (point) =>
+        `${point.label}: ${formatBrlFromCents(point.projected_revenue_cents)}`
+    )
+    .join("; ");
 
   return (
     <div>
@@ -144,6 +157,7 @@ export function MonthlyRevenueBarChart({
         role="img"
         aria-label={ariaLabel}
       >
+        <desc>{description}</desc>
         {[0.25, 0.5, 0.75, 1].map((ratio) => {
           const y = height - padding - ratio * (height - padding * 2);
           return (
@@ -215,15 +229,18 @@ export function MonthlyRevenueBarChart({
                   {pctChange.toFixed(1)}%
                 </text>
               )}
+              <text
+                x={x + barWidth / 2}
+                y={height - 5}
+                textAnchor="middle"
+                className="fill-muted-foreground text-[10px]"
+              >
+                {point.label}
+              </text>
             </g>
           );
         })}
       </svg>
-      <div className="flex justify-between text-xs text-muted-foreground">
-        {points.map((point) => (
-          <span key={point.month}>{point.label}</span>
-        ))}
-      </div>
     </div>
   );
 }
@@ -257,6 +274,11 @@ export function CapacityBars({
           <div
             className="h-2.5 overflow-hidden rounded-full bg-muted"
             title={`${row.label}: ${row.occupancy_pct}% ocupado`}
+            role="progressbar"
+            aria-label={`${row.label}: ocupação`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(row.occupancy_pct)}
           >
             <div
               className="h-full rounded-full bg-primary transition-[width]"

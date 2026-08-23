@@ -21,7 +21,7 @@ closing out completed schedule occurrences.
 |---|---|---|
 | `WeekCalendar` | `components/calendar/week-calendar.tsx` | FullCalendar-based week view. Click-to-create, click-to-view — no drag-to-reschedule; rescheduling a single occurrence is currently an AI-assistant-only action (`propose_reschedule_occurrence`) |
 | `RevenueConfirmationQueue` | `components/calendar/revenue-confirmation-queue.tsx` | Finance-enabled queue of completed, unrecognized schedule occurrences; opens the existing attendance/billing confirmation dialog |
-| `AppointmentFormDialog` | `components/calendar/appointment-form-dialog.tsx` | Modal form with an Aula/Evento toggle. Aula has an Individual/Grupo choice before customer selection; a group can start with 1 and select up to 4 customers. Evento creates a non-class `InstructorEvent` (event-type dropdown, optional income). No edit form for either — editing an existing appointment or event isn't wired up in the dashboard yet |
+| `AppointmentFormDialog` | `components/calendar/appointment-form-dialog.tsx` | Modal form with an Aula/Evento toggle. Aula has an Individual/Grupo choice before customer selection; a group can start empty or with up to four customers. Evento creates a non-class `InstructorEvent` (event-type dropdown, optional income). |
 | `AppointmentPanel` | `components/calendar/appointment-panel.tsx` | Slide-over read-only detail panel for a single appointment (date/time, place, service, participants, estimated revenue using the Financial rules, a "Reagendado" badge when viewing a rescheduled occurrence) — no cancel/edit actions live here |
 | `InstructorEventPanel` | `components/calendar/instructor-event-panel.tsx` | Read-only details for a non-class event: type, date/time, location, optional income, and note |
 | `StatusBadge` | `components/calendar/status-badge.tsx` | Tailwind-class-per-status pill (tentative/confirmed/cancelled/completed) |
@@ -58,15 +58,18 @@ closing out completed schedule occurrences.
 | View group | Click group event → `GroupDetailsDialog` | `GET /api/recurring-slots/{id}` |
 | Refresh | Manual refresh button (spinning-icon button next to the event count), or automatically right after the AI assistant confirms a mutation | Re-fetches recurring slots + the visible date range |
 | Toggle Fila de Espera overlay | "Fila de espera" chip next to the event count (default off) | Client-side only, toggles the grey ghost cards already fetched |
-| Filter incomplete groups | "Grupos incompletos" chip next to the event count (default off) | Client-side only; shows booked group classes with 1–3 customers. Opening one shows current estimated revenue and four-person revenue capacity, with hover explanations. |
+| Filter group capacity | "Turmas com vagas" chip next to the event count (default off) | Client-side only; shows projected group occurrences where effective occupancy is below configured capacity, including `0/N`. |
 | Confirm a completed occurrence | Agenda → Confirmações → select a completed unrecognized class, record attendance/billing outcome, then confirm | `POST /api/financial/revenue/occurrences` |
 | Book a waitlisted contact | Click a grey ghost card → `AppointmentFormDialog` opens pre-filled (contact/place/time) → save | `POST /api/appointments` then `POST /api/waitlist-entries/{id}/fulfill` |
+| Fill a group seat from the waitlist | Open the dated group card → choose a compatible waitlist request and **Nesta aula** or **Todas as semanas** under “Preencher vaga da fila” | `POST /api/waitlist-entries/{id}/fulfill-group` |
 
 ---
 
 ## Visual Design
 
 - **Place stays** (`slot_kind="availability"`): Light indigo background blocks
+- **Work-journey pauses**: Light slate background blocks labeled "Pausa";
+  non-interactive and visually subordinate to appointments and classes
 - **Recurring classes** (`slot_kind="class"`): Purple scheduled-class events;
   roster size never determines their calendar meaning
 - **Appointments**: Color-coded by status (confirmed=blue, cancelled=gray,

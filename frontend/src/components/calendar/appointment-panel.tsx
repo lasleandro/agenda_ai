@@ -15,7 +15,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { StatusBadge } from "./status-badge";
-import { fetchAppointment, fetchRevenuePreview } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import {
+  fetchAppointment,
+  fetchRevenuePreview,
+  updateAppointmentFormat,
+} from "@/lib/api";
+import { notifyAgendaChanged } from "@/lib/agenda-events";
 import { formatFullDate, formatTimeRange } from "@/lib/calendar-utils";
 import { formatBrlFromCents } from "@/lib/financial-utils";
 import type { AppointmentDetail } from "@/lib/types";
@@ -60,6 +66,7 @@ export function AppointmentPanel({
     estimatedRevenueCents: number | null;
     capacityRevenueCents?: number | null;
   } | null>(null);
+  const [formatSaving, setFormatSaving] = useState(false);
   const requestKey = `${appointmentId ?? ""}:${occurrenceDate ?? ""}`;
 
   useEffect(() => {
@@ -103,6 +110,34 @@ export function AppointmentPanel({
   const error = currentResult?.error ?? null;
   const loading = Boolean(open && appointmentId && !currentResult);
   const currentRevenue = revenue?.requestKey === requestKey ? revenue : null;
+
+  async function handlePromoteToGroup() {
+    if (!detail) return;
+    const previous = detail;
+    const optimistic: AppointmentDetail = {
+      ...detail,
+      class_type: "group",
+      max_participants: 4,
+    };
+    setFormatSaving(true);
+    setResult({ requestKey, detail: optimistic, error: null });
+    try {
+      const updated = await updateAppointmentFormat(detail.id, {
+        class_type: "group",
+        max_participants: 4,
+      });
+      setResult({ requestKey, detail: updated, error: null });
+      notifyAgendaChanged();
+    } catch (caught) {
+      setResult({
+        requestKey,
+        detail: previous,
+        error: caught instanceof Error ? caught.message : "Falha ao transformar em grupo",
+      });
+    } finally {
+      setFormatSaving(false);
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -148,6 +183,20 @@ export function AppointmentPanel({
 
             <Separator />
 
+            {detail.class_type !== "group" && (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={handlePromoteToGroup}
+                disabled={formatSaving}
+              >
+                {formatSaving ? "Transformando..." : "Transformar em grupo (4 vagas)"}
+              </Button>
+            )}
+
+            {detail.class_type !== "group" && <Separator />}
+
             <div className="space-y-3 text-sm">
               <div className="flex items-center gap-3">
                 <Calendar className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -173,14 +222,14 @@ export function AppointmentPanel({
                   <CircleDollarSign className="h-4 w-4 text-muted-foreground shrink-0" />
                   <span>
                     {detail.class_type === "group" &&
-                    (detail.participants?.length ?? 1) < 4
+                    (detail.participants?.length ?? 1) < (detail.max_participants ?? 4)
                       ? "Receita corrente"
                       : "Receita estimada"}
                     : {" "}
                     {formatBrlFromCents(currentRevenue.estimatedRevenueCents)}
                   </span>
                   {detail.class_type === "group" &&
-                    (detail.participants?.length ?? 1) < 4 && (
+                    (detail.participants?.length ?? 1) < (detail.max_participants ?? 4) && (
                       <Tooltip>
                         <TooltipTrigger
                           className="text-muted-foreground"
@@ -197,7 +246,7 @@ export function AppointmentPanel({
                 </div>
               )}
               {detail.class_type === "group" &&
-                (detail.participants?.length ?? 1) < 4 &&
+                (detail.participants?.length ?? 1) < (detail.max_participants ?? 4) &&
                 currentRevenue?.capacityRevenueCents !== undefined && (
                   <div className="flex items-center gap-3">
                     <CircleDollarSign className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -213,7 +262,8 @@ export function AppointmentPanel({
                         <CircleHelp className="h-3.5 w-3.5" />
                       </TooltipTrigger>
                       <TooltipContent>
-                        Receita estimada para esta mesma aula com quatro clientes,
+                        Receita estimada para esta mesma aula com a capacidade
+                        configurada,
                         usando as regras de preço do horário e local.
                       </TooltipContent>
                     </Tooltip>

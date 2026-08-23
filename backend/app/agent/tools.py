@@ -110,6 +110,73 @@ def find_groups(
     }
 
 
+def find_group_openings(
+    db: Session,
+    professional_id: uuid.UUID,
+    *,
+    date: str,
+    start_time: str | None = None,
+    period: str | None = None,
+    place_id: str | None = None,
+) -> dict[str, Any]:
+    """Return joinable group occurrences, never calendar-free time."""
+    target_date = date_cls.fromisoformat(date)
+    requested_place_id = uuid.UUID(place_id) if place_id else None
+
+    period_window: tuple[int, int] | None = None
+    if period is not None:
+        matching = [
+            (start, end)
+            for key, _, start, end in financial_capacity.PART_OF_DAY_RANGES
+            if key == period
+        ]
+        if not matching:
+            return {"error": f"Unknown period '{period}'"}
+        period_window = matching[0]
+
+    occurrences = scheduling.list_schedule_occurrences(
+        db, professional_id, target_date, target_date
+    )
+    matches: list[scheduling.ScheduleOccurrence] = []
+    for occurrence in occurrences:
+        if occurrence.class_type != "group":
+            continue
+        if occurrence.available_seats <= 0:
+            continue
+        if start_time is not None and occurrence.starts_at.strftime("%H:%M") != start_time[:5]:
+            continue
+        if requested_place_id is not None and occurrence.place_id != requested_place_id:
+            continue
+        if period_window is not None:
+            occurrence_start = scheduling.time_to_minutes(occurrence.starts_at.time())
+            occurrence_end = scheduling.time_to_minutes(occurrence.ends_at.time())
+            period_start, period_end = period_window
+            if occurrence_end <= period_start or occurrence_start >= period_end:
+                continue
+        matches.append(occurrence)
+
+    result: dict[str, Any] = {
+        "date": target_date.isoformat(),
+        "joinable_groups": [
+            {
+                **_occurrence_to_dict(occurrence),
+                "participant_count": occurrence.participant_count,
+                "max_participants": occurrence.max_participants,
+                "available_seats": occurrence.available_seats,
+                "enrollment_scopes": (
+                    ["occurrence", "series"]
+                    if occurrence.source_type == "recurring_slot"
+                    else ["occurrence"]
+                ),
+            }
+            for occurrence in matches
+        ],
+    }
+    if period is not None:
+        result["period"] = period
+    return result
+
+
 def _occurrence_to_dict(occurrence: scheduling.ScheduleOccurrence) -> dict[str, Any]:
     now = datetime.now(scheduling.TIMEZONE)
     return {
@@ -477,8 +544,17 @@ def find_waitlist_matches(
                 "desired_date": m["entry"].desired_date.isoformat(),
                 "desired_start_time": m["entry"].desired_start_time.isoformat(),
                 "desired_end_time": m["entry"].desired_end_time.isoformat(),
-                "place_id": str(m["place_id"]),
+                "place_id": _uuid_str(m["place_id"]),
                 "place_name": m["place_name"],
+                "match_type": m["match_type"],
+                "source_type": m.get("source_type"),
+                "source_id": _uuid_str(m.get("source_id")),
+                "occurrence_date": (
+                    m["occurrence_date"].isoformat()
+                    if m.get("occurrence_date")
+                    else None
+                ),
+                "available_seats": m.get("available_seats"),
             }
             for m in matches
         ]
@@ -565,14 +641,31 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "find_groups",
-            "description": "Find recurring class groups, optionally filtered by member contact, place, or weekday (0=Monday..6=Sunday).",
+            "description": "Find recurring class groups, optionally filtered by an EXISTING roster member, place, or weekday (0=Monday..6=Sunday). member_contact_id only finds groups the contact already belongs to; never pass the student you intend to add. To find a joinable group for a new student at a specific date/time, use find_group_openings instead.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "member_contact_id": {"type": "string"},
+                    "member_contact_id": {"type": "string", "description": "Optional contact who is ALREADY a permanent member of the group. Do not use this to search for a group to add a new contact to."},
                     "place_id": {"type": "string"},
                     "weekday": {"type": "integer", "minimum": 0, "maximum": 6},
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_group_openings",
+            "description": "Find joinable group-class occurrences with remaining seats on one concrete date. This is the canonical answer for group-vacancy questions ('vagas em grupos/turmas') and for locating a group where a NEW student can be added, including empty groups. It never reports free instructor time. Optionally filter by exact start time, period of day (morning/afternoon/evening), or place. Resolve relative weekdays first, then use the returned source_id as recurring_slot_id for enrollment.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string", "description": "ISO date."},
+                    "start_time": {"type": "string", "description": "Optional HH:MM time filter."},
+                    "period": {"type": "string", "enum": ["morning", "afternoon", "evening"], "description": "Optional part-of-day filter (interval overlap with the occurrence)."},
+                    "place_id": {"type": "string", "description": "Optional place filter."},
+                },
+                "required": ["date"],
             },
         },
     },
@@ -609,7 +702,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "find_instructor_openings",
-            "description": "Find the instructor's genuinely free time windows on a given date: the declared work journey minus every booking. Each opening lists, in 'places', the places whose recurring availability window covers it (may be empty — the window is still free). Optionally filtered by period of day (morning/afternoon/evening), minimum duration, and place.",
+            "description": "Find the instructor's genuinely free time windows on a given date: the declared work journey minus every booking. Each opening lists, in 'places', the places whose recurring availability window covers it (may be empty — the window is still free). Optionally filtered by period of day (morning/afternoon/evening), minimum duration, and place. This is NOT the answer to group-vacancy questions ('vagas em grupos/turmas'): a group with a seat is a scheduled commitment, not free instructor time — use find_group_openings for group capacity.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -703,6 +796,7 @@ TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
     "search_contacts": search_contacts,
     "search_places": search_places,
     "find_groups": find_groups,
+    "find_group_openings": find_group_openings,
     "get_schedule": get_schedule,
     "get_next_session": get_next_session,
     "find_instructor_openings": find_instructor_openings,

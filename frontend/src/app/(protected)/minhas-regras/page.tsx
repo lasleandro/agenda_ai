@@ -25,7 +25,6 @@ import type {
   CancellationNoticeHoursDetail,
   FinancialConfigurationDetail,
   FinancialSettingsDetail,
-  GenericPlaceRateMatrixDetail,
   PlaceRateMatrixDetail,
   WorkJourneyIntervalDetail,
 } from "@/lib/types";
@@ -123,9 +122,9 @@ export default function MinhasRegrasPage() {
     );
   }
 
-  function updateGenericPlace(matrix: GenericPlaceRateMatrixDetail) {
+  function updateDefaultRates(matrix: PlaceRateMatrixDetail) {
     setFinancialConfiguration((current) =>
-      current ? { ...current, generic_place: matrix } : current
+      current ? { ...current, default_rates: matrix } : current
     );
   }
 
@@ -231,10 +230,10 @@ export default function MinhasRegrasPage() {
           <FinancialTabState error={financialError}>
             {financialConfiguration && (
               <PlaceRatesSection
-                genericPlace={financialConfiguration.generic_place}
+                defaultRates={financialConfiguration.default_rates}
                 places={financialConfiguration.places}
                 onSaved={updatePlace}
-                onGenericSaved={updateGenericPlace}
+                onDefaultSaved={updateDefaultRates}
               />
             )}
           </FinancialTabState>

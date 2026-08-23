@@ -51,6 +51,8 @@ When no messages have been sent, the panel shows example suggestions:
 - "Remarca a aula da Mariana para sexta as 15h"
 - "Busca lugares disponiveis na quarta de manha"
 - "Quais turmas tenho?"
+- "Quais turmas ainda têm vagas esta semana?"
+- "Abra uma turma toda terça às 18h no Clube"
 
 ### Conversation History
 
@@ -64,6 +66,14 @@ When no messages have been sent, the panel shows example suggestions:
 When the agent calls tools, the panel shows a collapsible "Ferramentas
 utilizadas" section listing each tool name and a summary of its response.
 This gives the instructor transparency into what the agent is doing.
+
+### Group Capacity
+
+The agent distinguishes a genuinely free opening from a seat in an existing
+group. It can offer the latter with its effective occupancy and capacity, then
+requires confirmation before creating an empty group, promoting an individual
+class, or adding a dated guest. If a request could mean one occurrence or all
+weeks, the confirmation preview names the scope instead of inferring it.
 
 ---
 
@@ -113,12 +123,15 @@ a real WhatsApp integration:
 ### Modes
 
 - **Mock mode:** Simulated two-way conversation. Type as either
-  "Cliente" or "Professor" and see the full conversation.
+  "Cliente" or "Professor" and see the full conversation. Use **Novo cliente**
+  to generate an isolated mock customer, then select any generated customer to
+  resume its own conversation.
 - **Live mode:** View real conversations from the database.
 
 ### Features
 
 - Polls for new messages every 1.5 seconds in live mode
+- Mock customers are tenant-scoped and retain separate message history
 - "Processar conversa" button triggers `POST /api/dev/conversations/{id}/process-now`
   to force the extraction pipeline to run immediately
 - Shows extracted `AppointmentCandidate` results with confidence scores

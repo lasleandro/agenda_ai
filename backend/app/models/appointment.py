@@ -16,7 +16,7 @@ independent from the immutable RecurringSlot.slot_kind boundary.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,6 +35,10 @@ class Appointment(Base):
         CheckConstraint(
             "class_type IN ('individual', 'group')",
             name="ck_appointments_class_type",
+        ),
+        CheckConstraint(
+            "max_participants BETWEEN 1 AND 4",
+            name="ck_appointments_max_participants",
         ),
         CheckConstraint(
             "billing_type IN ('billable', 'courtesy')",
@@ -62,8 +66,15 @@ class Appointment(Base):
         DateTime(timezone=True), nullable=False
     )
     timezone: Mapped[str] = mapped_column(String(100), default="America/Sao_Paulo")
-    class_type: Mapped[str] = mapped_column(String(50), nullable=False, default="individual")
-    billing_type: Mapped[str] = mapped_column(String(20), nullable=False, default="billable")
+    class_type: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="individual"
+    )
+    max_participants: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1
+    )
+    billing_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="billable"
+    )
     status: Mapped[str] = mapped_column(String(50), default="tentative")
     source: Mapped[str] = mapped_column(String(50), default="ai_detected")
     recurrence_rule: Mapped[str | None] = mapped_column(String)

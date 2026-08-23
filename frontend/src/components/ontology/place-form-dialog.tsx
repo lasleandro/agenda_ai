@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -47,6 +47,20 @@ export function PlaceFormDialog({
   const [searchResults, setSearchResults] = useState<GeocodeResult[]>([]);
   const [searchedQuery, setSearchedQuery] = useState("");
   const lastNameRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    setName(place?.name ?? "");
+    setAddress(null);
+    setAddressText(
+      [place?.address_line, place?.city, place?.state].filter(Boolean).join(", ") || ""
+    );
+    setSearchResults([]);
+    setSearchedQuery("");
+    setError(null);
+    lastNameRef.current = null;
+  }, [open, place]);
 
   /** Called when the user picks a Photon result — fills name + address. */
   function handleSelectResult(result: GeocodeResult) {

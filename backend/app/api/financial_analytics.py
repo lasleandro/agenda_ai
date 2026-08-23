@@ -11,6 +11,7 @@ from app.database import SessionLocal
 from app.models import FinancialScenario
 from app.schemas.financial import (
     FinancialDashboardDetail,
+    FinancialOperationalAnalyticsDetail,
     FinancialScenarioDetail,
     FinancialScenarioInput,
     FinancialScenarioList,
@@ -21,6 +22,9 @@ from app.services.financial_analytics import (
     evaluate_financial_scenario,
 )
 from app.services.financial_audit import add_financial_audit
+from app.services.financial_operational_analytics import (
+    build_financial_operational_analytics,
+)
 
 router = APIRouter(prefix="/api/financial", tags=["financial-analytics"])
 
@@ -79,6 +83,22 @@ def get_financial_dashboard(
         )
     except ValueError as error:
         raise _not_found_from_value_error(error) from error
+
+
+@router.get("/operational-analytics", response_model=FinancialOperationalAnalyticsDetail)
+def get_financial_operational_analytics(
+    date_from: date = Query(...),
+    date_to: date = Query(...),
+    db: Session = Depends(get_db),
+    professional_id: uuid.UUID = Depends(require_commercial_financials),
+):
+    _validate_period(date_from, date_to)
+    return build_financial_operational_analytics(
+        db,
+        professional_id,
+        date_from,
+        date_to,
+    )
 
 
 @router.post(

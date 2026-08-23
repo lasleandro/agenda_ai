@@ -16,11 +16,11 @@ from app.models import (
     Appointment,
     Contact,
     FinancialChangeAuditLog,
-    FinancialRate,
     Place,
     PlaceFinancialRate,
     Professional,
     RecurringSlot,
+    RecurringSlotOccurrenceParticipant,
     RecurringSlotParticipant,
     RevenueOccurrence,
     RevenueOccurrenceLine,
@@ -107,15 +107,15 @@ def _cleanup(db, professionals, users) -> None:
     db.query(PlaceFinancialRate).filter(
         PlaceFinancialRate.professional_id.in_(professional_ids)
     ).delete(synchronize_session=False)
-    db.query(FinancialRate).filter(
-        FinancialRate.professional_id.in_(professional_ids)
-    ).delete(synchronize_session=False)
     db.query(RecurringSlotParticipant).filter(
         RecurringSlotParticipant.recurring_slot_id.in_(
             db.query(RecurringSlot.id).filter(
                 RecurringSlot.professional_id.in_(professional_ids)
             )
         )
+    ).delete(synchronize_session=False)
+    db.query(RecurringSlotOccurrenceParticipant).filter(
+        RecurringSlotOccurrenceParticipant.professional_id.in_(professional_ids)
     ).delete(synchronize_session=False)
     db.query(RecurringSlot).filter(
         RecurringSlot.professional_id.in_(professional_ids)
@@ -207,17 +207,28 @@ def test_revenue_confirmation_snapshots_reporting_and_tenant_scope() -> None:
                     recurring_slot_id=group.id,
                     contact_id=contact.id,
                 )
-                for contact in contacts
+                for contact in contacts[:2]
             ]
+        )
+        db.add(
+            RecurringSlotOccurrenceParticipant(
+                professional_id=professional.id,
+                recurring_slot_id=group.id,
+                contact_id=contacts[2].id,
+                occurrence_date=monday,
+            )
         )
         db.add_all(
             [
-                FinancialRate(
+                PlaceFinancialRate(
                     professional_id=professional.id,
+                    place_id=None,
+                    time_category=category,
                     participant_count=count,
                     hourly_rate_cents=rate,
                 )
                 for count, rate in ((1, 1000), (2, 800), (3, 700), (4, 600))
+                for category in ("regular", "prime")
             ]
         )
         db.add_all(

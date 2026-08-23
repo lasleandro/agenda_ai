@@ -32,7 +32,6 @@ import type {
   FinancialScenarioInput,
   FinancialScenarioMode,
   FinancialScenarioResult,
-  FinancialSettingsDetail,
   FinancialTimeCategory,
 } from "@/lib/types";
 import { ScenarioResults } from "./scenario-results";
@@ -81,7 +80,6 @@ function rateKey(category: FinancialTimeCategory, participantCount: number) {
 
 export function FinancialSimulator({
   dashboard,
-  settings,
   configuration,
   dateFrom,
   dateTo,
@@ -89,7 +87,6 @@ export function FinancialSimulator({
   initialScenarios,
 }: {
   dashboard: FinancialDashboardDetail;
-  settings: FinancialSettingsDetail;
   configuration: FinancialConfigurationDetail;
   dateFrom: string;
   dateTo: string;
@@ -136,17 +133,12 @@ export function FinancialSimulator({
       );
       if (rate) return rate.effective_hourly_rate_cents;
     }
-    const genericRate = configuration.generic_place.rates.find(
+    const defaultRate = configuration.default_rates.rates.find(
       (item) =>
         item.time_category === category &&
         item.participant_count === participantCount
     );
-    if (genericRate) return genericRate.effective_hourly_rate_cents;
-    return (
-      settings.rates.find(
-        (item) => item.participant_count === participantCount
-      )?.hourly_rate_cents ?? null
-    );
+    return defaultRate?.effective_hourly_rate_cents ?? null;
   }
 
   function buildInput(): FinancialScenarioInput {
@@ -275,10 +267,10 @@ export function FinancialSimulator({
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <SlidersHorizontal className="size-4 text-primary" />
-            Premissas
+            Premissas da simulação
           </CardTitle>
           <CardDescription>
-            O cenário não altera preços nem compromissos da agenda.
+            Ajuste as hipóteses abaixo sem alterar preços ou compromissos reais.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -384,7 +376,7 @@ export function FinancialSimulator({
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="flex items-center gap-1.5 font-medium">
-              Teste de preços R$/aluno/h
+              Preços usados na simulação
               <Tooltip>
                 <TooltipTrigger
                   className="text-muted-foreground"
@@ -400,7 +392,7 @@ export function FinancialSimulator({
               </Tooltip>
                   </h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Valores configurados para o recorte. Altere somente se quiser testar outra regra.
+                    Valores configurados para o recorte. Altere somente para testar outra regra.
                   </p>
                 </div>
                 {editingRates ? (
@@ -414,8 +406,8 @@ export function FinancialSimulator({
                   </Button>
                 )}
               </div>
-              <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[560px] text-sm">
+              <div className="mt-4">
+            <table className="w-full table-fixed text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-muted-foreground">
                   <th className="pb-2 font-medium">Formato</th>
@@ -438,7 +430,7 @@ export function FinancialSimulator({
                           configuredRate(category, participantCount)
                         );
                         return (
-                          <td key={category} className="py-3 pr-3">
+                          <td key={category} className="py-3 pr-2 last:pr-0">
                             {editingRates ? (
                               <Input
                                 inputMode="decimal"
@@ -467,7 +459,7 @@ export function FinancialSimulator({
               </div>
             </section>
           </div>
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-5 flex flex-wrap gap-2 border-t pt-4">
               <Button onClick={evaluate} disabled={evaluating}>
                 <Calculator className="size-4" />
                 {evaluating ? "Calculando..." : "Simular"}

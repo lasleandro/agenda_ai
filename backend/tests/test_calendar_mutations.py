@@ -26,7 +26,10 @@ from app.models import (
     Place,
     Professional,
     RecurringSlot,
+    RecurringSlotOccurrenceParticipant,
+    RecurringSlotParticipant,
     ScheduleOccurrenceOverride,
+    ScheduleOccurrenceClassOverride,
     User,
     WorkJourneyInterval,
 )
@@ -92,6 +95,22 @@ def _cleanup(db, *, professionals: list[Professional], users: list[User]) -> Non
         ).delete(synchronize_session=False)
         db.query(ScheduleOccurrenceOverride).filter(
             ScheduleOccurrenceOverride.professional_id.in_(professional_ids)
+        ).delete(synchronize_session=False)
+        db.query(ScheduleOccurrenceClassOverride).filter(
+            ScheduleOccurrenceClassOverride.professional_id.in_(professional_ids)
+        ).delete(synchronize_session=False)
+        db.query(RecurringSlotOccurrenceParticipant).filter(
+            RecurringSlotOccurrenceParticipant.professional_id.in_(professional_ids)
+        ).delete(synchronize_session=False)
+        db.query(RecurringSlotParticipant).filter(
+            RecurringSlotParticipant.recurring_slot_id.in_(
+                db.query(RecurringSlot.id).filter(
+                    RecurringSlot.professional_id.in_(professional_ids)
+                )
+            )
+        ).delete(synchronize_session=False)
+        db.query(RecurringSlot).filter(
+            RecurringSlot.professional_id.in_(professional_ids)
         ).delete(synchronize_session=False)
         db.query(AppointmentTransition).filter(
             AppointmentTransition.appointment_id.in_(
@@ -797,10 +816,19 @@ def test_calendar_mutation_tools_are_tenant_scoped() -> None:
 
 
 # ---------------------------------------------------------------------------
-# propose_add_appointment_participant / propose_remove_appointment_participant
+# propose_set_appointment_format / appointment participants
 # ---------------------------------------------------------------------------
 
-def _make_appointment(db, professional_id, place_id, contact_id, start_at) -> Appointment:
+def _make_appointment(
+    db,
+    professional_id,
+    place_id,
+    contact_id,
+    start_at,
+    *,
+    class_type: str = "individual",
+    max_participants: int = 1,
+) -> Appointment:
     appointment = Appointment(
         professional_id=professional_id,
         contact_id=contact_id,
@@ -810,10 +838,201 @@ def _make_appointment(db, professional_id, place_id, contact_id, start_at) -> Ap
         end_at=start_at + timedelta(hours=1),
         status="confirmed",
         source="dashboard",
+        class_type=class_type,
+        max_participants=max_participants,
     )
     db.add(appointment)
     db.commit()
     return appointment
+
+
+def test_propose_set_appointment_format_promotes_existing_appointment() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        primary = _make_contact(db, professional.id, "Leandro")
+        start_at = datetime.combine(MONDAY, time(15, 0), tzinfo=TIMEZONE)
+        appointment = _make_appointment(db, professional.id, place.id, primary.id, start_at)
+
+        result = mutations.propose_set_appointment_format(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            appointment_id=str(appointment.id),
+            class_type="group",
+            max_participants=3,
+        )
+
+        assert result["requires_confirmation"] is True
+        assert "grupo" in result["preview_text"].lower()
+
+        assert candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        ).ok is True
+
+        db.refresh(appointment)
+        assert appointment.class_type == "group"
+        assert appointment.max_participants == 3
+
+        event = (
+            db.query(OperationalEvent)
+            .filter(
+                OperationalEvent.event_type == "schedule.appointment.updated",
+                OperationalEvent.entity_id == appointment.id,
+            )
+            .one()
+        )
+        assert event.payload["operation"] == "class_format_updated"
+        assert event.before_state == {"class_type": "individual", "max_participants": 1}
+        assert event.after_state == {"class_type": "group", "max_participants": 3}
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_propose_add_group_occurrence_participant_keeps_roster_permanent() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        permanent = _make_contact(db, professional.id, "Leandro")
+        guest = _make_contact(db, professional.id, "Larissa")
+        occurrence_date = MONDAY + timedelta(days=7)
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            slot_kind="class",
+            class_type="group",
+            max_participants=3,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        db.add(slot)
+        db.flush()
+        db.add(RecurringSlotParticipant(recurring_slot_id=slot.id, contact_id=permanent.id))
+        db.commit()
+
+        result = mutations.propose_add_group_occurrence_participant(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            contact_id=str(guest.id),
+            recurring_slot_id=str(slot.id),
+            occurrence_date=occurrence_date.isoformat(),
+        )
+        assert result["requires_confirmation"] is True
+        assert "permanente" in result["preview_text"]
+
+        assert candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        ).ok is True
+        assert (
+            db.query(RecurringSlotParticipant)
+            .filter(RecurringSlotParticipant.recurring_slot_id == slot.id)
+            .count()
+            == 1
+        )
+        assert (
+            db.query(RecurringSlotOccurrenceParticipant)
+            .filter(
+                RecurringSlotOccurrenceParticipant.recurring_slot_id == slot.id,
+                RecurringSlotOccurrenceParticipant.contact_id == guest.id,
+                RecurringSlotOccurrenceParticipant.occurrence_date == occurrence_date,
+            )
+            .count()
+            == 1
+        )
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_propose_create_group_slot_creates_empty_recurring_class() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        start_at = datetime.combine(MONDAY, time(18, 0), tzinfo=TIMEZONE)
+        result = mutations.propose_create_group_slot(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            place_id=str(place.id),
+            start_at=start_at.isoformat(),
+            end_at=(start_at + timedelta(hours=1)).isoformat(),
+            is_recurring=True,
+        )
+        assert result["requires_confirmation"] is True
+        assert "0/4" in result["preview_text"]
+
+        assert candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        ).ok is True
+        slot = db.query(RecurringSlot).filter_by(professional_id=professional.id).one()
+        assert slot.slot_kind == "class"
+        assert slot.class_type == "group"
+        assert slot.max_participants == 4
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_propose_set_occurrence_class_format_updates_only_selected_date() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        occurrence_date = MONDAY + timedelta(days=7)
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            slot_kind="class",
+            class_type="individual",
+            max_participants=1,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        db.add(slot)
+        db.commit()
+
+        result = mutations.propose_set_occurrence_class_format(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            target_type="recurring_slot",
+            target_id=str(slot.id),
+            occurrence_date=occurrence_date.isoformat(),
+            class_type="group",
+            max_participants=3,
+        )
+        assert result["requires_confirmation"] is True
+        assert "somente" in result["preview_text"]
+        assert candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        ).ok is True
+
+        override = (
+            db.query(ScheduleOccurrenceClassOverride)
+            .filter(ScheduleOccurrenceClassOverride.recurring_slot_id == slot.id)
+            .one()
+        )
+        assert override.occurrence_date == occurrence_date
+        assert override.class_type == "group"
+        assert override.max_participants == 3
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
 
 
 def test_propose_add_appointment_participant_turns_individual_into_group() -> None:
@@ -917,7 +1136,52 @@ def test_propose_add_appointment_participant_rejects_primary_and_duplicate() -> 
         db.close()
 
 
-def test_propose_remove_appointment_participant_reverts_to_individual() -> None:
+def test_propose_add_appointment_participant_respects_configured_capacity() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        primary = _make_contact(db, professional.id, "Leandro")
+        first_extra = _make_contact(db, professional.id, "Larissa")
+        second_extra = _make_contact(db, professional.id, "Marina")
+        start_at = datetime.combine(MONDAY, time(15, 0), tzinfo=TIMEZONE)
+        appointment = _make_appointment(
+            db,
+            professional.id,
+            place.id,
+            primary.id,
+            start_at,
+            class_type="group",
+            max_participants=2,
+        )
+
+        first = mutations.propose_add_appointment_participant(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            contact_id=str(first_extra.id),
+            appointment_id=str(appointment.id),
+        )
+        assert candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(first["candidate_id"])
+        ).ok is True
+
+        full = mutations.propose_add_appointment_participant(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            contact_id=str(second_extra.id),
+            appointment_id=str(appointment.id),
+        )
+        assert full == {"error": "This appointment is at full capacity"}
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_propose_remove_appointment_participant_keeps_explicit_group_format() -> None:
     db = SessionLocal()
     professional, user = _make_tenant(db)
     try:
@@ -939,7 +1203,7 @@ def test_propose_remove_appointment_participant_reverts_to_individual() -> None:
             appointment_id=str(appointment.id),
         )
         assert result["requires_confirmation"] is True
-        assert "grupo para individual" in result["preview_text"]
+        assert "grupo para individual" not in result["preview_text"]
 
         exec_result = candidates.confirm(
             db, professional.id, user.id, uuid.UUID(result["candidate_id"])
@@ -947,7 +1211,7 @@ def test_propose_remove_appointment_participant_reverts_to_individual() -> None:
         assert exec_result.ok is True
 
         db.refresh(appointment)
-        assert appointment.class_type == "individual"
+        assert appointment.class_type == "group"
         assert (
             db.query(AppointmentParticipant)
             .filter(AppointmentParticipant.appointment_id == appointment.id)
@@ -962,9 +1226,9 @@ def test_propose_remove_appointment_participant_reverts_to_individual() -> None:
             )
             .one()
         )
-        assert event.payload["class_type_changed"] is True
+        assert event.payload["class_type_changed"] is False
         assert event.before_state == {"contact_id": str(extra.id), "class_type": "group"}
-        assert event.after_state == {"class_type": "individual"}
+        assert event.after_state == {"class_type": "group"}
     finally:
         _cleanup(db, professionals=[professional], users=[user])
         db.close()
@@ -988,6 +1252,153 @@ def test_propose_remove_appointment_participant_rejects_primary_contact() -> Non
             appointment_id=str(appointment.id),
         )
         assert "error" in result
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Recurring individual booking correction (roadmap v0.1)
+# ---------------------------------------------------------------------------
+
+
+def test_propose_create_recurring_individual_appointment_retains_contact_and_format() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        contact = _make_contact(db, professional.id, "Carlos")
+        thursday = date(2026, 8, 6)  # a Thursday
+        start_at = datetime.combine(thursday, time(19, 0), tzinfo=TIMEZONE)
+
+        result = mutations.propose_create_appointment(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            contact_id=str(contact.id),
+            place_id=str(place.id),
+            start_at=start_at.isoformat(),
+            end_at=(start_at + timedelta(hours=1)).isoformat(),
+            service="Aula individual",
+            class_type="individual",
+            is_recurring=True,
+        )
+        assert result["requires_confirmation"] is True
+        preview = result["preview_text"]
+        assert "Carlos" in preview
+        assert "individual" in preview
+        assert "semanal" in preview
+        assert "quinta" in preview
+
+        candidate = (
+            db.query(OperatorActionCandidate)
+            .filter(OperatorActionCandidate.professional_id == professional.id)
+            .one()
+        )
+        args = candidate.resolved_arguments
+        assert args["is_recurring"] is True
+        assert args["class_type"] == "individual"
+        assert args["contact_id"] == str(contact.id)
+        assert args["contact_ids"] == [str(contact.id)]
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_confirm_recurring_individual_appointment_creates_weekly_appointment() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        contact = _make_contact(db, professional.id, "Carlos")
+        thursday = date(2026, 8, 6)
+        start_at = datetime.combine(thursday, time(19, 0), tzinfo=TIMEZONE)
+
+        result = mutations.propose_create_appointment(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            contact_id=str(contact.id),
+            place_id=str(place.id),
+            start_at=start_at.isoformat(),
+            end_at=(start_at + timedelta(hours=1)).isoformat(),
+            service="Aula individual",
+            is_recurring=True,
+        )
+        exec_result = candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        )
+        assert exec_result.ok is True
+
+        appointment = (
+            db.query(Appointment).filter(Appointment.professional_id == professional.id).one()
+        )
+        assert appointment.contact_id == contact.id
+        assert appointment.class_type == "individual"
+        assert appointment.max_participants == 1
+        assert appointment.recurrence_rule == "FREQ=WEEKLY"
+
+        slots = (
+            db.query(RecurringSlot).filter(RecurringSlot.professional_id == professional.id).all()
+        )
+        assert len(slots) == 0
+
+        event = (
+            db.query(OperationalEvent)
+            .filter(
+                OperationalEvent.professional_id == professional.id,
+                OperationalEvent.event_type == "schedule.appointment.created",
+            )
+            .one()
+        )
+        assert event.payload["is_recurring"] is True
+        assert event.payload["recurrence_rule"] == "FREQ=WEEKLY"
+        assert event.payload["class_type"] == "individual"
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_propose_create_non_recurring_appointment_defaults() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        contact = _make_contact(db, professional.id, "Ana")
+        start_at = datetime.combine(MONDAY, time(10, 0), tzinfo=TIMEZONE)
+
+        result = mutations.propose_create_appointment(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            contact_id=str(contact.id),
+            place_id=str(place.id),
+            start_at=start_at.isoformat(),
+            end_at=(start_at + timedelta(hours=1)).isoformat(),
+            service="Aula individual",
+        )
+        assert result["requires_confirmation"] is True
+        assert "semanal" not in result["preview_text"]
+
+        candidate = (
+            db.query(OperatorActionCandidate)
+            .filter(OperatorActionCandidate.professional_id == professional.id)
+            .one()
+        )
+        assert candidate.resolved_arguments["is_recurring"] is False
+
+        exec_result = candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        )
+        assert exec_result.ok is True
+
+        appointment = (
+            db.query(Appointment).filter(Appointment.professional_id == professional.id).one()
+        )
+        assert appointment.recurrence_rule is None
     finally:
         _cleanup(db, professionals=[professional], users=[user])
         db.close()

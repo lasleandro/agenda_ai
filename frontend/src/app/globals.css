@@ -93,6 +93,11 @@ body {
   opacity: 0.5;
 }
 
+.fc .agenda-pause-slot {
+  pointer-events: none;
+  opacity: 0.55;
+}
+
 .fc .agenda-waitlist-entry {
   border-style: dashed !important;
   border-width: 2px !important;
@@ -103,6 +108,18 @@ body {
   overflow: hidden;
   padding: 2px 4px;
   color: #3730a3;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc .agenda-pause-slot-label {
+  display: block;
+  overflow: hidden;
+  padding: 2px 4px;
+  color: #64748b;
   font-size: 11px;
   font-weight: 600;
   line-height: 1.2;

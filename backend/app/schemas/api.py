@@ -21,6 +21,7 @@ class AppointmentCreate(BaseModel):
     end_at: datetime
     is_recurring: bool = False
     class_type: Literal["individual", "group"] = "individual"
+    max_participants: int | None = Field(default=None, ge=1, le=4)
     contact_ids: list[uuid.UUID] = Field(default_factory=list)
     billing_type: str = Field(default="billable", pattern=r"^(billable|courtesy)$")
 
@@ -47,7 +48,28 @@ class AppointmentCreate(BaseModel):
             raise ValueError("The primary contact must be a participant")
         if self.class_type == "individual" and len(participant_ids) != 1:
             raise ValueError("An individual class must have one contact")
+        if self.class_type == "individual" and self.max_participants not in (None, 1):
+            raise ValueError("An individual class has capacity for one contact")
+        if self.max_participants is not None and len(participant_ids) > self.max_participants:
+            raise ValueError("Appointment contacts exceed the configured capacity")
         return self
+
+
+class AppointmentFormatUpdate(BaseModel):
+    """Explicitly update a persisted appointment's format and capacity."""
+
+    class_type: Literal["individual", "group"]
+    max_participants: int = Field(ge=1, le=4)
+
+    @model_validator(mode="after")
+    def validate_format_capacity(self) -> Self:
+        if self.class_type == "individual" and self.max_participants != 1:
+            raise ValueError("An individual class has capacity for one contact")
+        return self
+
+
+class OccurrenceClassFormatUpdate(AppointmentFormatUpdate):
+    """Format/capacity for one dated occurrence only."""
 
 
 class AppointmentParticipantSummary(BaseModel):
@@ -73,6 +95,7 @@ class AppointmentSummary(BaseModel):
     source: str
     recurrence_rule: str | None = None
     class_type: str = "individual"
+    max_participants: int = 1
     billing_type: str | None = None
     participants: list[AppointmentParticipantSummary] = []
     # The specific dated occurrence this row represents — pass back on
@@ -101,6 +124,7 @@ class AppointmentDetail(BaseModel):
     source: str
     recurrence_rule: str | None = None
     class_type: str = "individual"
+    max_participants: int = 1
     billing_type: str | None = None
     participants: list[AppointmentParticipantSummary] = []
     occurrence_date: date | None = None
@@ -111,10 +135,37 @@ class AppointmentDetail(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class RecurringClassOccurrenceSummary(BaseModel):
+    """A dated projection of a recurring class, including its dated guests."""
+
+    recurring_slot_id: uuid.UUID
+    occurrence_date: date
+    start_at: datetime
+    end_at: datetime
+    label: str
+    place_id: uuid.UUID | None
+    place_name: str | None
+    class_type: str
+    max_participants: int
+    participants: list[AppointmentParticipantSummary] = []
+    is_exception: bool = False
+
+
+class OccurrenceClassFormatDetail(BaseModel):
+    source_type: str
+    source_id: uuid.UUID
+    occurrence_date: date
+    class_type: str
+    max_participants: int
+    participant_count: int
+    available_seats: int
+
+
 class CalendarResponse(BaseModel):
     """Response for GET /api/calendar."""
 
     appointments: list[AppointmentSummary]
+    recurring_classes: list[RecurringClassOccurrenceSummary] = []
     events: list[InstructorEventDetail] = []
 
 

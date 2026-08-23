@@ -12,15 +12,16 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Appointment,
+    AppointmentParticipant,
     AppointmentTransition,
     InstructorEvent,
     RecurringSlot,
-    RecurringSlotParticipant,
     WorkJourneyInterval,
 )
 from app.services.place_stays import resolve_place_stay
 
 TZ_SP = dt_timezone(timedelta(hours=-3))  # America/Sao_Paulo
+DEFAULT_GROUP_MAX_PARTICIPANTS = 4
 
 
 def has_scheduled_class_overlap(
@@ -52,10 +53,6 @@ def has_scheduled_class_overlap(
 
     return (
         db.query(RecurringSlot)
-        .join(
-            RecurringSlotParticipant,
-            RecurringSlotParticipant.recurring_slot_id == RecurringSlot.id,
-        )
         .filter(
             RecurringSlot.professional_id == professional_id,
             RecurringSlot.status == "active",
@@ -238,10 +235,23 @@ def create_appointment(
     end_at: datetime,
     is_recurring: bool = False,
     class_type: str = "individual",
+    max_participants: int | None = None,
     source: str = "dashboard",
     actor: str = "system",
     billing_type: str = "billable",
 ) -> Appointment:
+    if class_type not in {"individual", "group"}:
+        raise HTTPException(status_code=422, detail="Class type must be individual or group")
+    effective_capacity = (
+        max_participants
+        if max_participants is not None
+        else DEFAULT_GROUP_MAX_PARTICIPANTS if class_type == "group" else 1
+    )
+    if not 1 <= effective_capacity <= DEFAULT_GROUP_MAX_PARTICIPANTS:
+        raise HTTPException(status_code=422, detail="Participant capacity must be between 1 and 4")
+    if class_type == "individual" and effective_capacity != 1:
+        raise HTTPException(status_code=422, detail="An individual class has capacity for one participant")
+
     resolution = resolve_place_stay(
         db,
         professional_id,
@@ -272,6 +282,7 @@ def create_appointment(
         source=source,
         recurrence_rule="FREQ=WEEKLY" if is_recurring else None,
         class_type=class_type,
+        max_participants=effective_capacity,
         billing_type=billing_type,
     )
     db.add(appointment)
@@ -294,3 +305,53 @@ def create_appointment(
     )
     db.flush()
     return appointment
+
+
+def update_appointment_format(
+    db: Session,
+    appointment: Appointment,
+    *,
+    class_type: str,
+    max_participants: int,
+) -> bool:
+    """Apply an explicit format/capacity transition to an appointment.
+
+    The appointment remains the same record, preserving its customer, schedule,
+    recurrence, overrides, and history. Callers own the transaction.
+    """
+    if class_type not in {"individual", "group"}:
+        raise HTTPException(status_code=422, detail="Class type must be individual or group")
+    if not 1 <= max_participants <= DEFAULT_GROUP_MAX_PARTICIPANTS:
+        raise HTTPException(status_code=422, detail="Participant capacity must be between 1 and 4")
+
+    participant_count = (
+        1
+        + db.query(AppointmentParticipant)
+        .filter(AppointmentParticipant.appointment_id == appointment.id)
+        .count()
+    )
+    if class_type == "individual":
+        if max_participants != 1:
+            raise HTTPException(
+                status_code=422,
+                detail="An individual class has capacity for one participant",
+            )
+        if participant_count != 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Remove additional participants before converting to individual",
+            )
+    if participant_count > max_participants:
+        raise HTTPException(
+            status_code=409,
+            detail="Configured capacity cannot be below the current participants",
+        )
+
+    changed = (
+        appointment.class_type != class_type
+        or appointment.max_participants != max_participants
+    )
+    appointment.class_type = class_type
+    appointment.max_participants = max_participants
+    db.flush()
+    return changed

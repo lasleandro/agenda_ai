@@ -11,9 +11,15 @@ from datetime import date, datetime, time
 
 from sqlalchemy.orm import Session
 
-from app.models import Contact, Place, WaitlistEntry
+from app.models import Contact, Place, RecurringSlot, WaitlistEntry
+from app.services import recurring_slot_occurrence_participants
+from app.services import participants as recurring_participants
 from app.services import financial_capacity
-from app.services.scheduling import TIMEZONE
+from app.services.scheduling import (
+    TIMEZONE,
+    get_schedule_occurrence,
+    list_schedule_occurrences,
+)
 
 
 class WaitlistValidationError(Exception):
@@ -133,6 +139,81 @@ def fulfill_entry(
     return entry
 
 
+def fulfill_group_occurrence(
+    db: Session,
+    professional_id: uuid.UUID,
+    *,
+    entry_id: uuid.UUID,
+    recurring_slot_id: uuid.UUID,
+    occurrence_date: date,
+    enrollment_scope: str,
+) -> WaitlistEntry:
+    """Enroll a waiting contact in one compatible recurring group occurrence.
+
+    The caller must choose occurrence or series explicitly. The caller owns
+    the commit so enrollment and audit logging stay atomic.
+    """
+    entry = get_entry(db, professional_id, entry_id)
+    if entry is None:
+        raise WaitlistValidationError("Waitlist entry not found")
+    if entry.status not in ("open", "matched"):
+        raise WaitlistValidationError(
+            f"Entry is not fulfillable (status={entry.status})"
+        )
+    if entry.class_type not in (None, "group"):
+        raise WaitlistValidationError("Waitlist entry does not accept a group class")
+    if occurrence_date != entry.desired_date:
+        raise WaitlistValidationError("Group occurrence date must match the waitlist request")
+    if enrollment_scope not in {"occurrence", "series"}:
+        raise WaitlistValidationError("Enrollment scope must be occurrence or series")
+
+    slot = (
+        db.query(RecurringSlot)
+        .filter(
+            RecurringSlot.id == recurring_slot_id,
+            RecurringSlot.professional_id == professional_id,
+        )
+        .first()
+    )
+    if slot is None:
+        raise WaitlistValidationError("Recurring group not found")
+    occurrence = get_schedule_occurrence(
+        db, professional_id, "recurring_slot", slot.id, occurrence_date
+    )
+    if occurrence is None:
+        raise WaitlistValidationError("Scheduled group occurrence not found")
+    if occurrence.class_type != "group":
+        raise WaitlistValidationError("Scheduled occurrence is not a group class")
+    if entry.place_id is not None and entry.place_id != occurrence.place_id:
+        raise WaitlistValidationError("Group occurrence is at a different place")
+    if (
+        occurrence.starts_at.time() > entry.desired_start_time
+        or occurrence.ends_at.time() < entry.desired_end_time
+    ):
+        raise WaitlistValidationError("Group occurrence does not cover the requested time")
+
+    contact = (
+        db.query(Contact)
+        .filter(Contact.id == entry.contact_id, Contact.professional_id == professional_id)
+        .first()
+    )
+    if contact is None:
+        raise WaitlistValidationError("Waitlist contact not found")
+    if enrollment_scope == "occurrence":
+        recurring_slot_occurrence_participants.add_participant(
+            db, professional_id, slot, contact, occurrence_date
+        )
+    else:
+        recurring_participants.add_participant(db, professional_id, slot, contact)
+    entry.status = "fulfilled"
+    entry.fulfilled_appointment_id = None
+    entry.fulfilled_recurring_slot_id = slot.id
+    entry.fulfilled_occurrence_date = occurrence_date
+    entry.fulfillment_scope = enrollment_scope
+    db.flush()
+    return entry
+
+
 def find_matches(
     db: Session,
     professional_id: uuid.UUID,
@@ -146,9 +227,9 @@ def find_matches(
     (`financial_capacity.compute_free_ranges_by_place`), never re-derives
     it (waitlist roadmap v0.1, Phase 2 — "reuse, don't rebuild").
 
-    Read-only: on-demand check, does not change any entry's status. Returns
-    a list of {"entry": WaitlistEntry, "place_id": UUID, "place_name": str}
-    — one row per (entry, matching place) pair.
+    Read-only: on-demand check, does not change any entry's status. A match is
+    either a genuinely free place range or a joinable group occurrence; the
+    latter is never represented as instructor free time.
     """
     entries = list_entries(db, professional_id, status="open")
     if date_from is not None:
@@ -186,12 +267,40 @@ def find_matches(
                                 "entry": entry,
                                 "place_id": place_id,
                                 "place_name": places_by_id[place_id].name,
+                                "match_type": "free_time",
                             }
                         )
                         break
                 else:
                     continue
                 break
+        group_occurrences = list_schedule_occurrences(
+            db, professional_id, target_date, target_date
+        )
+        for entry in day_entries:
+            if entry.class_type not in (None, "group"):
+                continue
+            for occurrence in group_occurrences:
+                if (
+                    occurrence.class_type != "group"
+                    or occurrence.available_seats <= 0
+                    or (entry.place_id is not None and occurrence.place_id != entry.place_id)
+                    or occurrence.starts_at.time() > entry.desired_start_time
+                    or occurrence.ends_at.time() < entry.desired_end_time
+                ):
+                    continue
+                matches.append(
+                    {
+                        "entry": entry,
+                        "place_id": occurrence.place_id,
+                        "place_name": occurrence.place_name,
+                        "match_type": "group_occurrence",
+                        "source_type": occurrence.source_type,
+                        "source_id": occurrence.source_id,
+                        "occurrence_date": occurrence.occurrence_date,
+                        "available_seats": occurrence.available_seats,
+                    }
+                )
     return matches
 
 

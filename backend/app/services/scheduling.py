@@ -32,7 +32,9 @@ from app.models import (
     Contact,
     Place,
     RecurringSlot,
+    RecurringSlotOccurrenceParticipant,
     RecurringSlotParticipant,
+    ScheduleOccurrenceClassOverride,
     ScheduleOccurrenceOverride,
 )
 
@@ -206,11 +208,20 @@ class ScheduleOccurrence:
     participants: list[ScheduleParticipant]
     status: str
     class_type: str | None = None
+    max_participants: int = 1
     # Only set for source_type == "appointment" — how the booking was made
     # (dashboard/ai_detected/...). None for recurring_slot occurrences.
     appointment_source: str | None = None
     billing_type: str | None = None
     is_exception: bool = False
+
+    @property
+    def participant_count(self) -> int:
+        return len(self.participants)
+
+    @property
+    def available_seats(self) -> int:
+        return max(self.max_participants - self.participant_count, 0)
 
 
 def _appointment_occurrences(
@@ -303,6 +314,7 @@ def _appointment_occurrences(
                     ],
                     status=appointment.status,
                     class_type=appointment.class_type,
+                    max_participants=appointment.max_participants,
                     appointment_source=appointment.source,
                     billing_type=appointment.billing_type,
                 )
@@ -349,10 +361,43 @@ def _slot_occurrences(
             )
         )
 
+    guest_participants_by_occurrence: dict[
+        tuple[uuid.UUID, date], list[ScheduleParticipant]
+    ] = {}
+    if slot_ids:
+        guest_rows = (
+            db.query(
+                RecurringSlotOccurrenceParticipant.recurring_slot_id,
+                RecurringSlotOccurrenceParticipant.occurrence_date,
+                Contact,
+            )
+            .join(
+                Contact,
+                RecurringSlotOccurrenceParticipant.contact_id == Contact.id,
+            )
+            .filter(
+                RecurringSlotOccurrenceParticipant.professional_id == professional_id,
+                RecurringSlotOccurrenceParticipant.recurring_slot_id.in_(slot_ids),
+                RecurringSlotOccurrenceParticipant.occurrence_date.between(date_from, date_to),
+            )
+            .order_by(Contact.display_name)
+            .all()
+        )
+        for slot_id, occurrence_date, contact in guest_rows:
+            guest_participants_by_occurrence.setdefault(
+                (slot_id, occurrence_date), []
+            ).append(
+                ScheduleParticipant(
+                    contact_id=contact.id,
+                    contact_name=contact.display_name,
+                    hourly_rate_cents=contact.hourly_rate_cents,
+                )
+            )
+
     occurrences = []
     for slot, place_name in slot_rows:
-        participants = participants_by_slot.get(slot.id, [])
-        if slot.slot_kind != "class" or not participants:
+        permanent_participants = participants_by_slot.get(slot.id, [])
+        if slot.slot_kind != "class":
             continue
         if slot.recurrence_type == "weekly":
             dates = weekly_dates(
@@ -388,9 +433,15 @@ def _slot_occurrences(
                     place_id=slot.place_id,
                     place_name=place_name,
                     group_hourly_rate_cents=slot.hourly_rate_cents,
-                    participants=participants,
+                    participants=[
+                        *permanent_participants,
+                        *guest_participants_by_occurrence.get(
+                            (slot.id, occurrence_date), []
+                        ),
+                    ],
                     status="scheduled",
                     class_type=slot.class_type,
+                    max_participants=slot.max_participants,
                 )
             )
     return occurrences
@@ -461,6 +512,41 @@ def _apply_overrides(
             )
         )
     return result
+
+
+def _apply_class_format_overrides(
+    db: Session,
+    professional_id: uuid.UUID,
+    occurrences: list[ScheduleOccurrence],
+) -> list[ScheduleOccurrence]:
+    if not occurrences:
+        return occurrences
+    overrides = (
+        db.query(ScheduleOccurrenceClassOverride)
+        .filter(ScheduleOccurrenceClassOverride.professional_id == professional_id)
+        .all()
+    )
+    if not overrides:
+        return occurrences
+    override_by_key: dict[tuple[str, uuid.UUID, date], ScheduleOccurrenceClassOverride] = {}
+    for override in overrides:
+        source_type = "appointment" if override.appointment_id else "recurring_slot"
+        source_id = override.appointment_id or override.recurring_slot_id
+        override_by_key[(source_type, source_id, override.occurrence_date)] = override
+    return [
+        dataclasses.replace(
+            occurrence,
+            class_type=override.class_type,
+            max_participants=override.max_participants,
+        )
+        if (
+            override := override_by_key.get(
+                (occurrence.source_type, occurrence.source_id, occurrence.occurrence_date)
+            )
+        )
+        else occurrence
+        for occurrence in occurrences
+    ]
 
 
 def list_schedule_occurrences(
@@ -539,6 +625,7 @@ def list_schedule_occurrences(
             }.values()
         )
 
+    occurrences = _apply_class_format_overrides(db, professional_id, occurrences)
     occurrences = _apply_overrides(db, professional_id, occurrences, timezone)
     if include_rescheduled_replacements:
         occurrences = [

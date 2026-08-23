@@ -6,9 +6,15 @@ risking divergence. Callers own the transaction (commit after calling)."""
 import uuid
 
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import Contact, RecurringSlot, RecurringSlotParticipant
+from app.models import (
+    Contact,
+    RecurringSlot,
+    RecurringSlotOccurrenceParticipant,
+    RecurringSlotParticipant,
+)
 from app.services.schedule_conflicts import assert_no_scheduled_class_overlap
 
 
@@ -26,6 +32,18 @@ def add_participant(
     slot: RecurringSlot,
     contact: Contact,
 ) -> RecurringSlotParticipant:
+    locked_slot = (
+        db.query(RecurringSlot)
+        .filter(
+            RecurringSlot.id == slot.id,
+            RecurringSlot.professional_id == professional_id,
+        )
+        .with_for_update()
+        .first()
+    )
+    if locked_slot is None:
+        raise HTTPException(status_code=404, detail="Recurring slot not found")
+    slot = locked_slot
     existing = (
         db.query(RecurringSlotParticipant)
         .filter(
@@ -45,6 +63,20 @@ def add_participant(
 
     if count_participants(db, slot.id) >= slot.max_participants:
         raise HTTPException(status_code=409, detail="This slot is at full capacity")
+    largest_guest_roster = (
+        db.query(func.count(RecurringSlotOccurrenceParticipant.id))
+        .filter(RecurringSlotOccurrenceParticipant.recurring_slot_id == slot.id)
+        .group_by(RecurringSlotOccurrenceParticipant.occurrence_date)
+        .order_by(func.count(RecurringSlotOccurrenceParticipant.id).desc())
+        .limit(1)
+        .scalar()
+        or 0
+    )
+    if count_participants(db, slot.id) + largest_guest_roster >= slot.max_participants:
+        raise HTTPException(
+            status_code=409,
+            detail="A dated occurrence is already at full capacity",
+        )
 
     assert_no_scheduled_class_overlap(
         db,

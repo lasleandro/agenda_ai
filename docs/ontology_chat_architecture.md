@@ -95,6 +95,7 @@ convention this table can afford to gloss over.
 | `get_next_session(contact_id)` | This contact's next scheduled occurrence, searching up to 90 days ahead |
 | `resolve_date_phrase(phrase)` | Resolve a Portuguese relative-date phrase ("amanha," "terca que vem," "sabado de manha") into a concrete ISO date and, if present, a period-of-day time window |
 | `find_instructor_openings(date, period?, duration_minutes?, place_id?)` | The instructor's genuinely free windows on a date: declared Work Journey minus every booking. Each opening carries a `places` list (which places' recurring availability covers it — may be empty without making the window any less free); see §4 |
+| `find_group_openings(date_from, date_to, place_id?, ...)` | Joinable dated group occurrences with effective participants, capacity, and remaining seats. They are class commitments, never free time. |
 | `recommend_makeup_slots(contact_id)` | Ranks open slots for a contact's make-up credits by cost + historical occupancy. Empty if the contact has no available credits |
 | `list_makeup_credits(contact_id)` | Lists a contact's *available* credits with their real `credit_id`s — the only way to discover a `credit_id`; must be called before `propose_redeem_makeup_credit` |
 | `list_waitlist_entries(status?, place_id?, contact_id?)` | List Fila de Espera entries — contacts who want a slot at a specific date/time that doesn't exist yet |
@@ -123,6 +124,9 @@ and presents the candidate's deterministic preview to the user.
 | `propose_remove_appointment_participant(contact_id, appointment_id)` | Remove an added (non-primary) participant from a one-off appointment | `_execute_remove_appointment_participant` |
 | `propose_add_group_member(contact_id, recurring_slot_id)` | Enroll a student in a recurring class group | `_execute_add_group_member` |
 | `propose_remove_group_member(contact_id, recurring_slot_id)` | Remove a student from a recurring class group's roster | `_execute_remove_group_member` |
+| `propose_create_group_slot(...)` | Create an empty or seeded one-off/weekly group class after confirmation | `_execute_create_group_slot` |
+| `propose_set_appointment_format(...)` / `propose_set_occurrence_class_format(...)` | Explicitly open a class as group with a capacity and named series/occurrence scope | format executor |
+| `propose_add_group_occurrence_participant(contact_id, recurring_slot_id, occurrence_date)` | Add a one-date guest without changing standing membership | occurrence participant executor |
 | `propose_update_contact(contact_id, changes)` | Update allow-listed contact fields (level, address, home place, ...) | `_execute_update_contact` |
 | `propose_redeem_makeup_credit(credit_id, place_id, start_at, end_at)` | Book a make-up class from a real `credit_id` (see `list_makeup_credits`), consuming it in the same transaction | `_execute_redeem_makeup_credit` |
 | `propose_add_waitlist_entry(contact_id, desired_date, desired_start_time, desired_end_time, place_id?, class_type?, duration_minutes?, note?)` | Add a contact to the Fila de Espera for a specific desired slot | `_execute_add_waitlist_entry` |

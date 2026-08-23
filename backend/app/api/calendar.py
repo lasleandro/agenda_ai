@@ -19,15 +19,24 @@ from app.models import Appointment, AppointmentParticipant, Contact, Place
 from app.schemas.api import (
     AppointmentCreate,
     AppointmentDetail,
+    AppointmentFormatUpdate,
     AppointmentParticipantSummary,
     AppointmentSummary,
     CalendarResponse,
+    OccurrenceClassFormatDetail,
+    OccurrenceClassFormatUpdate,
+    RecurringClassOccurrenceSummary,
 )
 from app.api.instructor_events import _detail_for as _instructor_event_detail
 from app.services import instructor_events as instructor_events_service
 from app.services import scheduling
 from app.services.appointment_participants import add_participant
-from app.services.appointments import create_appointment as create_appointment_service
+from app.services.appointments import (
+    create_appointment as create_appointment_service,
+    update_appointment_format,
+)
+from app.services.operational_events import record_event
+from app.services.occurrence_class_formats import set_format as set_occurrence_format
 
 router = APIRouter(prefix="/api", tags=["calendar"])
 
@@ -63,12 +72,11 @@ def list_appointments(
     row per date, and any confirmed cancellation/reschedule
     (`ScheduleOccurrenceOverride`) is already applied, so the calendar grid
     can never show a cancelled slot as if it were still booked."""
+    all_occurrences = scheduling.list_schedule_occurrences(
+        db, professional_id, start_date, end_date
+    )
     occurrences = [
-        occurrence
-        for occurrence in scheduling.list_schedule_occurrences(
-            db, professional_id, start_date, end_date
-        )
-        if occurrence.source_type == "appointment"
+        occurrence for occurrence in all_occurrences if occurrence.source_type == "appointment"
     ]
 
     appointments = [
@@ -84,6 +92,7 @@ def list_appointments(
             status=occurrence.status,
             source=occurrence.appointment_source or "dashboard",
             class_type=occurrence.class_type or "individual",
+            max_participants=occurrence.max_participants,
             participants=[
                 AppointmentParticipantSummary(
                     contact_id=p.contact_id, display_name=p.contact_name
@@ -94,6 +103,29 @@ def list_appointments(
             billing_type=occurrence.billing_type,
         )
         for occurrence in occurrences
+    ]
+    recurring_classes = [
+        RecurringClassOccurrenceSummary(
+            recurring_slot_id=occurrence.source_id,
+            occurrence_date=occurrence.occurrence_date,
+            start_at=occurrence.starts_at,
+            end_at=occurrence.ends_at,
+            label=occurrence.source_label,
+            place_id=occurrence.place_id,
+            place_name=occurrence.place_name,
+            class_type=occurrence.class_type or "individual",
+            max_participants=occurrence.max_participants,
+            participants=[
+                AppointmentParticipantSummary(
+                    contact_id=participant.contact_id,
+                    display_name=participant.contact_name,
+                )
+                for participant in occurrence.participants
+            ],
+            is_exception=occurrence.is_exception,
+        )
+        for occurrence in all_occurrences
+        if occurrence.source_type == "recurring_slot"
     ]
 
     events = instructor_events_service.list_events(
@@ -106,6 +138,7 @@ def list_appointments(
 
     return CalendarResponse(
         appointments=appointments,
+        recurring_classes=recurring_classes,
         events=[_instructor_event_detail(db, event) for event in events],
     )
 
@@ -143,6 +176,7 @@ def create_appointment(
         end_at=body.end_at,
         is_recurring=body.is_recurring,
         class_type=body.class_type,
+        max_participants=body.max_participants,
         source="dashboard",
         actor=f"user:{user['user_id']}",
         billing_type=body.billing_type,
@@ -172,10 +206,163 @@ def create_appointment(
         source=appointment.source,
         recurrence_rule=appointment.recurrence_rule,
         class_type=appointment.class_type,
+        max_participants=appointment.max_participants,
         billing_type=appointment.billing_type,
         participants=_load_participants(db, appointment),
         created_at=appointment.created_at,
         updated_at=appointment.updated_at,
+    )
+
+
+@router.patch("/appointments/{appointment_id}/format", response_model=AppointmentDetail)
+def update_appointment_class_format(
+    appointment_id: uuid.UUID,
+    body: AppointmentFormatUpdate,
+    db: Session = Depends(get_db),
+    professional_id: uuid.UUID = Depends(require_professional_id),
+    user: dict = Depends(require_authenticated),
+):
+    """Explicitly change an appointment between individual and group formats."""
+    appointment = (
+        db.query(Appointment)
+        .filter(
+            Appointment.id == appointment_id,
+            Appointment.professional_id == professional_id,
+        )
+        .first()
+    )
+    if appointment is None:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    before_state = {
+        "class_type": appointment.class_type,
+        "max_participants": appointment.max_participants,
+    }
+    update_appointment_format(
+        db,
+        appointment,
+        class_type=body.class_type,
+        max_participants=body.max_participants,
+    )
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type="schedule.appointment.updated",
+        occurred_at=datetime.now(TZ_SP),
+        actor_type="user",
+        actor_id=uuid.UUID(user["user_id"]),
+        source_channel="web",
+        entity_type="appointment",
+        entity_id=appointment.id,
+        correlation_id=uuid.uuid4(),
+        payload={"operation": "class_format_updated"},
+        before_state=before_state,
+        after_state={
+            "class_type": appointment.class_type,
+            "max_participants": appointment.max_participants,
+        },
+    )
+    db.commit()
+
+    contact = db.query(Contact).filter(Contact.id == appointment.contact_id).first()
+    place_name = (
+        db.query(Place.name).filter(Place.id == appointment.place_id).scalar()
+        if appointment.place_id is not None
+        else None
+    )
+    return AppointmentDetail(
+        id=appointment.id,
+        professional_id=appointment.professional_id,
+        contact_id=appointment.contact_id,
+        contact_name=contact.display_name if contact else "Desconhecido",
+        place_id=appointment.place_id,
+        place_name=place_name,
+        service=appointment.service,
+        start_at=appointment.start_at,
+        end_at=appointment.end_at,
+        timezone=appointment.timezone,
+        status=appointment.status,
+        class_type=appointment.class_type,
+        max_participants=appointment.max_participants,
+        participants=_load_participants(db, appointment),
+        source=appointment.source,
+        recurrence_rule=appointment.recurrence_rule,
+        billing_type=appointment.billing_type,
+        created_at=appointment.created_at,
+        updated_at=appointment.updated_at,
+    )
+
+
+@router.patch(
+    "/schedule-occurrences/{source_type}/{source_id}/{occurrence_date}/format",
+    response_model=OccurrenceClassFormatDetail,
+)
+def update_occurrence_class_format(
+    source_type: str,
+    source_id: uuid.UUID,
+    occurrence_date: date,
+    body: OccurrenceClassFormatUpdate,
+    db: Session = Depends(get_db),
+    professional_id: uuid.UUID = Depends(require_professional_id),
+    user: dict = Depends(require_authenticated),
+):
+    occurrence = scheduling.get_schedule_occurrence(
+        db, professional_id, source_type, source_id, occurrence_date
+    )
+    if occurrence is None:
+        raise HTTPException(status_code=404, detail="Scheduled occurrence not found")
+    before_state = {
+        "class_type": occurrence.class_type,
+        "max_participants": occurrence.max_participants,
+    }
+    set_occurrence_format(
+        db,
+        professional_id,
+        source_type=source_type,
+        source_id=source_id,
+        occurrence_date=occurrence_date,
+        class_type=body.class_type,
+        max_participants=body.max_participants,
+        participant_count=occurrence.participant_count,
+        actor_user_id=uuid.UUID(user["user_id"]),
+        source="dashboard",
+    )
+    updated = scheduling.get_schedule_occurrence(
+        db, professional_id, source_type, source_id, occurrence_date
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Scheduled occurrence not found")
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type=(
+            "schedule.appointment.updated"
+            if source_type == "appointment"
+            else "schedule.series.updated"
+        ),
+        occurred_at=datetime.now(TZ_SP),
+        actor_type="user",
+        actor_id=uuid.UUID(user["user_id"]),
+        source_channel="web",
+        entity_type=source_type,
+        entity_id=source_id,
+        correlation_id=uuid.uuid4(),
+        payload={"operation": "occurrence_class_format_updated", "occurrence_date": occurrence_date.isoformat()},
+        before_state=before_state,
+        after_state={
+            "class_type": updated.class_type,
+            "max_participants": updated.max_participants,
+        },
+    )
+    db.commit()
+    return OccurrenceClassFormatDetail(
+        source_type=updated.source_type,
+        source_id=updated.source_id,
+        occurrence_date=updated.occurrence_date,
+        class_type=updated.class_type or "individual",
+        max_participants=updated.max_participants,
+        participant_count=updated.participant_count,
+        available_seats=updated.available_seats,
     )
 
 
@@ -248,6 +435,7 @@ def get_appointment(
             timezone=appt.timezone,
             status=occurrence.status,
             class_type=occurrence.class_type or "individual",
+            max_participants=occurrence.max_participants,
             participants=[
                 AppointmentParticipantSummary(
                     contact_id=p.contact_id, display_name=p.contact_name
@@ -283,6 +471,7 @@ def get_appointment(
         timezone=appt.timezone,
         status=appt.status,
         class_type=appt.class_type,
+        max_participants=appt.max_participants,
         participants=_load_participants(db, appt),
         source=appt.source,
         recurrence_rule=appt.recurrence_rule,

@@ -2,122 +2,117 @@
 
 **Route:** `/financeiro`
 **File:** `frontend/src/app/(protected)/financeiro/page.tsx`
-**Feature-gated:** Requires `commercial_financials` tenant feature flag
+**Feature-gated:** Requires the `commercial_financials` tenant feature flag
 
 ---
 
 ## Overview
 
-The Financeiro module is a financial analysis dashboard for the instructor. It
-covers revenue projections, what-if scenario modeling, and revenue occurrence
-confirmation. Tenant financial definitions are configured under
-`/minhas-regras` (presented as **Configurações**).
+Financeiro is the instructor's operational financial workspace. It presents
+scheduled revenue, capacity, occupancy, long-term projection trends, and
+recognized-revenue history. It does not contain hypothetical scenario
+planning; that lives in [Simulador financeiro](simulador_financeiro.md).
 
-If the tenant does not have the `commercial_financials` feature enabled,
-this route redirects to the home page.
+The page uses the existing authenticated tenant scope. A tenant without
+`commercial_financials` is redirected to the home page.
+
+## Page structure
+
+1. Header with a link to **Abrir simulador**.
+2. Compact page-level period control with seven named ranges and an optional
+   custom-date mode.
+3. Internal navigation between **Visão geral** and **Realizado**.
+4. The selected view's data and contextual errors.
+
+The selected view is URL-backed: `/financeiro?view=receita` opens Realizado
+directly. The default route opens Visão geral.
 
 ---
 
-## Key Components
+## Visão geral
 
-| Component | File | Purpose |
+Visão geral answers “How is the business performing in this period?” It shows
+the following sections in order:
+
+1. **Resumo do período** — scheduled class revenue is the headline; occupancy,
+   free hours, participant-hours, and an unpriced-booking warning are supporting
+   facts.
+2. **Desempenho** — scheduled revenue over time and capacity by location.
+3. **Distribuição da agenda** — a local selector switches among location,
+   part-of-day, weekday, and regular-versus-prime capacity breakdowns without
+   making another request.
+4. **Agenda no período** — total class slots, classes still to happen,
+   executed classes, and canceled-with/without-makeup counts.
+5. **Eventos no período** — confirmed, completed, canceled, and confirmed-income
+   indicators kept separate from classes.
+6. **Reposições** — redeemed makeup count, occupied time, and current-price
+   opportunity-cost reference; makeup capacity does not add new class revenue.
+7. **Clientes em destaque** — bounded attendance-frequency and cancellation-rate
+   rankings.
+8. **Tendência de longo prazo** — six-month scheduled-revenue trend; this is
+   deliberately independent of the selected period.
+9. **Premissas e limitações** — collapsed calculation context.
+
+The place selector is intentionally contained within this view. It filters the
+dashboard endpoint only; recognized revenue is not presented as place-filtered
+because its existing summary endpoint accepts dates but no place ID.
+
+## Realizado
+
+Realizado answers “What was actually earned?” The headline amount is the
+immutable recognized total returned by the revenue summary endpoint.
+
+- Supporting composition values show billable subtotal, adjustments, confirmed
+  event income, occurrence count, and attendance count.
+- The time series contains confirmed values, not scheduled projections.
+- One selectable breakdown surface provides results by location, customer, or
+  group.
+- The history contains immutable occurrence snapshots. Expanding an occurrence
+  reveals participants, attendance, billed amount, pricing lines, and the
+  historical rate source without recalculating current pricing.
+
+Event income remains visible but separate from participant-priced class
+revenue, matching the existing business rule.
+
+---
+
+## Data sources and behavior
+
+| Data | Existing endpoint | Used by |
 |---|---|---|
-| `FinancialDashboardSection` | `components/financial/financial-dashboard-section.tsx` | Date-filtered overview with key metrics |
-| `RevenueSection` | `components/financial/revenue-section.tsx` | Recognized revenue metrics, breakdowns, time series, and immutable history |
-| `FinancialSimulator` | `components/financial/financial-simulator.tsx` | What-if scenario modeling |
-| `SimulatedAgenda` | `components/financial/simulated-agenda.tsx` | Read-only monthly allocation for an evaluated scenario |
+| Financial configuration and locations | `GET /api/financial/configuration` | Visão geral location selector |
+| Scheduled revenue and capacity | `GET /api/financial/dashboard?date_from=&date_to=&place_id=` | Visão geral |
+| Operational outcomes and customer rankings | `GET /api/financial/operational-analytics?date_from=&date_to=` | Visão geral |
+| Realized revenue and history | `GET /api/financial/revenue/summary?date_from=&date_to=` | Realizado |
 
----
+The period shortcuts are **Últimos 30 dias**, **Últimos 15 dias**,
+**Próximos 15 dias**, **Próximos 30 dias**, **Último mês fechado**,
+**Este mês**, and **Próximo mês**. All ranges are inclusive local calendar
+dates; Personalizado reveals date fields only when selected.
 
-## Three Tabs
+Operational outcomes count only class-level schedule cancellations. “Aulas
+agendadas” is the total class-slot denominator for the period, while “Aulas
+por acontecer” is its active current/future subset. A canceled
+class is “com reposição” when at least one existing makeup credit originated
+from its cancellation event; individual absence records do not cancel a class.
+Executed classes are active, non-canceled schedule occurrences before the
+current local date; no revenue confirmation is required. Occurrences today or
+in the future remain scheduled. Rankings return at most five customer names
+and counts; the cancellation-rate ranking requires at least three classified
+class outcomes.
 
-### Visao Geral (Dashboard)
+Changing the period preserves the currently visible dashboard while the new
+dashboard request resolves. The recognized-revenue view then requests the same
+selected dates independently. A failed refresh is shown as a scoped error;
+previous usable content remains visible where available.
 
-- Current-month summary:
-  - operational class-revenue estimate from agenda dates through today, with a
-    tooltip distinguishing it from accounting recognition;
-  - confirmed participant revenue from the immutable revenue ledger and
-    confirmed event income shown as separate detail rows;
-  - scheduled class revenue for the month;
-  - 100%-occupancy potential using the observed participant mix, split into
-    stay-attributed named-place capacity and generic `Sem local definido`
-    capacity. The **Capacidade total do mês** card includes a tooltip explaining
-    the occupancy, pricing, participant-mix, and place-source assumptions.
-- Date range filter + place filter
-- Key metrics: current revenue, projected revenue, capacity utilization
-  (`occupancy_pct`), average rates — see
-  `docs/capacity_and_recommendations.md` for exactly how occupancy,
-  breakdowns, and the what-if scenarios/tradeoffs are computed
-- Refetches dashboard on filter apply
-- Optimistic: keeps previous data visible while new data loads
+Initial loading uses a structural skeleton rather than a blank page. Empty
+capacity, missing-price, and absent recognized-revenue states remain explicit
+and do not create financial data.
 
-### Receita (Revenue)
+## Related destinations
 
-- Shows recognized revenue for the selected period, including metrics,
-  breakdowns, time series, and immutable occurrence snapshots.
-- Confirmation of whether a scheduled class happened is an operational action
-  under **Agenda → Confirmações**, not a Financeiro action. Confirmation still
-  freezes the resulting revenue snapshot through
-  `POST /api/financial/revenue/occurrences`.
-- **"Renda de eventos" stat tile**: sum of confirmed `InstructorEvent.income_cents`
-  in the period (instructor events roadmap v0.1) — refereeing, workshops,
-  clinics. Surfaced alongside, not merged into, the participant-priced
-  revenue total; source data comes from `RevenueSummaryDetail.event_income_cents`
-  on the same `GET /api/financial/revenue/summary` call, not a separate fetch.
-
-### Simulador (Simulator)
-
-- Select: date(s), place, participant count, time window
-- Evaluate: sends configuration to `POST /api/financial/scenarios/evaluate`
-- Shows projected revenue with breakdown by rate source
-- Groups the price test under **Premissas**. It first displays the effective
-  configured rates and exposes editable fields only after **Editar preços**.
-- Shows a read-only **Agenda simulada** in month view after evaluation. Its
-  blocks are deterministic, complete one-hour allocations of the selected
-  occupancy and mix over configured capacity; they never create or modify real
-  appointments. Scenario revenue and participant-hours use the same hourly
-  blocks. Work-journey hours not assigned to a named location are also shown as
-  **Sem local definido** and use the generic-location rate, so the simulator
-  shares the dashboard's capacity basis. Clicking a block opens its projected date, time, duration, place,
-  format, category, rate per person/hour, and total revenue.
-- The agenda card has a **Simulada / Real** toggle. The real view shows the
-  current appointments, recurring classes, and confirmed instructor events for
-  the selected period in read-only form. Weekly classes are rendered only
-  inside their inclusive effective-date window.
-- The comparison baseline is **Aulas agendadas atuais**. Instructor events
-  (workshops, clinics, and refereeing) remain separate revenue and do not alter
-  simulated class capacity.
-- The scenario result estimates the active customer base needed, assuming each
-  customer attends between one and three hours per calendar week.
-- Distribution also includes the inverse time-category strategies: individuals
-  in regular slots with groups in prime time, or groups in regular slots with
-  individuals in prime time.
-- **Valores por local** starts with **Padrão — sem local definido**, a separate
-  regular/prime matrix used for agenda commitments with no place. Named places
-  still use their own matrix, then fall back to the global table.
-- **Save scenario** → `POST /api/financial/scenarios` for later comparison
-- **Load scenario** → `GET /api/financial/scenarios` to view saved scenarios
-
----
-
-## Data Sources
-
-| Data | Endpoint |
-|---|---|
-| Financial settings | `GET /api/financial/settings` |
-| Full configuration | `GET /api/financial/configuration` |
-| Generic-place rates | `PUT /api/financial/generic-place/rates` |
-| Dashboard metrics | `GET /api/financial/dashboard?date_from=&date_to=&place_id=` |
-| Confirmed month revenue | `GET /api/financial/revenue/summary?date_from=&date_to=` |
-| Revenue candidates | `GET /api/financial/revenue/candidates?date_from=&date_to=` |
-| Scenarios | `GET /api/financial/scenarios` |
-
----
-
-## Visual Design
-
-- Tab bar at top for switching between sections
-- Dashboard: card-based metrics with large numbers and sparkline trends
-- Revenue: table-like list with status badges and action buttons
-- Simulator: form on left, results on right
-- All amounts displayed in the instructor's configured currency
+- [Simulador financeiro](simulador_financeiro.md) — dedicated scenario planning
+  workspace at `/financeiro/simulador`.
+- [Configurações](minhas_regras.md) — financial definitions, including default
+  and per-location rate matrices and premium-time windows.

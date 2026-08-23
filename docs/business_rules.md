@@ -45,9 +45,16 @@ validation, and agent prompt instructions.
 ### 1.4 Class Types
 
 - `individual`: One-on-one class. No additional participants.
-- `group`: Multi-student class. Additional participants can be added.
-- Adding a participant to an individual appointment auto-promotes it to
-  group.
+- `group`: A real class commitment with one to four seats, including when its
+  effective roster is empty or has one customer.
+- Format and occupancy are independent: a group remains a group until an
+  explicit format change. An individual can be explicitly opened as a group
+  without replacing its booking or its existing customer.
+- Recurring groups may have standing members and one-date guests. A dated
+  guest belongs only to that occurrence and never earns recurring-member
+  benefits such as make-up credits.
+- A group seat is not free instructor time. It may be offered as joinable
+  capacity, while its class still blocks availability searches.
 
 ### 1.5 Billing Types
 
@@ -121,10 +128,11 @@ notice**, via either of two distinct actions:
 
 ### 3.2 Pricing
 
-- **Global rates** (`FinancialRate`): Per-participant-count (1-4 students).
-- **Place-specific rates** (`PlaceFinancialRate`): Per-place, per-time-category
-  (regular/prime), per-participant-count.
-- Place rates override global rates for the same (place, time_category, count).
+- **Unified rate matrix** (`PlaceFinancialRate`): keyed by
+  `(professional_id, place_id, time_category, participant_count)`, with
+  `place_id IS NULL` rows holding the tenant-wide default (1-4 participants,
+  regular/prime). Place-specific rows (`place_id` set) override the default
+  for the same (place, time_category, count).
 - **Prime time** is determined by `PrimeTimeWindow` rows (day-of-week +
   time range).
 
@@ -192,11 +200,10 @@ places" view uses the place-agnostic top line.
 (`_capacity_presets`, `evaluate_financial_scenario`'s `scenario` metric)
 also fold in the Work Journey time that falls outside any place's
 `RecurringSlot` coverage (`build_uncovered_capacity_minutes`), priced
-against the **generic-location regular/prime matrix**, falling back to the
-tenant-global `FinancialRate` when a generic entry is absent. No named-place
-override applies because the time has no attributed place; an unpriced entry
-still contributes 0 revenue rather than raising an error. This only applies to
-the unfiltered "all places" view,
+against the **default (`place_id IS NULL`) regular/prime matrix**. No
+named-place override applies because the time has no attributed place; an
+unpriced entry still contributes 0 revenue rather than raising an error. This
+only applies to the unfiltered "all places" view,
 for the same reason the top-line figures don't place-filter it: time not
 covered by the filtered place(s) may be covered by a place the user
 filtered out, so crediting it to the filtered place(s) would overstate

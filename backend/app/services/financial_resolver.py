@@ -4,7 +4,7 @@ import uuid
 
 from sqlalchemy.orm import Session
 
-from app.models import FinancialRate, ProfessionalFinancialSettings
+from app.models import PlaceFinancialRate, ProfessionalFinancialSettings
 
 
 def get_default_commercial_status(db: Session, professional_id: uuid.UUID) -> str:
@@ -20,14 +20,20 @@ def get_global_hourly_rate(
     db: Session,
     professional_id: uuid.UUID,
     participant_count: int,
+    time_category: str = "regular",
 ) -> int | None:
+    """The tenant-wide default rate (unified matrix's ``place_id IS NULL``
+    row). Time-agnostic callers (customer/group detail cards) default to
+    the ``regular`` row, matching the pre-unification behavior."""
     if participant_count < 1 or participant_count > 4:
         return None
     return (
-        db.query(FinancialRate.hourly_rate_cents)
+        db.query(PlaceFinancialRate.hourly_rate_cents)
         .filter(
-            FinancialRate.professional_id == professional_id,
-            FinancialRate.participant_count == participant_count,
+            PlaceFinancialRate.professional_id == professional_id,
+            PlaceFinancialRate.place_id.is_(None),
+            PlaceFinancialRate.time_category == time_category,
+            PlaceFinancialRate.participant_count == participant_count,
         )
         .scalar()
     )

@@ -22,11 +22,11 @@ from app.models import (
     AppointmentTransition,
     Contact,
     FinancialChangeAuditLog,
-    FinancialRate,
     MakeupClassCredit,
     OperationalEvent,
     OperatorActionCandidate,
     Place,
+    PlaceFinancialRate,
     Professional,
     RecurringSlot,
     RecurringSlotParticipant,
@@ -148,8 +148,8 @@ def _cleanup(db, *, professionals: list[Professional], users: list[User]) -> Non
         db.query(RevenueOccurrence).filter(
             RevenueOccurrence.professional_id.in_(professional_ids)
         ).delete(synchronize_session=False)
-        db.query(FinancialRate).filter(
-            FinancialRate.professional_id.in_(professional_ids)
+        db.query(PlaceFinancialRate).filter(
+            PlaceFinancialRate.professional_id.in_(professional_ids)
         ).delete(synchronize_session=False)
         db.query(FinancialChangeAuditLog).filter(
             FinancialChangeAuditLog.professional_id.in_(professional_ids)
@@ -642,8 +642,17 @@ def test_courtesy_appointment_revenue_confirmation_is_overridable() -> None:
     try:
         place = _make_place(db, professional.id)
         contact = _make_contact(db, professional.id, "Nova Aluna")
-        db.add(
-            FinancialRate(professional_id=professional.id, participant_count=1, hourly_rate_cents=5000)
+        db.add_all(
+            [
+                PlaceFinancialRate(
+                    professional_id=professional.id,
+                    place_id=None,
+                    time_category=category,
+                    participant_count=1,
+                    hourly_rate_cents=5000,
+                )
+                for category in ("regular", "prime")
+            ]
         )
         db.commit()
 

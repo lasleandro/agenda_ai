@@ -28,7 +28,7 @@ class RevenueOccurrenceLine(Base):
             name="ck_revenue_occurrence_lines_category",
         ),
         CheckConstraint(
-            "rate_source IN ('customer', 'group', 'place', 'tenant', 'unset')",
+            "rate_source IN ('customer', 'group', 'place', 'default', 'tenant', 'unset')",
             name="ck_revenue_occurrence_lines_source",
         ),
         CheckConstraint(

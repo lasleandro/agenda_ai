@@ -495,9 +495,15 @@ def build_financial_dashboard(
     raw_booked_minutes = 0
     participant_mix_weights: dict[int, int] = {}
     unpriced_booking_count = 0
+    makeup_booking_count = 0
+    makeup_booked_minutes = 0
+    makeup_opportunity_cost_cents = 0
     for booking in context.bookings:
         occurrence_unpriced = False
         occurrence_minutes = max(0, booking.end_minute - booking.start_minute)
+        if booking.is_redeemed_makeup:
+            makeup_booking_count += 1
+            makeup_booked_minutes += occurrence_minutes
         participant_minutes += occurrence_minutes * booking.participant_count
         raw_booked_minutes += occurrence_minutes
         participant_mix_weights[booking.participant_count] = (
@@ -522,7 +528,7 @@ def build_financial_dashboard(
             )
             revenue = 0
             if rate is None:
-                occurrence_unpriced = True
+                occurrence_unpriced = not booking.is_redeemed_makeup
             else:
                 revenue = _round_cents(
                     Decimal(rate)
@@ -530,6 +536,9 @@ def build_financial_dashboard(
                     * Decimal(duration)
                     / Decimal(60)
                 )
+                if booking.is_redeemed_makeup:
+                    makeup_opportunity_cost_cents += revenue
+                    revenue = 0
 
             total.booked_minutes += overlap
             total.projected_revenue_cents += revenue
@@ -574,6 +583,9 @@ def build_financial_dashboard(
         participant_hours=round(participant_minutes / 60, 2),
         projected_revenue_cents=total.projected_revenue_cents,
         unpriced_booking_count=unpriced_booking_count,
+        makeup_booking_count=makeup_booking_count,
+        makeup_booked_minutes=makeup_booked_minutes,
+        makeup_opportunity_cost_cents=makeup_opportunity_cost_cents,
         observed_participant_mix=observed_mix,
         time_series=[
             FinancialTimeSeriesPoint(

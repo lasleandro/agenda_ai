@@ -13,8 +13,8 @@ from datetime import date, datetime, time, timedelta
 from sqlalchemy.orm import Session
 
 from app.models import (
-    FinancialRate,
     InstructorEvent,
+    MakeupClassCredit,
     Place,
     PlaceFinancialRate,
     PrimeTimeWindow,
@@ -63,13 +63,17 @@ class BookingOccurrence:
     start_minute: int
     end_minute: int
     participant_count: int
+    is_redeemed_makeup: bool = False
 
 
 @dataclass(frozen=True)
 class PricingRules:
-    global_rates: dict[int, int]
-    place_rates: dict[tuple[uuid.UUID, str, int], int]
-    generic_place_rates: dict[tuple[str, int], int]
+    """Unified rate matrix: keys are ``(place_id, time_category,
+    participant_count)``. A ``None`` place_id row is the default rate,
+    used both directly (no place) and as the fallback for a place with no
+    explicit override."""
+
+    rates: dict[tuple[uuid.UUID | None, str, int], int]
 
     def resolve(
         self,
@@ -77,15 +81,10 @@ class PricingRules:
         time_category: str,
         participant_count: int,
     ) -> int | None:
-        if place_id is not None:
-            return self.place_rates.get(
-                (place_id, time_category, participant_count),
-                self.global_rates.get(participant_count),
-            )
-        return self.generic_place_rates.get(
-            (time_category, participant_count),
-            self.global_rates.get(participant_count),
-        )
+        explicit = self.rates.get((place_id, time_category, participant_count))
+        if explicit is not None:
+            return explicit
+        return self.rates.get((None, time_category, participant_count))
 
 
 def load_places(
@@ -141,15 +140,7 @@ def load_pricing_rules(
     db: Session,
     professional_id: uuid.UUID,
 ) -> PricingRules:
-    global_rates = {
-        row.participant_count: row.hourly_rate_cents
-        for row in (
-            db.query(FinancialRate)
-            .filter(FinancialRate.professional_id == professional_id)
-            .all()
-        )
-    }
-    place_rates = {
+    rates = {
         (row.place_id, row.time_category, row.participant_count): (
             row.hourly_rate_cents
         )
@@ -159,23 +150,7 @@ def load_pricing_rules(
             .all()
         )
     }
-    settings = (
-        db.query(ProfessionalFinancialSettings)
-        .filter(ProfessionalFinancialSettings.professional_id == professional_id)
-        .first()
-    )
-    generic_place_rates = {
-        tuple(key.split("-")): value
-        for key, value in (settings.generic_place_rates if settings else {}).items()
-    }
-    return PricingRules(
-        global_rates=global_rates,
-        place_rates=place_rates,
-        generic_place_rates={
-            (category, int(participant_count)): rate
-            for (category, participant_count), rate in generic_place_rates.items()
-        },
-    )
+    return PricingRules(rates=rates)
 
 
 def _load_net_work_ranges_by_day(
@@ -447,6 +422,18 @@ def load_booking_occurrences(
         date_to,
         statuses=("tentative", "confirmed"),
     )
+    redeemed_appointment_ids = {
+        appointment_id
+        for (appointment_id,) in (
+            db.query(MakeupClassCredit.redeemed_appointment_id)
+            .filter(
+                MakeupClassCredit.professional_id == professional_id,
+                MakeupClassCredit.status == "redeemed",
+                MakeupClassCredit.redeemed_appointment_id.isnot(None),
+            )
+            .all()
+        )
+    }
     bookings: list[BookingOccurrence] = []
     for occurrence in occurrences:
         if occurrence.place_id not in place_ids:
@@ -462,6 +449,10 @@ def load_booking_occurrences(
                 start_minute=start_minute,
                 end_minute=start_minute + duration_minutes,
                 participant_count=min(len(occurrence.participants), 4),
+                is_redeemed_makeup=(
+                    occurrence.source_type == "appointment"
+                    and occurrence.source_id in redeemed_appointment_ids
+                ),
             )
         )
     return bookings

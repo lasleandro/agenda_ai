@@ -1,6 +1,6 @@
 # Pricing Model Unification — Impact Tracking v0.1
 
-**Status: analysis only — no code changed yet.**
+**Status: All phases complete — persistence, resolver/API/schema rework, and legacy store cleanup.**
 **Date: 2026-08-19**
 
 ## 1. Decision being tracked
@@ -250,4 +250,212 @@ layer did not).
   read.)
 - **Where `default_commercial_status` lives after the split.** (Recommendation:
   keep it on `GET/PATCH /settings`, remove only `rates`.)
+
+---
+
+## 10. Phase 1 — Unified persistence (complete 2026-08-19)
+
+**Scope decision (confirmed with owner):** persistence only. Zero behavior
+change. Resolver/API/frontend rework is Phase 2+.
+
+**Table strategy decision (confirmed with owner):** alter
+`place_financial_rates` in place — `place_id` made nullable — instead of
+creating a new table. The table already had the exact 8-cell unified shape and
+unique constraint; per-place rows needed no data move.
+
+### What changed
+
+| File | Change |
+|---|---|
+| `backend/app/models/place_financial_rate.py` | `place_id` now `nullable=True`; docstring updated to describe the unified matrix. |
+| `backend/migrations/versions/6843aae760e3_unify_financial_rate_store.py` | New migration: nullable `place_id`, partial unique index, backfill. |
+| `scripts/verify_pricing_unification.py` | New read-only verification script (coverage, equivalence, integrity). |
+
+### Migration details
+
+- Partial unique index `uq_place_financial_rates_default` on
+  `(professional_id, time_category, participant_count) WHERE place_id IS NULL`.
+  **Required correctness detail beyond the §7 sketch:** plain Postgres unique
+  constraints treat NULLs as distinct, so `uq_place_financial_rates_rule`
+  alone would allow duplicate default rows. The partial index enforces the
+  unified resolution invariant (at most one default row per cell) and is the
+  conflict target for the idempotent backfill.
+- Backfill order (both steps idempotent via `ON CONFLICT`):
+  1. Mirror `financial_rates` → `regular` + `prime` NULL rows per participant
+     count (the global layer is time-agnostic, so mirroring is faithful).
+  2. Override per cell from `generic_place_rates` JSONB where present.
+- Per-place rows moved as-is (already in the table).
+- Downgrade deletes the NULL rows, drops the index, restores `NOT NULL`.
+
+### Verification results (local `agenda_db`)
+
+`scripts/verify_pricing_unification.py` — all checks pass:
+
+| Store | Rows |
+|---|---|
+| Legacy `financial_rates` | 1 |
+| Legacy `generic_place_rates` cells | 8 |
+| Legacy `place_financial_rates` | 16 |
+| Unified default (`place_id IS NULL`) | 10 |
+| Unified per-place | 16 |
+
+Coverage (every legacy row has a unified counterpart), equivalence (legacy
+resolution chains produce identical cents to the unified chain for every
+`(place_id, category, participant_count)` combination), and integrity (no
+duplicate default cells) all hold. Up/down/up cycle re-verified.
+
+`alembic check` reports only **pre-existing** drift unrelated to this work
+(`spatial_ref_sys`, `created_at`/`updated_at` nullability across many tables,
+orphaned indexes on `waitlist_entries` / `work_journey_intervals` /
+`financial_change_audit_logs`, trgm index on `contacts`). None touch
+`place_financial_rates`. Flagged, not fixed (out of scope).
+
+### Test suite
+
+`pytest tests/` on local DB: **206 passed, 5 failed**. The 5 failures are all
+in `test_makeup_credits.py` and are **pre-existing** — identical failures
+reproduced on the clean baseline (model change stashed + migration downgraded,
+i.e. old code + old DB). Not caused by Phase 1. Recommended to track
+separately.
+
+### Next phase (2 — backend services & schemas)
+
+Per §4/§6: rework `PricingRules` + `load_pricing_rules`
+(`services/financial_capacity.py`), `get_global_hourly_rate` /
+(`resolve_hourly_rate` (`services/financial_resolver.py`),
+`_participant_rate` (`services/revenue_occurrences.py`), schemas
+(`schemas/financial.py`, keep legacy `RevenueRateSource` values readable),
+and audit `entity_type` collapse (§6.2, no audit loss). Open decisions from
+§9 land there.
+
+---
+
+## 11. Phase 2 — Resolver, API, and schema rework (complete 2026-08-19)
+
+**Decisions confirmed (per §9 recommendations):**
+- Collapse label: new writes use `"default"`; legacy `"generic"`/`"tenant"`
+  remain accepted `RevenueRateSource` values for historical
+  `RevenueOccurrenceLine` snapshots (never normalized on read).
+- `default_commercial_status` stays on `GET`/`PATCH /api/financial/settings`;
+  the retired 4-cell `rates` field was removed from both.
+
+### Backend changes
+
+| File | Change |
+|---|---|
+| `services/financial_capacity.py` | `PricingRules` now holds a single `rates: dict[(place_id \| None, cat, n), int]`; `resolve()` is `explicit place cell → NULL default cell → None`. `load_pricing_rules` reads only `PlaceFinancialRate`. |
+| `services/financial_resolver.py` | `get_global_hourly_rate` reads the unified `place_id IS NULL` row (added optional `time_category` param, defaults to `"regular"` for the time-agnostic customer/group detail callers per §8.1). `resolve_hourly_rate` signature unchanged. |
+| `services/revenue_occurrences.py` | `_participant_rate` rewritten: customer → group → place cell → NULL default cell → `"unset"`. New default resolutions are labeled `"default"` (not `"generic"`/`"tenant"`). |
+| `schemas/financial.py` | Retired `GlobalRateInput`/`GlobalRateDetail`/`GenericPlaceRateMatrixDetail`. `FinancialSettingsDetail`/`Update` dropped `rates`. `PlaceRateMatrixDetail.place_id` is now `UUID \| None` (used for both the default row and per-place rows). `PlaceRateDetail.source` and `PricingQuoteSegment.source` collapsed to `Literal["place", "default", "unset"]`. `RevenueRateSource` gained `"default"` (keeps `"generic"`/`"tenant"` for legacy reads). |
+| `api/financial.py` | `_configuration_detail` now builds both the default matrix and per-place matrices from one query against `PlaceFinancialRate`; `FinancialConfigurationDetail.default_rates` replaces `.generic_place`. `GET`/`PATCH /settings` dropped `rates`. `POST /quote` resolves `place → NULL default → None` (no separate global step) — fixed a NULL-vs-`IN` SQL pitfall (`place_id.in_([None, None])` never matches NULL rows; must use `place_id.is_(None)` via `or_()`). `PUT /generic-place/rates` renamed to `PUT /rates/default`, writing `place_id = NULL` rows directly (no more JSONB). Audit `entity_type` for both default-rate and per-place-rate writes collapsed to `"financial_rates"`. |
+| `api/places.py` | No change needed — already deletes `PlaceFinancialRate` rows scoped by `place_id`, which is unaffected by the resolver rework. |
+| `services/financial_analytics.py`, `services/makeup_recommender.py` | No change — both already went through `PricingRules.resolve()`. |
+
+### Migration: `dc0d10e10deb_allow_default_rate_source`
+
+Discovered mid-implementation: `revenue_occurrence_lines` has a DB-level
+`ck_revenue_occurrence_lines_source` CHECK constraint listing allowed
+`rate_source` values. It only ever allowed `customer/group/place/tenant/unset`
+— **`"generic"` was never actually persistable**, so the pre-unification
+"place has no override → try generic (no-place matrix) → fall back to
+global" path would have hit this same `IntegrityError` had a real request
+ever exercised the generic-with-a-place-set-appointment case. Since
+`"generic"` never made it to the DB, no backfill was needed — the migration
+just widens the constraint to also allow `"default"`.
+
+### Test suite
+
+`pytest tests/` on local DB: **206 passed, 5 failed** — the same 5
+pre-existing `test_makeup_credits.py` failures tracked in §10 (unrelated to
+this work). `test_financial.py` and `test_revenue.py` updated: settings/rates
+calls split into `PATCH /settings` (status only) + `PUT /rates/default`
+(rates); `"generic"`/`"tenant"` source assertions changed to `"default"`;
+fixtures that seeded `FinancialRate` rows now seed unified `place_id=NULL`
+`PlaceFinancialRate` rows instead (mirroring both `regular` and `prime` where
+the old test relied on a category-agnostic global fallback).
+
+### Frontend changes
+
+| File | Change |
+|---|---|
+| `lib/types.ts` | Removed `GlobalRateDetail`, `GenericPlaceRateMatrixDetail`; `FinancialSettingsDetail` dropped `rates`; `PlaceRateMatrixDetail.place_id` is `string \| null`; `PlaceRateDetail.source`/`RevenueRateSource` updated to match the backend collapse. |
+| `lib/api.ts` | `updateFinancialSettings` body dropped `rates`; `replaceGenericPlaceRates` renamed to `replaceDefaultRates` (`PUT /api/financial/rates/default`). |
+| `components/financial/global-rates-section.tsx` | Stripped the 4-cell rate editor; now only edits `default_commercial_status`. |
+| `components/financial/place-rates-section.tsx` | `GenericPlaceRateEditor` renamed `DefaultRateEditor`; `PlaceRatesSection` props renamed `defaultRates`/`onDefaultSaved` (was `genericPlace`/`onGenericSaved`), backed by the unified `place_id = null` matrix. |
+| `app/(protected)/minhas-regras/page.tsx` | Wired to the renamed props/fields above. |
+| `components/financial/financial-simulator.tsx` | `configuredRate` simplified to `place → NULL default (via configuration.default_rates) → null`; the old three-tier place/generic/settings-global fallback is gone. |
+| `components/financial/financial-dashboard-section.tsx`, `components/financial/revenue-section.tsx` | Minor type-follow fixes (nullable `place_id`, added `"default"` source label). |
+
+No separate "replication UI tool" (mirror regular↔prime) was added in this
+pass — out of scope for Phase 2's resolver/schema rework; the 8-cell editor
+already lets the user set both rows manually.
+
+### Deferred to a later phase
+
+- Dropping the now-unused `financial_rates` table and
+  `professional_financial_settings.generic_place_rates` JSONB column (§7
+  step 6) — left in place; nothing in the app reads or writes them anymore.
+- Normalizing historical `"generic"`/`"tenant"` `rate_source` values to
+  `"default"` — intentionally not done (§9 recommendation: keep legacy
+  values readable, no rewrite of historical snapshots).
+
+---
+
+## 12. Phase 3 — Legacy store cleanup (complete 2026-08-19)
+
+**Scope:** remove the now-dead legacy pricing storage that Phase 2 stopped
+reading and writing, per §7 step 6.
+
+**Precondition note:** the plan below originally called for waiting through
+a production stability window before this destructive change. This project
+has no production deployment yet (local-only development per
+`AGENTS.md` — "Develop locally, and sync local to remote new data
+thereafter"), so that precondition doesn't apply here: there is no rollback
+risk to a live tenant, and the local `agenda_db` was re-verified with
+`scripts/verify_pricing_unification.py` immediately before dropping (see §10
+results — coverage/equivalence/integrity all held going into this phase).
+Owner confirmed proceeding immediately instead of waiting.
+
+### What changed
+
+| Item | Change |
+|---|---|
+| `financial_rates` table (`FinancialRate` model) | Dropped. Deleted `backend/app/models/financial_rate.py` and its export from `app/models/__init__.py`. |
+| `professional_financial_settings.generic_place_rates` (JSONB column) | Dropped from the `ProfessionalFinancialSettings` model and via migration. |
+| `scripts/verify_pricing_unification.py` | Repurposed (not retired) into a plain unified-table integrity check: at most one default (`place_id IS NULL`) row per cell, and every per-place row's `place_id` still references an existing `Place`. The legacy-vs-unified coverage/equivalence checks were removed since the legacy tables no longer exist. |
+| `backend/migrations/versions/e62d256cf621_drop_legacy_pricing_stores.py` | New migration: `op.drop_column("professional_financial_settings", "generic_place_rates")` then `op.drop_table("financial_rates")`. Downgrade recreates both empty (shape only — the docstring calls out explicitly that data is not recoverable on downgrade). |
+| `docs/business_rules.md` §3.2, `docs/data_architecture.md` §7 ER diagram | Updated to describe the single unified `PlaceFinancialRate` matrix; removed `FinancialRate` entity and references to a separate "generic-location" / "tenant-global" fallback tier. |
+| `backend/app/models/place_financial_rate.py` | Docstring updated: "replacing" → "replaced ... both dropped", pointing at this doc. |
+| `backend/tests/test_financial.py`, `backend/tests/test_makeup_credits.py` | Removed now-dead `FinancialRate` imports and cleanup queries (the fixtures already seeded the unified table directly since Phase 2). |
+
+### Verification performed
+
+- `alembic upgrade head` → `alembic downgrade -1` → `alembic upgrade head` cycle
+  on the local DB: clean in both directions.
+- `python scripts/verify_pricing_unification.py` after the upgrade: "All
+  checks passed: no duplicate defaults, no orphaned rows" (12 default rows,
+  16 per-place rows on the local dataset).
+- `pytest tests/` on local DB: **200 passed, 11 failed**. Reconfirmed via
+  `git stash` against the pre-Phase-2 baseline that all 11 failures are
+  **pre-existing and unrelated to this work**: the 5 known
+  `test_makeup_credits.py` failures (tracked since §10), plus 4 in
+  `test_candidate_resolution.py` and 2 in `test_passive_escalation.py` that
+  fail identically on the clean baseline — date-relative test flakiness,
+  not caused by the pricing rework.
+- Grepped the codebase for `FinancialRate` (bare) and `generic_place_rates`
+  after the change: no remaining references outside migration history and
+  historical roadmap prose (§1–§11 above, kept as-is for the record).
+
+### Explicitly out of scope for Phase 3
+
+- Normalizing historical `"generic"`/`"tenant"` `RevenueOccurrenceLine.rate_source`
+  values to `"default"` — these remain accepted enum values indefinitely per
+  the Phase 2 decision (§11); rewriting immutable historical snapshots is not
+  planned.
+- Any further resolver/API behavior changes — Phase 3 is schema cleanup only,
+  zero behavior change (mirrors the Phase 1 framing in §10).
+
+This closes out the pricing model unification effort tracked in this
+document — all three phases (persistence, resolver/API/schema, legacy
+cleanup) are complete.
 

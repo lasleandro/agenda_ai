@@ -9,10 +9,10 @@ for phase context and [webhook.site vs. tunnel rationale](#why-not-webhooksite).
 | | |
 |---|---|
 | Tool | `cloudflared` (quick tunnel, no account) |
-| Public URL | `https://eve-blackberry-liked-discussions.trycloudflare.com` |
-| Webhook path to register in YCloud | `https://eve-blackberry-liked-discussions.trycloudflare.com/webhooks/ycloud` |
+| Public URL | `https://naturally-camera-bags-defined.trycloudflare.com` |
+| Webhook path to register in YCloud | `https://naturally-camera-bags-defined.trycloudflare.com/webhooks/ycloud` |
 | Local target | `http://localhost:8005` (`cd backend && python -m uvicorn app.main:app --reload --port 8005`) |
-| Started | 2026-08-19 |
+| Started | 2026-08-23 |
 
 **This URL changes every time the tunnel restarts.** When it does, re-register the
 new `/webhooks/ycloud` URL in the YCloud dashboard (Developer → Webhooks) and

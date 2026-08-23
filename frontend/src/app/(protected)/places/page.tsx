@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CircleDollarSign, MapPin, Plus } from "lucide-react";
+import { CircleDollarSign, MapPin, Pencil, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PlaceFormDialog } from "@/components/ontology/place-form-dialog";
 import { fetchPlaces } from "@/lib/api";
@@ -53,33 +53,55 @@ export default function PlacesPage() {
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {places?.map((place) => (
-          <button
+          <div
             key={place.id}
-            onClick={() => router.push(`/places/${place.id}`)}
-            className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4 text-left shadow-sm hover:border-indigo-400"
+            className="relative rounded-xl border border-border bg-card shadow-sm hover:border-indigo-400"
           >
-            <p className="font-semibold text-sm text-foreground">{place.name}</p>
-            {place.address_line && (
-              <span className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                <MapPin className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                {place.address_line}
-                {place.city ? `, ${place.city}` : ""}
-              </span>
-            )}
-            {financialEnabled && (
-              <span className="flex items-center gap-1.5 text-xs font-medium text-primary">
-                <CircleDollarSign className="size-3.5" />
-                Configurar valores R$/hora
-              </span>
-            )}
-          </button>
+            <button
+              onClick={() => router.push(`/places/${place.id}`)}
+              className="flex w-full flex-col gap-2 p-4 pr-20 text-left"
+            >
+              <p className="font-semibold text-sm text-foreground">{place.name}</p>
+              {place.address_line && (
+                <span className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                  <MapPin className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  {place.address_line}
+                  {place.city ? `, ${place.city}` : ""}
+                </span>
+              )}
+              {financialEnabled && (
+                <span className="flex items-center gap-1.5 text-xs font-medium text-primary">
+                  <CircleDollarSign className="size-3.5" />
+                  Configurar valores R$/hora
+                </span>
+              )}
+            </button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute right-2 top-2"
+              onClick={() => router.push(`/places/${place.id}`)}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Editar
+            </Button>
+          </div>
         ))}
       </div>
 
       <PlaceFormDialog
         open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        onSaved={() => reload()}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+        }}
+        place={null}
+        onSaved={(saved) => {
+          setPlaces((current) =>
+            current
+              ? [...current, saved]
+              : current
+          );
+        }}
       />
     </div>
   );

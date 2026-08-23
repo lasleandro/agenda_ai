@@ -31,7 +31,9 @@ a detail page for editing individual contact profiles.
 ### Three-Tab Layout
 
 - **Clientes tab:** Search/filter list, multi-select for group creation, Fila de Espera filter chip
-- **Grupos tab:** All group-type recurring slots, with participant management
+- **Grupos tab:** All group-type recurring slots, with standing participant
+  management. The Agenda remains the dated operational view for empty seats
+  and one-date guests.
 - **Detectados tab:** `AppointmentCandidate` rows (status `detected`) from the passive observer — dismiss, create a reviewed appointment, or for `waitlist_request` candidates, complete/confirm into a real waitlist entry. The card explains whether the location came from a place stay, a valid home-place tie-break, or needs explicit review.
 
 ### Data Sources

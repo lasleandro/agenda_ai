@@ -16,20 +16,12 @@ import { DAY_LABELS } from "@/lib/ontology-utils";
 import type { Place, RecurringSlot } from "@/lib/types";
 import { SchedulerPlaceSelect } from "./scheduler-place-select";
 
-const DAY_PRESETS = [
-  { value: "every-day", label: "Todos os dias", days: [0, 1, 2, 3, 4, 5, 6] },
-  { value: "weekdays", label: "Segunda a sexta", days: [0, 1, 2, 3, 4] },
-  { value: "weekend", label: "Sábado e domingo", days: [5, 6] },
-  { value: "monday-wednesday-friday", label: "Segunda, quarta e sexta", days: [0, 2, 4] },
-  { value: "tuesday-thursday", label: "Terça e quinta", days: [1, 3] },
-  { value: "specific", label: "Dia específico", days: null },
-] as const;
-
 /** Create/edit dialog for a place stay. */
 export function RecurringSlotFormDialog({
   open,
   onOpenChange,
   slot,
+  duplicateSlot,
   places,
   fixedPlaceId,
   onPlaceCreated,
@@ -39,26 +31,32 @@ export function RecurringSlotFormDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   slot?: RecurringSlot | null;
+  duplicateSlot?: RecurringSlot | null;
   places?: Place[];
   fixedPlaceId?: string;
   onPlaceCreated?: (place: Place) => void;
   onSaved: (slot: RecurringSlot) => void;
   onDeleted?: (slotId: string) => void;
 }) {
-  const [placeId, setPlaceId] = useState(slot?.place_id ?? fixedPlaceId ?? places?.[0]?.id ?? "");
-  const [dayOfWeek, setDayOfWeek] = useState(slot?.day_of_week ?? 0);
-  const [dayPreset, setDayPreset] = useState("specific");
-  const [startTime, setStartTime] = useState(slot?.start_time?.slice(0, 5) ?? "08:00");
-  const [endTime, setEndTime] = useState(slot?.end_time?.slice(0, 5) ?? "09:00");
-  const [validFrom, setValidFrom] = useState(slot?.valid_from ?? "");
-  const [validUntil, setValidUntil] = useState(slot?.valid_until ?? "");
-  const [label, setLabel] = useState(slot?.label ?? "");
+  const initialSlot = slot ?? duplicateSlot;
+  const [placeId, setPlaceId] = useState(initialSlot?.place_id ?? fixedPlaceId ?? places?.[0]?.id ?? "");
+  const [dayOfWeek, setDayOfWeek] = useState(initialSlot?.day_of_week ?? 0);
+  const [selectedDays, setSelectedDays] = useState<number[]>([initialSlot?.day_of_week ?? 0]);
+  const [startTime, setStartTime] = useState(initialSlot?.start_time?.slice(0, 5) ?? "08:00");
+  const [endTime, setEndTime] = useState(initialSlot?.end_time?.slice(0, 5) ?? "09:00");
+  const [validFrom, setValidFrom] = useState(initialSlot?.valid_from ?? "");
+  const [validUntil, setValidUntil] = useState(initialSlot?.valid_until ?? "");
+  const [label, setLabel] = useState(initialSlot?.label ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSave() {
     if (!placeId) {
       setError("Selecione um local");
+      return;
+    }
+    if (!slot && selectedDays.length === 0) {
+      setError("Selecione pelo menos um dia da semana");
       return;
     }
     if (validFrom && validUntil && validUntil < validFrom) {
@@ -81,7 +79,6 @@ export function RecurringSlotFormDialog({
         valid_from: validFrom || null,
         valid_until: validUntil || null,
       };
-      const selectedPreset = DAY_PRESETS.find((preset) => preset.value === dayPreset);
       const saved = slot
         ? await updateRecurringSlot(slot.id, {
             ...sharedPayload,
@@ -90,9 +87,7 @@ export function RecurringSlotFormDialog({
         : (
             await createRecurringSlots({
               ...sharedPayload,
-              days_of_week: selectedPreset?.days
-                ? [...selectedPreset.days]
-                : [dayOfWeek],
+              days_of_week: selectedDays,
             })
           )[0];
       onSaved(saved);
@@ -122,7 +117,9 @@ export function RecurringSlotFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{slot ? "Editar permanência" : "Nova permanência"}</DialogTitle>
+          <DialogTitle>
+            {slot ? "Editar permanência" : duplicateSlot ? "Duplicar permanência" : "Nova permanência"}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -136,30 +133,35 @@ export function RecurringSlotFormDialog({
             />
           )}
 
-          {!slot && (
+          {!slot ? (
             <div className="space-y-1.5">
-              <Label htmlFor="slot-day-preset">Repetição</Label>
-              <select
-                id="slot-day-preset"
-                value={dayPreset}
-                onChange={(e) => setDayPreset(e.target.value)}
-                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-              >
-                {DAY_PRESETS.map((preset) => (
-                  <option key={preset.value} value={preset.value}>
-                    {preset.label}
-                  </option>
+              <Label>Dias da semana</Label>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {DAY_LABELS.map((day, index) => (
+                  <label
+                    key={day}
+                    className="flex items-center gap-2 rounded-md border border-input px-3 py-2 text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedDays.includes(index)}
+                      onChange={() =>
+                        setSelectedDays((current) =>
+                          current.includes(index)
+                            ? current.filter((value) => value !== index)
+                            : [...current, index].sort((first, second) => first - second)
+                        )
+                      }
+                    />
+                    {day}
+                  </label>
                 ))}
-              </select>
-              {dayPreset !== "specific" && (
-                <p className="text-xs text-muted-foreground">
-                  Um horário será criado para cada dia selecionado.
-                </p>
-              )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Um horário será criado para cada dia selecionado.
+              </p>
             </div>
-          )}
-
-          {(slot || dayPreset === "specific") && (
+          ) : (
             <div className="space-y-1.5">
               <Label htmlFor="slot-day">Dia da semana</Label>
               <select

@@ -165,21 +165,12 @@ def _participant_rate(
         return participant.hourly_rate_cents, "customer"
     if occurrence.group_hourly_rate_cents is not None:
         return occurrence.group_hourly_rate_cents, "group"
-    place_rule = (
-        occurrence.place_id,
-        category,
-        participant_count,
-    )
-    if occurrence.place_id is not None and place_rule in pricing.place_rates:
-        return pricing.place_rates[place_rule], "place"
-    if occurrence.place_id is None:
-        generic_rate = pricing.generic_place_rates.get(
-            (category, participant_count)
-        )
-        if generic_rate is not None:
-            return generic_rate, "generic"
-    if participant_count in pricing.global_rates:
-        return pricing.global_rates[participant_count], "tenant"
+    place_rate = pricing.rates.get((occurrence.place_id, category, participant_count))
+    if occurrence.place_id is not None and place_rate is not None:
+        return place_rate, "place"
+    default_rate = pricing.rates.get((None, category, participant_count))
+    if default_rate is not None:
+        return default_rate, "default"
     return None, "unset"
 
 
@@ -222,19 +213,23 @@ def preview_schedule_revenue(
             break
 
     capacity_revenue = None
-    if schedule.class_type == "group" and participant_count < 4:
+    if schedule.class_type == "group" and participant_count < schedule.max_participants:
         capacity_revenue = 0
         for segment_start, segment_end, category in segments:
             rate = (
                 schedule.group_hourly_rate_cents
                 if schedule.group_hourly_rate_cents is not None
-                else pricing.resolve(schedule.place_id, category, 4)
+                else pricing.resolve(
+                    schedule.place_id,
+                    category,
+                    schedule.max_participants,
+                )
             )
             if rate is None:
                 capacity_revenue = None
                 break
             duration = segment_end - segment_start
-            capacity_revenue += 4 * _round_cents(
+            capacity_revenue += schedule.max_participants * _round_cents(
                 Decimal(rate) * Decimal(duration) / Decimal(60)
             )
     return RevenuePreviewDetail(

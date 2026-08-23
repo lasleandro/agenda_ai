@@ -96,3 +96,18 @@ joao@agenda.ai / agenda-dev-2026 — direct professional login (the existing "Jo
 - Pensar em um report financeiro semanal para o tenant
 - churn
 - ranking alunos com mais reposição/cancelamento
+
+
+
+2026-08-19
+
+- Começando a implementar docs/ROADMAPS/pricing_model_unification_tracking_v0.1_2026-08-19.md
+- finalizado, junto com vários outros ajustes de ux
+- O que falta: re-definir o comportamento da formação de grupos: instrutor deveria ser capaz de promover slots a aula em grupo, e também criar horários de grupo, a serem preenchidos oportunamente
+
+
+
+2026-08-21
+- várias melhorias implementadas na área de financeiro e simulador
+- roadmap de sistema de recomendação de otimização de agenda criado: docs/ROADMAPS/agenda_revenue_recommendations_roadmap_v0.1_2026-08-21.md
+- Criado um roadmap para a dinamica de conversão de slots em aula em grupo: docs/ROADMAPS/group_capacity_and_slot_promotion_roadmap_v0.1_2026-08-21.md 

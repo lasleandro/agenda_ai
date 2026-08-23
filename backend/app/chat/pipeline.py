@@ -38,7 +38,11 @@ from app.schemas.conversation import (
 from app.schemas.extraction import SchedulingEvent
 from app.chat.extraction import extract_scheduling_events
 from app.chat.temporal import validate_temporal
-from app.services.candidate_execution import CreateCandidateInput, confirm_create_candidate
+from app.services.candidate_execution import (
+    CreateCandidateInput,
+    confirm_create_candidate,
+    confirm_reschedule_candidate,
+)
 from app.services.candidate_resolution import resolve_candidate
 from app.services.passive_escalation import queue_if_eligible
 
@@ -136,10 +140,10 @@ def event_fingerprint(event: SchedulingEvent) -> str:
     return sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
-def _auto_execute_authoritative_create(
+def _auto_execute_authoritative_candidate(
     db: Session, candidate: AppointmentCandidate
 ) -> bool:
-    """Execute a fully resolved instructor-confirmed create exactly once.
+    """Execute a fully resolved instructor-confirmed candidate exactly once.
 
     Failures intentionally leave the evidence candidate in ``detected`` for
     platform review. The nested transaction prevents a schedule conflict from
@@ -151,7 +155,7 @@ def _auto_execute_authoritative_create(
     }:
         return False
     resolution = resolve_candidate(db, candidate)
-    if resolution.operation != "create" or not resolution.is_resolved:
+    if resolution.operation not in {"create", "reschedule"} or not resolution.is_resolved:
         return False
     actor = (
         db.query(User)
@@ -163,14 +167,23 @@ def _auto_execute_authoritative_create(
         return False
     try:
         with db.begin_nested():
-            confirm_create_candidate(
-                db,
-                candidate,
-                actor_user_id=actor.id,
-                input=CreateCandidateInput(),
-                source_channel="passive_observer",
-                automatic=True,
-            )
+            if resolution.operation == "create":
+                confirm_create_candidate(
+                    db,
+                    candidate,
+                    actor_user_id=actor.id,
+                    input=CreateCandidateInput(),
+                    source_channel="passive_observer",
+                    automatic=True,
+                )
+            else:
+                confirm_reschedule_candidate(
+                    db,
+                    candidate,
+                    actor_user_id=actor.id,
+                    source_channel="passive_observer",
+                    automatic=True,
+                )
         return True
     except Exception:  # preserve a reviewable candidate when execution cannot proceed
         logger.exception("Automatic execution failed for passive candidate %s", candidate.id)
@@ -251,7 +264,7 @@ def process_conversation(db: Session, conversation: Conversation) -> list[Appoin
                 ]
             )
             db.execute(stmt)
-        _auto_execute_authoritative_create(db, candidate)
+        _auto_execute_authoritative_candidate(db, candidate)
         queue_if_eligible(db, candidate)
         candidates.append(candidate)
 

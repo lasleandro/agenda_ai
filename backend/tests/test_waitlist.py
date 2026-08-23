@@ -24,6 +24,8 @@ from app.models import (
     Place,
     Professional,
     RecurringSlot,
+    RecurringSlotOccurrenceParticipant,
+    RecurringSlotParticipant,
     ScheduleOccurrenceOverride,
     User,
     WaitlistEntry,
@@ -103,6 +105,16 @@ def _cleanup(db, *, professionals: list[Professional]) -> None:
     )
     db.query(ScheduleOccurrenceOverride).filter(
         ScheduleOccurrenceOverride.professional_id.in_(professional_ids)
+    ).delete(synchronize_session=False)
+    db.query(RecurringSlotOccurrenceParticipant).filter(
+        RecurringSlotOccurrenceParticipant.professional_id.in_(professional_ids)
+    ).delete(synchronize_session=False)
+    db.query(RecurringSlotParticipant).filter(
+        RecurringSlotParticipant.recurring_slot_id.in_(
+            db.query(RecurringSlot.id).filter(
+                RecurringSlot.professional_id.in_(professional_ids)
+            )
+        )
     ).delete(synchronize_session=False)
     db.query(Appointment).filter(Appointment.professional_id.in_(professional_ids)).delete(
         synchronize_session=False
@@ -413,6 +425,169 @@ def test_api_fulfill_entry() -> None:
         db.close()
 
 
+def test_api_fulfill_waitlist_entry_with_group_occurrence() -> None:
+    db = SessionLocal()
+    pro, user, cookies = _login_new_tenant(db)
+    try:
+        place = _make_place(db, pro.id)
+        contact = _make_contact(db, pro.id)
+        entry = waitlist_service.create_entry(
+            db,
+            pro.id,
+            contact_id=contact.id,
+            place_id=place.id,
+            desired_date=TOMORROW,
+            desired_start_time=time(19, 0),
+            desired_end_time=time(20, 0),
+            class_type="group",
+        )
+        group = RecurringSlot(
+            professional_id=pro.id,
+            place_id=place.id,
+            day_of_week=TOMORROW.weekday(),
+            start_time=time(19, 0),
+            end_time=time(20, 0),
+            label="Turma noturna",
+            slot_kind="class",
+            class_type="group",
+            max_participants=2,
+            recurrence_type="weekly",
+        )
+        db.add(group)
+        db.commit()
+
+        res = client.post(
+            f"/api/waitlist-entries/{entry.id}/fulfill-group",
+            json={
+                "recurring_slot_id": str(group.id),
+                "occurrence_date": TOMORROW.isoformat(),
+                "enrollment_scope": "occurrence",
+            },
+            cookies=cookies,
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert body["status"] == "fulfilled"
+        assert body["fulfilled_recurring_slot_id"] == str(group.id)
+        assert body["fulfilled_occurrence_date"] == TOMORROW.isoformat()
+        assert body["fulfillment_scope"] == "occurrence"
+        assert (
+            db.query(RecurringSlotOccurrenceParticipant)
+            .filter(
+                RecurringSlotOccurrenceParticipant.recurring_slot_id == group.id,
+                RecurringSlotOccurrenceParticipant.contact_id == contact.id,
+                RecurringSlotOccurrenceParticipant.occurrence_date == TOMORROW,
+            )
+            .count()
+            == 1
+        )
+    finally:
+        _cleanup(db, professionals=[pro])
+        db.close()
+
+
+def test_api_fulfill_waitlist_group_rejects_another_tenant_slot() -> None:
+    db = SessionLocal()
+    pro_a, user_a, cookies_a = _login_new_tenant(db)
+    pro_b, user_b, cookies_b = _login_new_tenant(db)
+    try:
+        place_a = _make_place(db, pro_a.id)
+        contact_a = _make_contact(db, pro_a.id)
+        entry = waitlist_service.create_entry(
+            db,
+            pro_a.id,
+            contact_id=contact_a.id,
+            desired_date=TOMORROW,
+            desired_start_time=time(19, 0),
+            desired_end_time=time(20, 0),
+            class_type="group",
+        )
+        place_b = _make_place(db, pro_b.id)
+        group_b = RecurringSlot(
+            professional_id=pro_b.id,
+            place_id=place_b.id,
+            day_of_week=TOMORROW.weekday(),
+            start_time=time(19, 0),
+            end_time=time(20, 0),
+            slot_kind="class",
+            class_type="group",
+            max_participants=2,
+            recurrence_type="weekly",
+        )
+        db.add(group_b)
+        db.commit()
+
+        res = client.post(
+            f"/api/waitlist-entries/{entry.id}/fulfill-group",
+            json={
+                "recurring_slot_id": str(group_b.id),
+                "occurrence_date": TOMORROW.isoformat(),
+                "enrollment_scope": "occurrence",
+            },
+            cookies=cookies_a,
+        )
+        assert res.status_code == 404
+        db.refresh(entry)
+        assert entry.status == "open"
+    finally:
+        _cleanup(db, professionals=[pro_a, pro_b])
+        db.close()
+
+
+def test_api_fulfill_waitlist_entry_into_group_series() -> None:
+    db = SessionLocal()
+    pro, user, cookies = _login_new_tenant(db)
+    try:
+        place = _make_place(db, pro.id)
+        contact = _make_contact(db, pro.id)
+        entry = waitlist_service.create_entry(
+            db,
+            pro.id,
+            contact_id=contact.id,
+            desired_date=TOMORROW,
+            desired_start_time=time(19, 0),
+            desired_end_time=time(20, 0),
+            class_type="group",
+        )
+        group = RecurringSlot(
+            professional_id=pro.id,
+            place_id=place.id,
+            day_of_week=TOMORROW.weekday(),
+            start_time=time(19, 0),
+            end_time=time(20, 0),
+            slot_kind="class",
+            class_type="group",
+            max_participants=2,
+            recurrence_type="weekly",
+        )
+        db.add(group)
+        db.commit()
+
+        res = client.post(
+            f"/api/waitlist-entries/{entry.id}/fulfill-group",
+            json={
+                "recurring_slot_id": str(group.id),
+                "occurrence_date": TOMORROW.isoformat(),
+                "enrollment_scope": "series",
+            },
+            cookies=cookies,
+        )
+        assert res.status_code == 200
+        assert res.json()["fulfillment_scope"] == "series"
+        assert (
+            db.query(RecurringSlotParticipant)
+            .filter(
+                RecurringSlotParticipant.recurring_slot_id == group.id,
+                RecurringSlotParticipant.contact_id == contact.id,
+            )
+            .count()
+            == 1
+        )
+    finally:
+        _cleanup(db, professionals=[pro])
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # Active-agent tools
 # ---------------------------------------------------------------------------
@@ -610,6 +785,49 @@ def test_find_matches_reports_entry_with_a_free_opening() -> None:
         assert len(matches) == 1
         assert matches[0]["entry"].id == entry.id
         assert matches[0]["place_id"] == place.id
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_find_matches_reports_joinable_group_without_calling_it_free_time() -> None:
+    db = SessionLocal()
+    professional = _make_tenant(db)[0]
+    place = _make_place(db, professional.id)
+    contact = _make_contact(db, professional.id, "Marcelo")
+    try:
+        group = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(10, 0),
+            end_time=time(11, 0),
+            slot_kind="class",
+            class_type="group",
+            max_participants=2,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        db.add(group)
+        db.commit()
+        entry = waitlist_service.create_entry(
+            db,
+            professional.id,
+            contact_id=contact.id,
+            place_id=place.id,
+            desired_date=MONDAY,
+            desired_start_time=time(10, 0),
+            desired_end_time=time(11, 0),
+            class_type="group",
+        )
+
+        matches = waitlist_service.find_matches(db, professional.id)
+
+        assert len(matches) == 1
+        assert matches[0]["entry"].id == entry.id
+        assert matches[0]["match_type"] == "group_occurrence"
+        assert matches[0]["source_id"] == group.id
+        assert matches[0]["available_seats"] == 2
     finally:
         _cleanup(db, professionals=[professional])
         db.close()
