@@ -466,6 +466,163 @@ def _execute_add_group_occurrence_participant(
 
 
 # ---------------------------------------------------------------------------
+# propose_remove_group_occurrence_participant
+# ---------------------------------------------------------------------------
+
+def propose_remove_group_occurrence_participant(
+    db: Session,
+    professional_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    correlation_id: uuid.UUID,
+    channel: str = "web",
+    *,
+    contact_id: str,
+    recurring_slot_id: str,
+    occurrence_date: str,
+) -> dict[str, Any]:
+    contact = (
+        db.query(Contact)
+        .filter(Contact.id == uuid.UUID(contact_id), Contact.professional_id == professional_id)
+        .first()
+    )
+    if contact is None:
+        return {"error": "Contact not found"}
+    slot = (
+        db.query(RecurringSlot)
+        .filter(
+            RecurringSlot.id == uuid.UUID(recurring_slot_id),
+            RecurringSlot.professional_id == professional_id,
+        )
+        .first()
+    )
+    if slot is None:
+        return {"error": "Group not found"}
+    if slot.slot_kind != "class" or slot.class_type != "group":
+        return {"error": "Dated participants can only be removed from a recurring group"}
+    parsed_date = date.fromisoformat(occurrence_date)
+    is_permanent = (
+        db.query(RecurringSlotParticipant)
+        .filter(
+            RecurringSlotParticipant.recurring_slot_id == slot.id,
+            RecurringSlotParticipant.contact_id == contact.id,
+        )
+        .first()
+        is not None
+    )
+    if is_permanent:
+        return {
+            "error": (
+                "Contact is a permanent participant of this group. For a one-date "
+                "absence use propose_note_participant_absence; to remove them from "
+                "the whole series use propose_remove_group_member."
+            )
+        }
+    try:
+        schedule_overrides.get_target_occurrence(
+            db, professional_id, "recurring_slot", slot.id, parsed_date
+        )
+    except HTTPException as exc:
+        return {"error": exc.detail}
+    existing = (
+        db.query(RecurringSlotOccurrenceParticipant)
+        .filter(
+            RecurringSlotOccurrenceParticipant.recurring_slot_id == slot.id,
+            RecurringSlotOccurrenceParticipant.contact_id == contact.id,
+            RecurringSlotOccurrenceParticipant.occurrence_date == parsed_date,
+        )
+        .first()
+    )
+    if existing is None:
+        return {"error": "Contact is not a dated participant of this occurrence"}
+
+    place_name = _place_name(db, slot.place_id)
+    preview_text = (
+        f"Remover {contact.display_name} somente da turma de {_group_label(slot)} "
+        f"em {parsed_date.strftime('%d/%m/%Y')} ({place_name}). "
+        "A turma fixa e os demais alunos não serão alterados."
+    )
+    candidate = candidates.propose(
+        db,
+        professional_id,
+        actor_user_id,
+        tool_name="propose_remove_group_occurrence_participant",
+        arguments={
+            "contact_id": contact_id,
+            "recurring_slot_id": recurring_slot_id,
+            "occurrence_date": occurrence_date,
+        },
+        preview_text=preview_text,
+        affected_entities=[
+            {"entity_type": "contact", "entity_id": contact_id, "label": contact.display_name},
+            {"entity_type": "recurring_slot", "entity_id": recurring_slot_id, "label": _group_label(slot)},
+        ],
+        correlation_id=correlation_id,
+        channel=channel,
+    )
+    return _pending_result(candidate)
+
+
+def _execute_remove_group_occurrence_participant(
+    db: Session, professional_id: uuid.UUID, candidate: OperatorActionCandidate
+) -> ExecutionResult:
+    args = candidate.resolved_arguments
+    contact_id = uuid.UUID(args["contact_id"])
+    slot_id = uuid.UUID(args["recurring_slot_id"])
+    parsed_date = date.fromisoformat(args["occurrence_date"])
+
+    contact = (
+        db.query(Contact)
+        .filter(Contact.id == contact_id, Contact.professional_id == professional_id)
+        .first()
+    )
+    slot = (
+        db.query(RecurringSlot)
+        .filter(RecurringSlot.id == slot_id, RecurringSlot.professional_id == professional_id)
+        .first()
+    )
+    if contact is None or slot is None:
+        raise ValueError("Contact or group no longer exists")
+
+    try:
+        schedule_overrides.get_target_occurrence(
+            db, professional_id, "recurring_slot", slot.id, parsed_date
+        )
+        recurring_slot_occurrence_participants.remove_participant(
+            db, slot.id, contact.id, parsed_date
+        )
+    except HTTPException as exc:
+        raise ValueError(str(exc.detail)) from exc
+
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type="schedule.participant.removed",
+        occurred_at=datetime.now(TIMEZONE),
+        actor_type="user",
+        actor_id=candidate.actor_user_id,
+        source_channel=candidate.channel,
+        entity_type="recurring_slot",
+        entity_id=slot.id,
+        correlation_id=candidate.correlation_id,
+        operator_action_candidate_id=candidate.id,
+        payload={
+            "contact_id": str(contact.id),
+            "occurrence_date": args["occurrence_date"],
+            "scope": "occurrence",
+        },
+        before_state={"contact_id": str(contact.id)},
+        after_state=None,
+    )
+    return ExecutionResult(
+        ok=True,
+        summary=(
+            f"{contact.display_name} removido(a) somente da aula de "
+            f"{args['occurrence_date']}."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # propose_create_group_slot
 # ---------------------------------------------------------------------------
 
@@ -2177,6 +2334,335 @@ def _execute_remove_waitlist_entry(
 
 
 # ---------------------------------------------------------------------------
+# propose_fulfill_waitlist_with_appointment / _with_group
+# (agent pt-BR conversational resilience roadmap v0.1, Phase 4)
+# ---------------------------------------------------------------------------
+
+def propose_fulfill_waitlist_with_appointment(
+    db: Session,
+    professional_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    correlation_id: uuid.UUID,
+    channel: str = "web",
+    *,
+    waitlist_entry_id: str,
+    place_id: str,
+    service: str = "Aula",
+) -> dict[str, Any]:
+    try:
+        entry_uuid = uuid.UUID(waitlist_entry_id)
+        place_uuid = uuid.UUID(place_id)
+    except ValueError:
+        return {"error": "waitlist_entry_id and place_id must be valid UUIDs"}
+
+    entry = waitlist_service.get_entry(db, professional_id, entry_uuid)
+    if entry is None:
+        return {"error": "Waitlist entry not found"}
+    if entry.status not in ("open", "matched"):
+        return {"error": f"Entry is not fulfillable (status={entry.status})"}
+    if entry.class_type == "group":
+        return {
+            "error": (
+                "This waitlist entry expects a group class — use "
+                "propose_fulfill_waitlist_with_group instead."
+            )
+        }
+
+    place = (
+        db.query(Place)
+        .filter(Place.id == place_uuid, Place.professional_id == professional_id)
+        .first()
+    )
+    if place is None:
+        return {"error": "Place not found"}
+    if entry.place_id is not None and entry.place_id != place_uuid:
+        return {"error": "Selected place does not match the waitlist request"}
+
+    contact = (
+        db.query(Contact)
+        .filter(Contact.id == entry.contact_id, Contact.professional_id == professional_id)
+        .first()
+    )
+    if contact is None:
+        return {"error": "Waitlist contact not found"}
+
+    if not waitlist_service.entry_fits_free_time(db, professional_id, entry, place_uuid):
+        return {"error": "The requested time is no longer free at this place"}
+
+    start_at = datetime.combine(entry.desired_date, entry.desired_start_time, tzinfo=TIMEZONE)
+    end_at = datetime.combine(entry.desired_date, entry.desired_end_time, tzinfo=TIMEZONE)
+    try:
+        appointments.assert_no_conflict(
+            db, professional_id, start_at=start_at, end_at=end_at
+        )
+    except HTTPException as exc:
+        return {"error": exc.detail}
+
+    resolved_service = (service or "Aula").strip() or "Aula"
+    preview_text = (
+        f"Agendar {contact.display_name} em {place.name} em "
+        f"{start_at.strftime('%d/%m/%Y %H:%M')}–{end_at.strftime('%H:%M')} "
+        f"e concluir a solicitação da fila de espera."
+    )
+    candidate = candidates.propose(
+        db,
+        professional_id,
+        actor_user_id,
+        tool_name="propose_fulfill_waitlist_with_appointment",
+        arguments={
+            "waitlist_entry_id": waitlist_entry_id,
+            "place_id": place_id,
+            "service": resolved_service,
+        },
+        preview_text=preview_text,
+        affected_entities=[
+            {"entity_type": "contact", "entity_id": str(contact.id), "label": contact.display_name},
+            {"entity_type": "place", "entity_id": place_id, "label": place.name},
+            {
+                "entity_type": "waitlist_entry",
+                "entity_id": waitlist_entry_id,
+                "label": contact.display_name,
+            },
+        ],
+        correlation_id=correlation_id,
+        channel=channel,
+    )
+    return _pending_result(candidate)
+
+
+def _execute_fulfill_waitlist_with_appointment(
+    db: Session, professional_id: uuid.UUID, candidate: OperatorActionCandidate
+) -> ExecutionResult:
+    args = candidate.resolved_arguments
+    entry_id = uuid.UUID(args["waitlist_entry_id"])
+    place_id = uuid.UUID(args["place_id"])
+
+    entry = waitlist_service.lock_entry(db, professional_id, entry_id)
+    if entry is None:
+        raise ValueError("Waitlist entry no longer exists")
+    if entry.status not in ("open", "matched"):
+        raise ValueError(f"Entry is not fulfillable (status={entry.status})")
+    if entry.class_type == "group":
+        raise ValueError("Waitlist entry expects a group class")
+    if entry.place_id is not None and entry.place_id != place_id:
+        raise ValueError("Selected place no longer matches the waitlist request")
+
+    contact = (
+        db.query(Contact)
+        .filter(Contact.id == entry.contact_id, Contact.professional_id == professional_id)
+        .first()
+    )
+    place = (
+        db.query(Place)
+        .filter(Place.id == place_id, Place.professional_id == professional_id)
+        .first()
+    )
+    if contact is None or place is None:
+        raise ValueError("Contact or place no longer exists")
+
+    if not waitlist_service.entry_fits_free_time(db, professional_id, entry, place_id):
+        raise ValueError("The requested time is no longer free at this place")
+
+    start_at = datetime.combine(entry.desired_date, entry.desired_start_time, tzinfo=TIMEZONE)
+    end_at = datetime.combine(entry.desired_date, entry.desired_end_time, tzinfo=TIMEZONE)
+    appointment = appointments.create_appointment(
+        db,
+        professional_id,
+        contact_id=entry.contact_id,
+        place_id=place_id,
+        service=args.get("service", "Aula"),
+        start_at=start_at,
+        end_at=end_at,
+        class_type="individual",
+        source="assistant",
+        actor=f"user:{candidate.actor_user_id}",
+    )
+    waitlist_service.fulfill_entry(
+        db, professional_id, entry_id, appointment.id, commit=False
+    )
+
+    now = datetime.now(TIMEZONE)
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type="schedule.appointment.created",
+        occurred_at=now,
+        actor_type="user",
+        actor_id=candidate.actor_user_id,
+        source_channel=candidate.channel,
+        entity_type="appointment",
+        entity_id=appointment.id,
+        correlation_id=candidate.correlation_id,
+        operator_action_candidate_id=candidate.id,
+        payload={
+            "contact_id": str(contact.id),
+            "class_type": "individual",
+            "waitlist_entry_id": str(entry_id),
+            "resolved_place_id": str(place_id),
+        },
+        before_state=None,
+        after_state={"status": appointment.status},
+    )
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type="waitlist.entry.fulfilled",
+        occurred_at=now,
+        actor_type="user",
+        actor_id=candidate.actor_user_id,
+        source_channel=candidate.channel,
+        entity_type="waitlist_entry",
+        entity_id=entry.id,
+        correlation_id=candidate.correlation_id,
+        operator_action_candidate_id=candidate.id,
+        payload={"fulfilled_appointment_id": str(appointment.id)},
+        before_state={"status": "open"},
+        after_state={"status": "fulfilled"},
+    )
+    return ExecutionResult(
+        ok=True,
+        summary=(
+            f"{contact.display_name} agendado(a) em {place.name} em "
+            f"{start_at.strftime('%d/%m/%Y %H:%M')} e solicitação da fila concluída."
+        ),
+    )
+
+
+def propose_fulfill_waitlist_with_group(
+    db: Session,
+    professional_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    correlation_id: uuid.UUID,
+    channel: str = "web",
+    *,
+    waitlist_entry_id: str,
+    recurring_slot_id: str,
+    occurrence_date: str,
+    enrollment_scope: str,
+) -> dict[str, Any]:
+    if enrollment_scope not in {"occurrence", "series"}:
+        return {"error": "Enrollment scope must be occurrence or series"}
+    try:
+        entry_uuid = uuid.UUID(waitlist_entry_id)
+        slot_uuid = uuid.UUID(recurring_slot_id)
+        parsed_date = date.fromisoformat(occurrence_date)
+    except ValueError:
+        return {"error": "waitlist_entry_id, recurring_slot_id and occurrence_date must be valid"}
+
+    try:
+        entry, slot, occurrence, contact = waitlist_service.load_group_fulfillment(
+            db,
+            professional_id,
+            entry_id=entry_uuid,
+            recurring_slot_id=slot_uuid,
+            occurrence_date=parsed_date,
+            enrollment_scope=enrollment_scope,
+        )
+    except waitlist_service.WaitlistValidationError as exc:
+        return {"error": str(exc)}
+
+    if enrollment_scope == "occurrence":
+        scope_text = "somente à aula"
+    else:
+        scope_text = "à turma fixa a partir da aula"
+    preview_text = (
+        f"Adicionar {contact.display_name} {scope_text} de {_group_label(slot)} em "
+        f"{parsed_date.strftime('%d/%m/%Y')} ({occurrence.place_name or 'local não informado'}) "
+        f"e concluir a solicitação da fila de espera."
+    )
+    candidate = candidates.propose(
+        db,
+        professional_id,
+        actor_user_id,
+        tool_name="propose_fulfill_waitlist_with_group",
+        arguments={
+            "waitlist_entry_id": waitlist_entry_id,
+            "recurring_slot_id": recurring_slot_id,
+            "occurrence_date": occurrence_date,
+            "enrollment_scope": enrollment_scope,
+        },
+        preview_text=preview_text,
+        affected_entities=[
+            {"entity_type": "contact", "entity_id": str(contact.id), "label": contact.display_name},
+            {
+                "entity_type": "recurring_slot",
+                "entity_id": recurring_slot_id,
+                "label": _group_label(slot),
+            },
+            {
+                "entity_type": "waitlist_entry",
+                "entity_id": waitlist_entry_id,
+                "label": contact.display_name,
+            },
+        ],
+        correlation_id=correlation_id,
+        channel=channel,
+    )
+    return _pending_result(candidate)
+
+
+def _execute_fulfill_waitlist_with_group(
+    db: Session, professional_id: uuid.UUID, candidate: OperatorActionCandidate
+) -> ExecutionResult:
+    args = candidate.resolved_arguments
+    entry_id = uuid.UUID(args["waitlist_entry_id"])
+    slot_id = uuid.UUID(args["recurring_slot_id"])
+    parsed_date = date.fromisoformat(args["occurrence_date"])
+    enrollment_scope = args["enrollment_scope"]
+
+    entry = waitlist_service.lock_entry(db, professional_id, entry_id)
+    if entry is None:
+        raise ValueError("Waitlist entry no longer exists")
+
+    try:
+        entry, slot, _occurrence, contact = waitlist_service.load_group_fulfillment(
+            db,
+            professional_id,
+            entry_id=entry_id,
+            recurring_slot_id=slot_id,
+            occurrence_date=parsed_date,
+            enrollment_scope=enrollment_scope,
+        )
+        waitlist_service.fulfill_group_occurrence(
+            db,
+            professional_id,
+            entry_id=entry_id,
+            recurring_slot_id=slot_id,
+            occurrence_date=parsed_date,
+            enrollment_scope=enrollment_scope,
+        )
+    except waitlist_service.WaitlistValidationError as exc:
+        raise ValueError(str(exc)) from exc
+
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type="waitlist.entry.fulfilled",
+        occurred_at=datetime.now(TIMEZONE),
+        actor_type="user",
+        actor_id=candidate.actor_user_id,
+        source_channel=candidate.channel,
+        entity_type="waitlist_entry",
+        entity_id=entry.id,
+        correlation_id=candidate.correlation_id,
+        operator_action_candidate_id=candidate.id,
+        payload={
+            "fulfilled_recurring_slot_id": str(slot.id),
+            "fulfilled_occurrence_date": parsed_date.isoformat(),
+            "fulfillment_scope": enrollment_scope,
+        },
+        before_state={"status": "open"},
+        after_state={"status": "fulfilled"},
+    )
+    return ExecutionResult(
+        ok=True,
+        summary=(
+            f"{contact.display_name} adicionado(a) à turma e solicitação da fila concluída."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # propose_create_event (instructor events roadmap v0.1, Phase 3)
 # ---------------------------------------------------------------------------
 
@@ -2394,6 +2880,22 @@ MUTATION_TOOL_SPECS: list[dict[str, Any]] = [
         "function": {
             "name": "propose_add_group_occurrence_participant",
             "description": "Propose adding a sporadic contact to ONE dated occurrence of a recurring group, without changing the permanent group roster. Use for requests such as 'can Ana join the Tuesday 18h group next week?'. Requires explicit instructor confirmation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "contact_id": {"type": "string"},
+                    "recurring_slot_id": {"type": "string", "description": "The group's recurring_slot_id, from find_groups or get_schedule."},
+                    "occurrence_date": {"type": "string", "description": "ISO date of the specific class occurrence."},
+                },
+                "required": ["contact_id", "recurring_slot_id", "occurrence_date"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_remove_group_occurrence_participant",
+            "description": "Propose removing a sporadic (dated) contact from ONE occurrence of a recurring group, without changing the permanent roster. Use only when the contact was added as an occurrence-only guest. For a permanent member missing one date use propose_note_participant_absence; for removing a permanent member from the whole series use propose_remove_group_member. Requires explicit instructor confirmation.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -2630,6 +3132,39 @@ MUTATION_TOOL_SPECS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "propose_fulfill_waitlist_with_appointment",
+            "description": "Propose fulfilling a Fila de Espera (waitlist) entry by booking a one-off individual appointment for the waiting contact at the entry's own desired date/time and place. Derives contact, date and time from the waitlist entry — never alters them. Use for a free_time match from find_waitlist_matches. Never use propose_create_appointment followed by propose_remove_waitlist_entry, which would mark the demand cancelled instead of fulfilled. Requires explicit instructor confirmation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "waitlist_entry_id": {"type": "string", "description": "The waitlist_entry_id from find_waitlist_matches or list_waitlist_entries."},
+                    "place_id": {"type": "string", "description": "The free_time match's place_id."},
+                    "service": {"type": "string", "description": "Optional service label, defaults to 'Aula'."},
+                },
+                "required": ["waitlist_entry_id", "place_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_fulfill_waitlist_with_group",
+            "description": "Propose fulfilling a Fila de Espera (waitlist) entry by enrolling the waiting contact in a group occurrence, either only that dated occurrence (enrollment_scope='occurrence') or the whole recurring group from that date onward (enrollment_scope='series'). Use for a group_occurrence match from find_waitlist_matches; ask 'só essa aula ou turma fixa?' unless the instructor already stated the scope. Never interpret this as cancelling the waitlist record. Requires explicit instructor confirmation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "waitlist_entry_id": {"type": "string", "description": "The waitlist_entry_id from find_waitlist_matches."},
+                    "recurring_slot_id": {"type": "string", "description": "The group's recurring_slot_id (source_id from the group_occurrence match)."},
+                    "occurrence_date": {"type": "string", "description": "ISO date of the matched group occurrence."},
+                    "enrollment_scope": {"type": "string", "enum": ["occurrence", "series"], "description": "Whether to add only to this dated occurrence or to the recurring group's permanent roster."},
+                },
+                "required": ["waitlist_entry_id", "recurring_slot_id", "occurrence_date", "enrollment_scope"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "propose_create_event",
             "description": "Propose creating an InstructorEvent — paid work with no client, not a class: refereeing a tournament, running a workshop or clinic. Use for things like 'amanha das 15 as 20h vou dar uma clinica, vou receber R$ 2000'. Requires explicit instructor confirmation.",
             "parameters": {
@@ -2657,6 +3192,7 @@ MUTATION_TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
     "propose_add_group_member": propose_add_group_member,
     "propose_create_group_slot": propose_create_group_slot,
     "propose_add_group_occurrence_participant": propose_add_group_occurrence_participant,
+    "propose_remove_group_occurrence_participant": propose_remove_group_occurrence_participant,
     "propose_remove_group_member": propose_remove_group_member,
     "propose_update_contact": propose_update_contact,
     "propose_create_appointment": propose_create_appointment,
@@ -2670,6 +3206,8 @@ MUTATION_TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
     "propose_remove_appointment_participant": propose_remove_appointment_participant,
     "propose_add_waitlist_entry": propose_add_waitlist_entry,
     "propose_remove_waitlist_entry": propose_remove_waitlist_entry,
+    "propose_fulfill_waitlist_with_appointment": propose_fulfill_waitlist_with_appointment,
+    "propose_fulfill_waitlist_with_group": propose_fulfill_waitlist_with_group,
     "propose_create_event": propose_create_event,
 }
 
@@ -2678,6 +3216,9 @@ candidates.MUTATION_EXECUTORS["propose_create_group_slot"] = _execute_create_gro
 candidates.MUTATION_EXECUTORS[
     "propose_add_group_occurrence_participant"
 ] = _execute_add_group_occurrence_participant
+candidates.MUTATION_EXECUTORS[
+    "propose_remove_group_occurrence_participant"
+] = _execute_remove_group_occurrence_participant
 candidates.MUTATION_EXECUTORS["propose_remove_group_member"] = _execute_remove_group_member
 candidates.MUTATION_EXECUTORS[
     "propose_add_appointment_participant"
@@ -2701,4 +3242,10 @@ candidates.MUTATION_EXECUTORS[
 ] = _execute_set_occurrence_class_format
 candidates.MUTATION_EXECUTORS["propose_add_waitlist_entry"] = _execute_add_waitlist_entry
 candidates.MUTATION_EXECUTORS["propose_remove_waitlist_entry"] = _execute_remove_waitlist_entry
+candidates.MUTATION_EXECUTORS[
+    "propose_fulfill_waitlist_with_appointment"
+] = _execute_fulfill_waitlist_with_appointment
+candidates.MUTATION_EXECUTORS[
+    "propose_fulfill_waitlist_with_group"
+] = _execute_fulfill_waitlist_with_group
 candidates.MUTATION_EXECUTORS["propose_create_event"] = _execute_create_event

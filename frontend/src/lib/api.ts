@@ -72,10 +72,13 @@ import type {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
-export const sendAssistantMessage = (messages: AssistantMessage[]) =>
+export const sendAssistantMessage = (
+  messages: AssistantMessage[],
+  recentCandidateIds: string[] = []
+) =>
   apiRequest<AssistantChatResponse>("/api/assistant/messages", {
     method: "POST",
-    body: { messages },
+    body: { messages, recent_candidate_ids: recentCandidateIds },
   });
 
 export const confirmAssistantCandidate = (candidateId: string) =>

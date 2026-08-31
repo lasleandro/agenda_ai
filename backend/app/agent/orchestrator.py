@@ -51,10 +51,18 @@ suficientes, diga isso claramente.
 - Para qualquer expressão de data relativa ("hoje", "amanhã", "terça que \
 vem", "de tarde" etc.), sempre chame a ferramenta resolve_date_phrase — \
 nunca calcule datas por conta própria.
+- Se resolve_date_phrase retornar recognized=false com ambiguity_reason/ \
+alternatives, faça UMA pergunta objetiva de esclarecimento listando as \
+alternativas retornadas (ex: "Você quer hoje, 28/08, ou a próxima sexta, \
+04/09?"). NUNCA escolha uma data por conta própria depois de um resultado \
+ambíguo ou não resolvido.
 - Expressões que cobrem uma semana inteira ("essa semana", "próxima \
 semana", "semana que vem") fazem resolve_date_phrase retornar date_from/ \
 date_to (segunda a domingo) em vez de date — nesse caso use date_from/ \
-date_to diretamente em get_schedule. find_instructor_openings só aceita uma \
+date_to diretamente em get_schedule. Expressões de mês ("esse mês", "mês \
+que vem") também retornam date_from/date_to; se o intervalo passar do limite \
+de 31 dias do get_schedule, divida em chamadas menores. \
+find_instructor_openings só aceita uma \
 data por chamada; se o professor pedir horários vagos da semana toda, chame \
 find_instructor_openings uma vez para cada dia do intervalo (no máximo 7 \
 dias) e combine os resultados.
@@ -153,6 +161,16 @@ use propose_add_group_member com o recurring_slot_id.
 use propose_add_group_occurrence_participant com o recurring_slot_id e a \
 occurrence_date. Isso não o torna participante permanente. Só use \
 propose_add_group_member quando o professor confirmar que a entrada é fixa.
+- Para REMOVER um aluno, distinga o escopo pelo campo enrollment_scope de \
+get_schedule e pela fala do professor: se enrollment_scope="occurrence" e o \
+pedido for "tira só dessa aula", use propose_remove_group_occurrence_participant. \
+Se enrollment_scope="series" e o aluno apenas faltar a uma data, use \
+propose_note_participant_absence. Se enrollment_scope="series" e o professor \
+disser que o aluno está saindo da turma fixa, use propose_remove_group_member. \
+Se o escopo não estiver claro, pergunte "É só nesta aula ou ela vai sair da \
+turma fixa?". NUNCA use propose_note_participant_absence para um convidado \
+avulso (enrollment_scope="occurrence") — remover esse convidado é a operação \
+correta de capacidade e presença.
 - Para localizar uma turma PARA ADICIONAR um aluno novo (ex.: "adicione \
 Fernanda na turma de sexta às 18h"), primeiro resolva Fernanda com \
 search_contacts e a data com resolve_date_phrase; depois use \
@@ -192,6 +210,19 @@ propor. Para remover alguém da fila, primeiro chame list_waitlist_entries \
 para obter o waitlist_entry_id real, nunca invente um. Fila de Espera é \
 sobre demanda de agendamento — não confundir com o status comercial \
 "Em espera" de um contato (assuntos financeiros, não de agenda).
+- Quando o professor perguntar se algum pedido da fila já cabe (ex: "achou \
+vaga pra alguém da fila?"), chame find_waitlist_matches. Um match \
+match_type="free_time" deve ir para propose_fulfill_waitlist_with_appointment \
+(com o place_id do match); um match match_type="group_occurrence" deve ir \
+para propose_fulfill_waitlist_with_group (com o source_id e occurrence_date \
+do match) — pergunte "só essa aula ou turma fixa?" antes de escolher \
+enrollment_scope quando o professor não tiver deixado claro. NUNCA faça \
+propose_create_appointment seguido de propose_remove_waitlist_entry para \
+atender um match: isso registra a demanda como cancelled, não fulfilled. \
+"Coloca ela nessa turma" sobre um match de fila NUNCA significa cancelar o \
+registro da fila. Só use propose_remove_waitlist_entry quando o professor \
+disser explicitamente que a pessoa desistiu (ex: "tira ela da fila, ela \
+desistiu").
 - Quando o professor mencionar um compromisso que NÃO é uma aula com um \
 cliente — arbitrar um torneio, dar um workshop ou clínica — use \
 propose_create_event, nunca propose_create_appointment (que exige um \
@@ -209,6 +240,15 @@ altere o cliente já resolvido, o formato de aula (individual/turma) ou a \
 semântica de recorrência já estabelecida. Se Carlos foi nomeado como cliente \
 e o formato era individual semanal, "pode seguir" mantém Carlos, individual \
 e semanal — não pode converter para turma vazia.
+- Quando a conversa incluir um bloco de "Contexto autoritativo de ações \
+recentes", trate-o como a fonte da verdade sobre o que JÁ foi executado ou \
+rejeitado. Pronomes e demonstrativos ("essa turma", "essa aula", "ele/ela", \
+"aquele horário") só podem usar um ID desse bloco se houver EXATAMENTE uma \
+entidade compatível. Uma proposta rejeitada ou falha NÃO estabelece entidade \
+agendada — diga que a entidade não foi criada e consulte novamente se o \
+professor quiser uma alternativa. Antes de um write, o ID confiável é apenas \
+referência; a mutação ainda revalida tenancy, existência, data, capacidade e \
+conflitos.
 - Responda sempre em português, de forma direta e concisa."""
 
 
@@ -234,6 +274,14 @@ class AgentResponse:
     pending_candidate: PendingCandidate | None = None
 
 
+@dataclass(frozen=True)
+class RecentActionContext:
+    status: str
+    tool_name: str
+    summary: str
+    entities: list[dict[str, str]] = field(default_factory=list)
+
+
 def _summarize_result(result: dict[str, Any]) -> str:
     serialized = json.dumps(result, ensure_ascii=False)
     if len(serialized) <= 200:
@@ -247,6 +295,20 @@ def _build_system_message(professional_id: uuid.UUID) -> dict[str, str]:
         "role": "system",
         "content": SYSTEM_PROMPT_TEMPLATE.format(tz=str(TIMEZONE), now=now),
     }
+
+
+def _format_recent_action_context(contexts: list[RecentActionContext]) -> str:
+    lines = ["Contexto autoritativo de ações recentes (não é prosa do usuário):"]
+    for context in contexts:
+        entity_bits = "; ".join(
+            f"{entity['entity_type']}_id={entity['entity_id']}" for entity in context.entities
+        )
+        parts = [f"status={context.status}", f"tool={context.tool_name}"]
+        if entity_bits:
+            parts.append(entity_bits)
+        parts.append(f"summary=\"{context.summary}\"")
+        lines.append("- " + "; ".join(parts))
+    return "\n".join(lines)
 
 
 def _execute_tool_call(
@@ -277,20 +339,28 @@ def run_agent_turn(
     actor_user_id: uuid.UUID,
     messages: list[dict[str, str]],
     channel: str = "web",
+    recent_action_context: list[RecentActionContext] | None = None,
 ) -> AgentResponse:
     """Run one instructor turn: `messages` is the prior conversation
     (role/content pairs, oldest first, no system message — this function
-    prepends its own) plus the latest user message."""
+    prepends its own) plus the latest user message. `recent_action_context`
+    is server-resolved, trusted confirmation outcome injected ahead of the
+    untrusted user history."""
     client = get_azure_client()
     model = get_model_name()
     correlation_id = uuid.uuid4()
     settings = get_assistant_settings(db, professional_id)
 
     windowed_messages = messages[-settings.memory_window_messages :]
-    conversation: list[dict[str, Any]] = [
-        _build_system_message(professional_id),
-        *windowed_messages,
-    ]
+    conversation: list[dict[str, Any]] = [_build_system_message(professional_id)]
+    if recent_action_context:
+        conversation.append(
+            {
+                "role": "system",
+                "content": _format_recent_action_context(recent_action_context),
+            }
+        )
+    conversation.extend(windowed_messages)
     trace: list[ToolCallTrace] = []
 
     for _ in range(MAX_TOOL_ITERATIONS):

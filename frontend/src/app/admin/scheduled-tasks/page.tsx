@@ -64,10 +64,10 @@ export default function ScheduledTasksPage() {
   }
   if (!authorized) return null;
 
-  return <div className="min-h-screen w-full bg-[var(--bg-page)] px-6 py-10"><div className="mx-auto max-w-6xl">
+  return <div className="min-h-dvh w-full bg-[var(--bg-page)] px-4 py-8 sm:px-6 sm:py-10"><div className="mx-auto max-w-6xl">
     <Link href="/admin/select-tenant" className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Tenants</Link>
     <div className="mb-7 flex items-start gap-2.5"><div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500 text-white"><CalendarClock className="h-5 w-5" /></div><div><h1 className="text-xl font-semibold tracking-tight text-foreground">Tarefas agendadas</h1><p className="text-sm text-muted-foreground">Configure, gerencie e acompanhe tarefas por tenant.</p></div></div>
-    <nav className="mb-6 flex gap-1 border-b border-border" aria-label="Tarefas agendadas">
+    <nav className="mb-6 flex gap-1 overflow-x-auto border-b border-border" aria-label="Tarefas agendadas">
       <TabButton active={tab === "create"} icon={PlusCircle} onClick={() => setParams({ tab: "create" })}>Criar tarefa</TabButton>
       <TabButton active={tab === "manage"} icon={ListFilter} onClick={() => setParams({ tab: "manage" })}>Gerenciar tarefas</TabButton>
       <TabButton active={tab === "logs"} icon={ScrollText} onClick={() => setParams({ tab: "logs" })}>Log de execução</TabButton>

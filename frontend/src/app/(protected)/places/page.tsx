@@ -89,20 +89,20 @@ export default function PlacesPage() {
         ))}
       </div>
 
-      <PlaceFormDialog
-        open={dialogOpen}
-        onOpenChange={(open) => {
-          setDialogOpen(open);
-        }}
-        place={null}
-        onSaved={(saved) => {
-          setPlaces((current) =>
-            current
-              ? [...current, saved]
-              : current
-          );
-        }}
-      />
+      {dialogOpen && (
+        <PlaceFormDialog
+          open
+          onOpenChange={setDialogOpen}
+          place={null}
+          onSaved={(saved) => {
+            setPlaces((current) =>
+              current
+                ? [...current, saved]
+                : current
+            );
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -30,7 +30,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen w-full">
+    <div className="flex min-h-dvh w-full">
       {/* Branding panel */}
       <div
         className="relative hidden w-1/2 flex-col justify-between overflow-hidden p-12 lg:flex"

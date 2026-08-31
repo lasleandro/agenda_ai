@@ -67,6 +67,8 @@ closing out completed schedule occurrences.
 
 ## Visual Design
 
+- **Visible time range**: The week and day grids display 07:00 through 22:00,
+  including appointments scheduled from 21:00 to 22:00.
 - **Place stays** (`slot_kind="availability"`): Light indigo background blocks
 - **Work-journey pauses**: Light slate background blocks labeled "Pausa";
   non-interactive and visually subordinate to appointments and classes

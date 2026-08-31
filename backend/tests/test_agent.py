@@ -153,6 +153,113 @@ def test_temporal_unrecognized_phrase_returns_unresolved() -> None:
     assert resolution.recognized is False
 
 
+def test_temporal_depois_de_amanha_does_not_match_amanha() -> None:
+    ref = date(2026, 8, 23)  # Sunday
+    assert temporal.resolve_temporal_phrase(
+        "depois de amanhã", reference_date=ref
+    ).resolved_date == date(2026, 8, 25)
+    assert temporal.resolve_temporal_phrase(
+        "amanhã", reference_date=ref
+    ).resolved_date == date(2026, 8, 24)
+    assert temporal.resolve_temporal_phrase(
+        "anteontem", reference_date=ref
+    ).resolved_date == date(2026, 8, 21)
+
+
+def test_temporal_proxima_weekday_is_strictly_future_on_same_weekday() -> None:
+    ref = date(2026, 8, 28)  # Friday
+    assert temporal.resolve_temporal_phrase(
+        "próxima sexta", reference_date=ref
+    ).resolved_date == date(2026, 9, 4)
+    assert temporal.resolve_temporal_phrase(
+        "sexta que vem", reference_date=ref
+    ).resolved_date == date(2026, 9, 4)
+
+
+def test_temporal_essa_weekday_may_resolve_to_today() -> None:
+    ref = date(2026, 8, 28)  # Friday
+    assert temporal.resolve_temporal_phrase(
+        "essa sexta", reference_date=ref
+    ).resolved_date == date(2026, 8, 28)
+    assert temporal.resolve_temporal_phrase(
+        "sexta", reference_date=ref
+    ).resolved_date == date(2026, 8, 28)
+
+
+def test_temporal_parses_brazilian_numeric_date() -> None:
+    ref = date(2026, 8, 23)
+    assert temporal.resolve_temporal_phrase(
+        "dia 28", reference_date=ref
+    ).resolved_date == date(2026, 8, 28)
+    assert temporal.resolve_temporal_phrase(
+        "28/08/2026", reference_date=ref
+    ).resolved_date == date(2026, 8, 28)
+    assert temporal.resolve_temporal_phrase(
+        "28/08", reference_date=ref
+    ).resolved_date == date(2026, 8, 28)
+    assert temporal.resolve_temporal_phrase(
+        "dia 28 de agosto", reference_date=ref
+    ).resolved_date == date(2026, 8, 28)
+
+
+def test_temporal_combines_relative_date_and_evening() -> None:
+    ref = date(2026, 8, 28)
+    resolution = temporal.resolve_temporal_phrase("na outra sexta à noite", reference_date=ref)
+    assert resolution.resolved_date == date(2026, 9, 4)
+    assert resolution.period == (time(18, 0), time(23, 59))
+
+
+def test_temporal_rejects_invalid_calendar_date() -> None:
+    ref = date(2026, 8, 23)
+    resolution = temporal.resolve_temporal_phrase("31/02/2026", reference_date=ref)
+    assert resolution.resolved_date is None
+    assert resolution.ambiguity_reason == "Data inválida"
+
+
+def test_temporal_parses_bounded_offsets() -> None:
+    ref = date(2026, 8, 23)
+    assert temporal.resolve_temporal_phrase(
+        "daqui a 2 dias", reference_date=ref
+    ).resolved_date == date(2026, 8, 25)
+    assert temporal.resolve_temporal_phrase(
+        "daqui a duas semanas", reference_date=ref
+    ).resolved_date == date(2026, 9, 6)
+
+
+def test_temporal_parses_month_ranges() -> None:
+    ref = date(2026, 8, 23)
+    this_month = temporal.resolve_temporal_phrase("esse mês", reference_date=ref)
+    assert this_month.resolved_date_from == date(2026, 8, 1)
+    assert this_month.resolved_date_to == date(2026, 8, 31)
+
+    next_month = temporal.resolve_temporal_phrase("mês que vem", reference_date=ref)
+    assert next_month.resolved_date_from == date(2026, 9, 1)
+    assert next_month.resolved_date_to == date(2026, 9, 30)
+
+
+def test_resolve_date_phrase_surfaces_ambiguity_without_guessing(monkeypatch) -> None:
+    import app.agent.tools as tools_module
+
+    class _FrozenDatetime:
+        @staticmethod
+        def now(tz=None):
+            return datetime(2026, 8, 28, 10, 0, tzinfo=TIMEZONE)
+
+    monkeypatch.setattr(tools_module, "datetime", _FrozenDatetime)
+
+    db = SessionLocal()
+    professional = _make_professional(db)
+    try:
+        result = tools.resolve_date_phrase(db, professional.id, phrase="dia 28")
+        assert result["recognized"] is False
+        assert result["ambiguity_reason"] is not None
+        assert result["alternatives"] == ["2026-08-28", "2026-09-28"]
+        assert result["date"] is None
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # Entity resolution
 # ---------------------------------------------------------------------------
@@ -310,7 +417,13 @@ def test_find_group_openings_returns_joinable_occurrence_not_free_time() -> None
                 "class_type": "group",
                 "is_exception": False,
                 "is_past": True,
-                "participants": [{"contact_id": str(member.id), "contact_name": "Aluno Grupo"}],
+                "participants": [
+                    {
+                        "contact_id": str(member.id),
+                        "contact_name": "Aluno Grupo",
+                        "enrollment_scope": "series",
+                    }
+                ],
                 "participant_count": 1,
                 "max_participants": 3,
                 "available_seats": 2,
@@ -993,6 +1106,25 @@ def test_orchestrator_prompt_contains_followup_inheritance_rule() -> None:
     assert "confirme" in SYSTEM_PROMPT_TEMPLATE
 
 
+def test_remove_participant_routing_rule_distinguishes_three_scopes() -> None:
+    from app.agent.mutations import MUTATION_TOOL_SPECS
+    from app.agent.orchestrator import SYSTEM_PROMPT_TEMPLATE
+
+    spec = next(
+        s for s in MUTATION_TOOL_SPECS
+        if s["function"]["name"] == "propose_remove_group_occurrence_participant"
+    )
+    description = spec["function"]["description"]
+    assert "propose_note_participant_absence" in description
+    assert "propose_remove_group_member" in description
+
+    assert "propose_remove_group_occurrence_participant" in SYSTEM_PROMPT_TEMPLATE
+    assert "propose_note_participant_absence" in SYSTEM_PROMPT_TEMPLATE
+    assert "propose_remove_group_member" in SYSTEM_PROMPT_TEMPLATE
+    assert "enrollment_scope" in SYSTEM_PROMPT_TEMPLATE
+    assert "É só nesta aula ou ela vai sair da turma fixa?" in SYSTEM_PROMPT_TEMPLATE
+
+
 def test_group_lookup_tool_specs_explain_new_student_flow() -> None:
     from app.agent.tools import TOOL_SPECS
 
@@ -1001,8 +1133,12 @@ def test_group_lookup_tool_specs_explain_new_student_flow() -> None:
         spec for spec in TOOL_SPECS if spec["function"]["name"] == "find_group_openings"
     )
 
+    description = openings_spec["function"]["description"].lower()
     assert "already" in groups_spec["function"]["description"].lower()
-    assert "new student" in openings_spec["function"]["description"].lower()
+    assert "vagas" in description or "vacancy" in description
+    assert "empty" in description
+    assert "free instructor time" in description
+    assert "recurring_slot_id" in description
     assert "do not use" in groups_spec["function"]["parameters"]["properties"][
         "member_contact_id"
     ]["description"].lower()

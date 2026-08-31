@@ -56,9 +56,11 @@ When no messages have been sent, the panel shows example suggestions:
 
 ### Conversation History
 
-- Messages persist per session (not across page reloads currently)
-- The `AppShell` `FloatingChat` component holds the `AssistantPanel` open
-  state and conversation state
+- Messages persist for the active signed-in session, including when the panel
+  is closed and reopened or the user navigates between protected pages. They
+  are not retained across a full browser reload.
+- `FloatingChat` keeps `AssistantPanel` mounted while it is closed, and the
+  protected `AppShell` keeps that component shared across page navigation.
 - Each message sent includes the full conversation history for context
 
 ### Tool Call Visibility
@@ -123,9 +125,10 @@ a real WhatsApp integration:
 ### Modes
 
 - **Mock mode:** Simulated two-way conversation. Type as either
-  "Cliente" or "Professor" and see the full conversation. Use **Novo cliente**
-  to generate an isolated mock customer, then select any generated customer to
-  resume its own conversation.
+  "Cliente" or "Professor" and see the full conversation. **Novo cliente**
+  generates an isolated mock customer with a name not already used by that
+  tenant, then lets you select any generated customer to resume its own
+  conversation.
 - **Live mode:** View real conversations from the database.
 
 ### Features

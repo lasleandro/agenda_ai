@@ -196,7 +196,11 @@ def _occurrence_to_dict(occurrence: scheduling.ScheduleOccurrence) -> dict[str, 
         # finished occurrences from upcoming ones on the current day.
         "is_past": occurrence.ends_at <= now,
         "participants": [
-            {"contact_id": str(p.contact_id), "contact_name": p.contact_name}
+            {
+                "contact_id": str(p.contact_id),
+                "contact_name": p.contact_name,
+                "enrollment_scope": p.enrollment_scope,
+            }
             for p in occurrence.participants
         ],
     }
@@ -375,11 +379,40 @@ def resolve_date_phrase(
     call this tool for temporal phrases instead."""
     reference_date = datetime.now(scheduling.TIMEZONE).date()
     resolution = temporal.resolve_temporal_phrase(phrase, reference_date=reference_date)
+
+    period_start = (
+        resolution.period[0].isoformat() if resolution.period else None
+    )
+    period_end = resolution.period[1].isoformat() if resolution.period else None
+
+    if resolution.ambiguity_reason is not None:
+        return {
+            "recognized": False,
+            "message": "A data é ambígua; pergunte ao professor qual opção ele quer.",
+            "ambiguity_reason": resolution.ambiguity_reason,
+            "alternatives": [
+                alternative.isoformat() for alternative in (resolution.alternatives or [])
+            ],
+            "date": None,
+            "date_from": None,
+            "date_to": None,
+            "period_start_time": period_start,
+            "period_end_time": period_end,
+        }
+
     if not resolution.recognized:
         return {
             "recognized": False,
             "message": "Phrase not recognized by the deterministic resolver; ask the instructor to clarify the date.",
+            "ambiguity_reason": None,
+            "alternatives": None,
+            "date": None,
+            "date_from": None,
+            "date_to": None,
+            "period_start_time": period_start,
+            "period_end_time": period_end,
         }
+
     return {
         "recognized": True,
         "date": resolution.resolved_date.isoformat() if resolution.resolved_date else None,
@@ -389,8 +422,10 @@ def resolve_date_phrase(
         "date_to": (
             resolution.resolved_date_to.isoformat() if resolution.resolved_date_to else None
         ),
-        "period_start_time": resolution.period[0].isoformat() if resolution.period else None,
-        "period_end_time": resolution.period[1].isoformat() if resolution.period else None,
+        "period_start_time": period_start,
+        "period_end_time": period_end,
+        "ambiguity_reason": None,
+        "alternatives": None,
     }
 
 
@@ -519,10 +554,11 @@ def find_waitlist_matches(
     """Check open Fila de Espera (waitlist) entries against current
     capacity and report which ones now have a matching opening — reuses the
     same free-capacity computation as find_instructor_openings. Read-only;
-    does not book or change anything. Use propose_create_appointment (or
-    propose_redeem_makeup_credit if the contact has a credit) to actually
-    book a match the instructor wants to fill, then
-    propose_remove_waitlist_entry to take the contact off the list."""
+    does not book or change anything. A free_time match must be fulfilled
+    with propose_fulfill_waitlist_with_appointment and a group_occurrence
+    match with propose_fulfill_waitlist_with_group — never via
+    propose_create_appointment followed by propose_remove_waitlist_entry,
+    which would record the demand as cancelled instead of fulfilled."""
     matches = waitlist.find_matches(
         db,
         professional_id,
@@ -598,7 +634,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "resolve_date_phrase",
-            "description": "Resolve a Portuguese relative-date phrase (e.g. 'hoje', 'amanhã de tarde', 'terça que vem') into an ISO date and, if present, a period-of-day time window. Always use this tool instead of computing dates yourself.",
+            "description": "Resolve a Portuguese date/time phrase into an ISO date, a date range, or a period-of-day window. Supports relative phrases ('hoje', 'amanhã', 'depois de amanhã', 'anteontem', 'essa sexta', 'próxima sexta', 'sexta que vem', 'daqui a duas semanas'), week/month ranges ('essa semana', 'próxima semana', 'esse mês', 'mês que vem'), and explicit Brazilian dates ('dia 28', 'dia 28 de agosto', '28/08', '28/08/2026'). Always use this tool instead of computing dates yourself. When ambiguous or unresolved, returns recognized=false with ambiguity_reason/alternatives and the instructor must be asked to clarify — never pick a date silently.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -763,7 +799,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "find_waitlist_matches",
-            "description": "Check open Fila de Espera (waitlist) entries against current capacity and report which ones now have a matching opening (e.g. after a cancellation). Read-only — does not book anything. Follow up with propose_create_appointment to book a match, then propose_remove_waitlist_entry.",
+            "description": "Check open Fila de Espera (waitlist) entries against current capacity and report which ones now have a matching opening (e.g. after a cancellation). Read-only — does not book anything. Route a free_time match to propose_fulfill_waitlist_with_appointment and a group_occurrence match to propose_fulfill_waitlist_with_group (ask 'só essa aula ou turma fixa?' for group matches unless already explicit). Never book-then-cancel: propose_remove_waitlist_entry means the demand was abandoned (status=cancelled), not fulfilled.",
             "parameters": {
                 "type": "object",
                 "properties": {

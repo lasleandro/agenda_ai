@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { BrazilianDatePicker } from "@/components/ui/brazilian-date-picker";
 import { createRecurringSlots, deleteRecurringSlot, updateRecurringSlot } from "@/lib/api";
 import { DAY_LABELS } from "@/lib/ontology-utils";
 import type { Place, RecurringSlot } from "@/lib/types";
@@ -185,6 +186,8 @@ export function RecurringSlotFormDialog({
               <Input
                 id="slot-start"
                 type="time"
+                lang="pt-BR"
+                step={60}
                 value={startTime}
                 onChange={(e) => setStartTime(e.target.value)}
               />
@@ -194,6 +197,8 @@ export function RecurringSlotFormDialog({
               <Input
                 id="slot-end"
                 type="time"
+                lang="pt-BR"
+                step={60}
                 value={endTime}
                 onChange={(e) => setEndTime(e.target.value)}
               />
@@ -205,22 +210,20 @@ export function RecurringSlotFormDialog({
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="slot-valid-from">De</Label>
-                <Input
+                <BrazilianDatePicker
                   id="slot-valid-from"
-                  type="date"
                   value={validFrom}
                   max={validUntil || undefined}
-                  onChange={(e) => setValidFrom(e.target.value)}
+                  onChange={setValidFrom}
                 />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="slot-valid-until">Até</Label>
-                <Input
+                <BrazilianDatePicker
                   id="slot-valid-until"
-                  type="date"
                   value={validUntil}
                   min={validFrom || undefined}
-                  onChange={(e) => setValidUntil(e.target.value)}
+                  onChange={setValidUntil}
                 />
               </div>
             </div>

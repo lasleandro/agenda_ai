@@ -18,7 +18,7 @@ def _random_phone() -> str:
     return f"+55119{uuid.uuid4().hex[:8]}"
 
 
-def test_create_mock_customer_creates_selectable_tenant_conversation() -> None:
+def test_create_mock_customer_creates_selectable_tenant_conversation_with_unique_name() -> None:
     db = SessionLocal()
     professional = Professional(name="Mock tenant", assistant_phone=_random_phone())
     other_professional = Professional(name="Other tenant", assistant_phone=_random_phone())
@@ -27,8 +27,14 @@ def test_create_mock_customer_creates_selectable_tenant_conversation() -> None:
 
     try:
         conversation_id, customer_phone, customer_name = _create_mock_customer(db, professional.id)
+        second_conversation_id, second_customer_phone, second_customer_name = _create_mock_customer(
+            db, professional.id
+        )
 
         assert customer_name.endswith("(mock)")
+        assert second_customer_name.endswith("(mock)")
+        assert customer_name != second_customer_name
+        assert customer_phone != second_customer_phone
         selected_phone, selected_name = _get_mock_customer(
             db, professional.id, customer_phone
         )
@@ -37,6 +43,14 @@ def test_create_mock_customer_creates_selectable_tenant_conversation() -> None:
         assert (
             db.query(Conversation)
             .filter(Conversation.id == conversation_id, Conversation.professional_id == professional.id)
+            .one()
+        )
+        assert (
+            db.query(Conversation)
+            .filter(
+                Conversation.id == second_conversation_id,
+                Conversation.professional_id == professional.id,
+            )
             .one()
         )
 

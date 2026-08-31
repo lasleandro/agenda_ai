@@ -721,8 +721,8 @@ export function WeekCalendar() {
       {activeTab === "agenda" && (
         <>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="w-full text-sm text-muted-foreground sm:w-auto">
                 {eventCountLabel}
               </span>
               <button
@@ -797,7 +797,7 @@ export function WeekCalendar() {
               height="100%"
               allDaySlot={false}
               slotMinTime="07:00:00"
-              slotMaxTime="21:00:00"
+              slotMaxTime="22:00:00"
               nowIndicator
               selectable
               selectMirror

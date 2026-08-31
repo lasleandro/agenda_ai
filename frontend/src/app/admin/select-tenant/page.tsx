@@ -206,7 +206,7 @@ export default function SelectTenantPage() {
   }
 
   return (
-    <div className="min-h-screen w-full bg-[var(--bg-page)] px-6 py-12">
+    <div className="min-h-dvh w-full bg-[var(--bg-page)] px-4 py-8 sm:px-6 sm:py-12">
       <div className="mx-auto max-w-5xl">
         <div className="mb-8 flex items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500 text-sm font-bold text-white">
@@ -424,7 +424,7 @@ function TenantSettingsDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="tenant-settings-title"
-        className="flex h-[38rem] max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl"
+        className="flex h-[38rem] max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl"
       >
         <header className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
@@ -495,7 +495,7 @@ function TenantSettingsDialog({
                 >
                   <span
                     className={cn(
-                      "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
+                      "absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
                       tenant.commercial_financials_enabled ? "translate-x-5" : "translate-x-0.5"
                     )}
                   />
@@ -587,7 +587,7 @@ function SettingsTabButton({
 
 function SummaryRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[10rem_1fr] gap-4 px-4 py-3">
+    <div className="grid gap-1 px-4 py-3 sm:grid-cols-[10rem_1fr] sm:gap-4">
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="text-foreground">{children}</dd>
     </div>

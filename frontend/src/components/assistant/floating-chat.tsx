@@ -6,12 +6,17 @@ import { AssistantPanel } from "./assistant-panel";
 
 const DRAG_THRESHOLD = 5;
 const PANEL_GAP = 12;
+const VIEWPORT_MARGIN = 16;
 
 // Every Dialog/Popover/Select/DropdownMenu in this app renders at z-50 —
 // the assistant must always sit above any of them, on any screen.
 const FLOAT_Z = "z-[70]";
 
 type ButtonRect = { top: number; left: number; width: number; height: number };
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
 
 export function FloatingChat() {
   const [open, setOpen] = useState(false);
@@ -33,7 +38,18 @@ export function FloatingChat() {
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
       if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-      const nextPos = { x: e.clientX - offset.current.x, y: e.clientY - offset.current.y };
+      const nextPos = {
+        x: clamp(
+          e.clientX - offset.current.x,
+          VIEWPORT_MARGIN,
+          window.innerWidth - size.current.width - VIEWPORT_MARGIN
+        ),
+        y: clamp(
+          e.clientY - offset.current.y,
+          VIEWPORT_MARGIN,
+          window.innerHeight - size.current.height - VIEWPORT_MARGIN
+        ),
+      };
       setPos(nextPos);
       if (open) {
         // Panel is open — keep it glued to the ball as it's dragged,
@@ -73,20 +89,31 @@ export function FloatingChat() {
 
   const isDragged = pos.x !== 0 || pos.y !== 0;
   const buttonStyle: React.CSSProperties = isDragged
-    ? { left: pos.x, top: pos.y }
+    ? { left: pos.x, top: pos.y, right: "auto", bottom: "auto" }
     : {};
 
   let panelStyle: React.CSSProperties | undefined;
   if (buttonRect) {
+    const panelWidth = Math.min(384, window.innerWidth - VIEWPORT_MARGIN * 2);
+    const panelHeight = Math.min(600, window.innerHeight - VIEWPORT_MARGIN * 2);
     const openUpward = buttonRect.top > window.innerHeight / 2;
-    const openLeftward = buttonRect.left > window.innerWidth / 2;
+    const desiredTop = openUpward
+      ? buttonRect.top - panelHeight - PANEL_GAP
+      : buttonRect.top + buttonRect.height + PANEL_GAP;
+    const desiredLeft = buttonRect.left > window.innerWidth / 2
+      ? buttonRect.left + buttonRect.width - panelWidth
+      : buttonRect.left;
     panelStyle = {
-      ...(openUpward
-        ? { bottom: window.innerHeight - buttonRect.top + PANEL_GAP }
-        : { top: buttonRect.top + buttonRect.height + PANEL_GAP }),
-      ...(openLeftward
-        ? { right: window.innerWidth - (buttonRect.left + buttonRect.width) }
-        : { left: buttonRect.left }),
+      top: clamp(
+        desiredTop,
+        VIEWPORT_MARGIN,
+        window.innerHeight - panelHeight - VIEWPORT_MARGIN
+      ),
+      left: clamp(
+        desiredLeft,
+        VIEWPORT_MARGIN,
+        window.innerWidth - panelWidth - VIEWPORT_MARGIN
+      ),
     };
   }
 
@@ -97,7 +124,7 @@ export function FloatingChat() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        className={`fixed bottom-6 right-6 ${FLOAT_Z} flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-transform hover:scale-110 cursor-grab active:cursor-grabbing touch-none select-none`}
+        className={`floating-chat-launcher fixed ${FLOAT_Z} flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-transform hover:scale-110 cursor-grab active:cursor-grabbing touch-none select-none`}
         style={buttonStyle}
         title="Assistente"
       >
@@ -110,14 +137,13 @@ export function FloatingChat() {
         />
       </button>
 
-      {open && (
-        <div
-          className={`fixed ${FLOAT_Z} flex h-[600px] max-h-[calc(100vh-8rem)] w-96 flex-col overflow-hidden rounded-lg border bg-background shadow-2xl`}
-          style={panelStyle}
-        >
-          <AssistantPanel onClose={() => setOpen(false)} />
-        </div>
-      )}
+      <div
+        hidden={!open}
+        className={`fixed ${FLOAT_Z} flex h-[min(600px,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-96 flex-col overflow-hidden rounded-lg border bg-background shadow-2xl`}
+        style={panelStyle}
+      >
+        <AssistantPanel onClose={() => setOpen(false)} />
+      </div>
     </>
   );
 }

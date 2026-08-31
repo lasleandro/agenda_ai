@@ -1007,6 +1007,12 @@ export interface AssistantMessage {
   content: string;
 }
 
+/** Mirror of the FastAPI AssistantChatRequest schema. */
+export interface AssistantChatRequest {
+  messages: AssistantMessage[];
+  recent_candidate_ids?: string[];
+}
+
 /** Mirror of the FastAPI ToolCallTraceDetail schema. */
 export interface AssistantToolCallTrace {
   name: string;

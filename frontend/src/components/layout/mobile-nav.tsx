@@ -12,7 +12,7 @@ export function MobileNav() {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
       <div
-        className="md:hidden h-14 flex items-center gap-2 px-4 shrink-0 border-b border-[var(--border-subtle)]"
+        className="mobile-nav md:hidden flex items-center gap-2 px-4 shrink-0 border-b border-[var(--border-subtle)]"
       >
         <DialogPrimitive.Trigger
           render={
@@ -29,7 +29,7 @@ export function MobileNav() {
       <DialogPrimitive.Portal>
         <DialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-black/30 duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0" />
         <DialogPrimitive.Popup
-          className="fixed inset-y-0 left-0 z-50 flex h-full w-72 max-w-[80vw] flex-col outline-none duration-150 data-open:animate-in data-open:slide-in-from-left data-closed:animate-out data-closed:slide-out-to-left"
+          className="fixed inset-y-0 left-0 z-50 flex h-dvh w-72 max-w-[80vw] flex-col outline-none duration-150 data-open:animate-in data-open:slide-in-from-left data-closed:animate-out data-closed:slide-out-to-left"
           style={{ background: "var(--sidebar-bg)" }}
         >
           <DialogPrimitive.Title className="sr-only">Menu</DialogPrimitive.Title>

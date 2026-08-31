@@ -953,6 +953,291 @@ def test_propose_add_group_occurrence_participant_keeps_roster_permanent() -> No
         db.close()
 
 
+def test_propose_remove_group_occurrence_participant_full_cycle() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        permanent = _make_contact(db, professional.id, "Leandro")
+        guest = _make_contact(db, professional.id, "Fernanda")
+        occurrence_date = MONDAY + timedelta(days=7)
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            slot_kind="class",
+            class_type="group",
+            max_participants=3,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        db.add(slot)
+        db.flush()
+        db.add(RecurringSlotParticipant(recurring_slot_id=slot.id, contact_id=permanent.id))
+        db.add(
+            RecurringSlotOccurrenceParticipant(
+                professional_id=professional.id,
+                recurring_slot_id=slot.id,
+                contact_id=guest.id,
+                occurrence_date=occurrence_date,
+            )
+        )
+        db.commit()
+
+        result = mutations.propose_remove_group_occurrence_participant(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            contact_id=str(guest.id),
+            recurring_slot_id=str(slot.id),
+            occurrence_date=occurrence_date.isoformat(),
+        )
+        assert result["requires_confirmation"] is True
+        assert "Fernanda" in result["preview_text"]
+
+        assert candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        ).ok is True
+
+        assert (
+            db.query(RecurringSlotOccurrenceParticipant)
+            .filter(
+                RecurringSlotOccurrenceParticipant.recurring_slot_id == slot.id,
+                RecurringSlotOccurrenceParticipant.contact_id == guest.id,
+                RecurringSlotOccurrenceParticipant.occurrence_date == occurrence_date,
+            )
+            .count()
+            == 0
+        )
+        assert (
+            db.query(RecurringSlotParticipant)
+            .filter(RecurringSlotParticipant.recurring_slot_id == slot.id)
+            .count()
+            == 1
+        )
+
+        event = (
+            db.query(OperationalEvent)
+            .filter(
+                OperationalEvent.event_type == "schedule.participant.removed",
+                OperationalEvent.entity_id == slot.id,
+            )
+            .one()
+        )
+        assert event.payload["scope"] == "occurrence"
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_propose_remove_group_occurrence_participant_keeps_other_dates() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        guest = _make_contact(db, professional.id, "Fernanda")
+        date_a = MONDAY + timedelta(days=7)
+        date_b = MONDAY + timedelta(days=14)
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            slot_kind="class",
+            class_type="group",
+            max_participants=3,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        db.add(slot)
+        db.flush()
+        for occurrence_date in (date_a, date_b):
+            db.add(
+                RecurringSlotOccurrenceParticipant(
+                    professional_id=professional.id,
+                    recurring_slot_id=slot.id,
+                    contact_id=guest.id,
+                    occurrence_date=occurrence_date,
+                )
+            )
+        db.commit()
+
+        result = mutations.propose_remove_group_occurrence_participant(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            contact_id=str(guest.id),
+            recurring_slot_id=str(slot.id),
+            occurrence_date=date_a.isoformat(),
+        )
+        assert candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        ).ok is True
+
+        remaining = (
+            db.query(RecurringSlotOccurrenceParticipant.occurrence_date)
+            .filter(
+                RecurringSlotOccurrenceParticipant.recurring_slot_id == slot.id,
+                RecurringSlotOccurrenceParticipant.contact_id == guest.id,
+            )
+            .all()
+        )
+        assert [row.occurrence_date for row in remaining] == [date_b]
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_propose_remove_group_occurrence_participant_rejects_permanent_member() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        permanent = _make_contact(db, professional.id, "Leandro")
+        occurrence_date = MONDAY + timedelta(days=7)
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            slot_kind="class",
+            class_type="group",
+            max_participants=3,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        db.add(slot)
+        db.flush()
+        db.add(RecurringSlotParticipant(recurring_slot_id=slot.id, contact_id=permanent.id))
+        db.commit()
+
+        result = mutations.propose_remove_group_occurrence_participant(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            contact_id=str(permanent.id),
+            recurring_slot_id=str(slot.id),
+            occurrence_date=occurrence_date.isoformat(),
+        )
+        assert "error" in result
+        assert "propose_note_participant_absence" in result["error"]
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_propose_remove_group_occurrence_participant_is_tenant_scoped() -> None:
+    db = SessionLocal()
+    professional_a, user_a = _make_tenant(db)
+    professional_b, user_b = _make_tenant(db)
+    try:
+        place = _make_place(db, professional_a.id)
+        guest = _make_contact(db, professional_a.id, "Fernanda")
+        occurrence_date = MONDAY + timedelta(days=7)
+        slot = RecurringSlot(
+            professional_id=professional_a.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            slot_kind="class",
+            class_type="group",
+            max_participants=3,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        db.add(slot)
+        db.flush()
+        db.add(
+            RecurringSlotOccurrenceParticipant(
+                professional_id=professional_a.id,
+                recurring_slot_id=slot.id,
+                contact_id=guest.id,
+                occurrence_date=occurrence_date,
+            )
+        )
+        db.commit()
+
+        result = mutations.propose_remove_group_occurrence_participant(
+            db,
+            professional_b.id,
+            user_b.id,
+            uuid.uuid4(),
+            contact_id=str(guest.id),
+            recurring_slot_id=str(slot.id),
+            occurrence_date=occurrence_date.isoformat(),
+        )
+        assert "error" in result
+    finally:
+        _cleanup(db, professionals=[professional_a, professional_b], users=[user_a, user_b])
+        db.close()
+
+
+def test_propose_remove_group_occurrence_participant_confirm_fails_after_concurrent_removal() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        guest = _make_contact(db, professional.id, "Fernanda")
+        occurrence_date = MONDAY + timedelta(days=7)
+        slot = RecurringSlot(
+            professional_id=professional.id,
+            place_id=place.id,
+            day_of_week=MONDAY.weekday(),
+            start_time=time(18, 0),
+            end_time=time(19, 0),
+            slot_kind="class",
+            class_type="group",
+            max_participants=3,
+            recurrence_type="weekly",
+            valid_from=MONDAY,
+        )
+        db.add(slot)
+        db.flush()
+        db.add(
+            RecurringSlotOccurrenceParticipant(
+                professional_id=professional.id,
+                recurring_slot_id=slot.id,
+                contact_id=guest.id,
+                occurrence_date=occurrence_date,
+            )
+        )
+        db.commit()
+
+        result = mutations.propose_remove_group_occurrence_participant(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            contact_id=str(guest.id),
+            recurring_slot_id=str(slot.id),
+            occurrence_date=occurrence_date.isoformat(),
+        )
+        assert result["requires_confirmation"] is True
+
+        db.query(RecurringSlotOccurrenceParticipant).filter(
+            RecurringSlotOccurrenceParticipant.recurring_slot_id == slot.id,
+            RecurringSlotOccurrenceParticipant.contact_id == guest.id,
+            RecurringSlotOccurrenceParticipant.occurrence_date == occurrence_date,
+        ).delete(synchronize_session=False)
+        db.commit()
+
+        exec_result = candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        )
+        assert exec_result.ok is False
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
 def test_propose_create_group_slot_creates_empty_recurring_class() -> None:
     db = SessionLocal()
     professional, user = _make_tenant(db)

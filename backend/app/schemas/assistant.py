@@ -15,6 +15,7 @@ class AssistantMessage(BaseModel):
 
 class AssistantChatRequest(BaseModel):
     messages: list[AssistantMessage] = Field(min_length=1, max_length=40)
+    recent_candidate_ids: list[uuid.UUID] = Field(default_factory=list, max_length=5)
 
 
 class ToolCallTraceDetail(BaseModel):

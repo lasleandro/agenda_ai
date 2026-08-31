@@ -108,6 +108,26 @@ def _get_mock_customer(
     return contact.phone, contact.display_name
 
 
+def _next_mock_customer_name(db: Session, professional_id: uuid.UUID) -> str:
+    existing_names = {
+        display_name
+        for (display_name,) in db.query(Contact.display_name)
+        .filter(Contact.professional_id == professional_id)
+        .all()
+    }
+    for name in MOCK_CUSTOMER_NAMES:
+        display_name = f"{name} (mock)"
+        if display_name not in existing_names:
+            return display_name
+
+    index = 1
+    while True:
+        display_name = f"Cliente simulado {index} (mock)"
+        if display_name not in existing_names:
+            return display_name
+        index += 1
+
+
 def _create_mock_customer(db: Session, professional_id: uuid.UUID) -> tuple[str, str, str]:
     """Create one tenant-scoped customer and its empty mock conversation."""
     while True:
@@ -115,12 +135,12 @@ def _create_mock_customer(db: Session, professional_id: uuid.UUID) -> tuple[str,
         if not db.query(Contact.id).filter(Contact.phone == phone).first():
             break
 
-    name = MOCK_CUSTOMER_NAMES[uuid.uuid4().int % len(MOCK_CUSTOMER_NAMES)]
+    display_name = _next_mock_customer_name(db, professional_id)
     contact = Contact(
         professional_id=professional_id,
         phone=phone,
-        display_name=f"{name} (mock)",
-        normalized_name=normalize_name(name),
+        display_name=display_name,
+        normalized_name=normalize_name(display_name),
     )
     db.add(contact)
     db.flush()

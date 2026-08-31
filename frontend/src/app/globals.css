@@ -18,8 +18,13 @@
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
   --border: #e4e4e7;
+  --border-subtle: #e4e4e7;
   --input: #e4e4e7;
   --ring: #4f46e5;
+  --radius-md: 0.5rem;
+
+  --bg-page: #f5f6fa;
+  --bg-surface: #ffffff;
 
   /* Sidebar — consumed directly via inline styles (var(--sidebar-*)),
      not through Tailwind's color utility system. */
@@ -72,8 +77,11 @@
     --destructive: #f87171;
     --destructive-foreground: #0a0a0a;
     --border: #27272a;
+    --border-subtle: #27272a;
     --input: #27272a;
     --ring: #6366f1;
+    --bg-page: #0a0a0a;
+    --bg-surface: #18181b;
 
     --sidebar-bg: #09090b;
     --sidebar-text: #a1a1aa;
@@ -86,6 +94,16 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+.mobile-nav {
+  height: calc(3.5rem + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+}
+
+.floating-chat-launcher {
+  right: max(1.5rem, env(safe-area-inset-right));
+  bottom: max(1.5rem, env(safe-area-inset-bottom));
 }
 
 .fc .agenda-place-slot {

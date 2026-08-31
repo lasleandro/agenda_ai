@@ -192,6 +192,10 @@ class ScheduleParticipant:
     contact_id: uuid.UUID
     contact_name: str
     hourly_rate_cents: int | None
+    # "series" for a permanent RecurringSlotParticipant, "occurrence" for a
+    # dated RecurringSlotOccurrenceParticipant, None for appointment
+    # participants (they have no separate enrollment scope today).
+    enrollment_scope: str | None = None
 
 
 @dataclass(frozen=True)
@@ -267,6 +271,7 @@ def _appointment_occurrences(
                     contact_id=extra_contact.id,
                     contact_name=extra_contact.display_name,
                     hourly_rate_cents=extra_contact.hourly_rate_cents,
+                    enrollment_scope=None,
                 )
             )
 
@@ -309,6 +314,7 @@ def _appointment_occurrences(
                             contact_id=contact.id,
                             contact_name=contact.display_name,
                             hourly_rate_cents=contact.hourly_rate_cents,
+                            enrollment_scope=None,
                         ),
                         *extra_participants_by_appointment.get(appointment.id, []),
                     ],
@@ -358,6 +364,7 @@ def _slot_occurrences(
                 contact_id=contact.id,
                 contact_name=contact.display_name,
                 hourly_rate_cents=contact.hourly_rate_cents,
+                enrollment_scope="series",
             )
         )
 
@@ -391,6 +398,7 @@ def _slot_occurrences(
                     contact_id=contact.id,
                     contact_name=contact.display_name,
                     hourly_rate_cents=contact.hourly_rate_cents,
+                    enrollment_scope="occurrence",
                 )
             )
 

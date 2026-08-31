@@ -49,6 +49,7 @@ EVENT_TYPES = (
     "schedule.participant.absence_noted",
     "waitlist.entry.added",
     "waitlist.entry.cancelled",
+    "waitlist.entry.fulfilled",
     "instructor_event.created",
 )
 

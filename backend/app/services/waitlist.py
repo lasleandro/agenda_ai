@@ -108,6 +108,46 @@ def get_entry(
     )
 
 
+def lock_entry(
+    db: Session, professional_id: uuid.UUID, entry_id: uuid.UUID
+) -> WaitlistEntry | None:
+    """Tenant-scoped row lock for atomic fulfillment — the caller must already
+    be inside a transaction (the instructor-agent candidate executor is)."""
+    return (
+        db.query(WaitlistEntry)
+        .filter(WaitlistEntry.id == entry_id, WaitlistEntry.professional_id == professional_id)
+        .with_for_update()
+        .first()
+    )
+
+
+def entry_fits_free_time(
+    db: Session,
+    professional_id: uuid.UUID,
+    entry: WaitlistEntry,
+    place_id: uuid.UUID,
+) -> bool:
+    """Whether the entry's exact desired time still fits a genuinely free
+    range at the given place — reused by the appointment fulfillment executor
+    so it never books a waitlist demand into a slot that is no longer free."""
+    place = (
+        db.query(Place)
+        .filter(Place.id == place_id, Place.professional_id == professional_id)
+        .first()
+    )
+    if place is None:
+        return False
+    free_by_place = financial_capacity.compute_free_ranges_by_place(
+        db, professional_id, entry.desired_date, [place]
+    )
+    desired_start = entry.desired_start_time.hour * 60 + entry.desired_start_time.minute
+    desired_end = entry.desired_end_time.hour * 60 + entry.desired_end_time.minute
+    return any(
+        start <= desired_start and end >= desired_end
+        for start, end in free_by_place.get(place_id, [])
+    )
+
+
 def cancel_entry(db: Session, professional_id: uuid.UUID, entry_id: uuid.UUID) -> WaitlistEntry:
     entry = get_entry(db, professional_id, entry_id)
     if entry is None:
@@ -122,12 +162,20 @@ def cancel_entry(db: Session, professional_id: uuid.UUID, entry_id: uuid.UUID) -
 
 
 def fulfill_entry(
-    db: Session, professional_id: uuid.UUID, entry_id: uuid.UUID, appointment_id: uuid.UUID
+    db: Session,
+    professional_id: uuid.UUID,
+    entry_id: uuid.UUID,
+    appointment_id: uuid.UUID,
+    *,
+    commit: bool = True,
 ) -> WaitlistEntry:
     """Mark an entry fulfilled once its contact has actually been booked —
     e.g. the Agenda screen's "click the ghost card to book" shortcut
     (waitlist roadmap v0.1, Phase 3). Distinct from cancel_entry: fulfilled
-    means the demand was met, not abandoned."""
+    means the demand was met, not abandoned.
+
+    `commit=False` lets the instructor-agent candidate executor keep this
+    state transition inside its own transaction."""
     entry = get_entry(db, professional_id, entry_id)
     if entry is None:
         raise WaitlistValidationError("Waitlist entry not found")
@@ -135,11 +183,14 @@ def fulfill_entry(
         raise WaitlistValidationError(f"Entry is not fulfillable (status={entry.status})")
     entry.status = "fulfilled"
     entry.fulfilled_appointment_id = appointment_id
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return entry
 
 
-def fulfill_group_occurrence(
+def load_group_fulfillment(
     db: Session,
     professional_id: uuid.UUID,
     *,
@@ -147,12 +198,7 @@ def fulfill_group_occurrence(
     recurring_slot_id: uuid.UUID,
     occurrence_date: date,
     enrollment_scope: str,
-) -> WaitlistEntry:
-    """Enroll a waiting contact in one compatible recurring group occurrence.
-
-    The caller must choose occurrence or series explicitly. The caller owns
-    the commit so enrollment and audit logging stay atomic.
-    """
+) -> tuple[WaitlistEntry, RecurringSlot, object, Contact]:
     entry = get_entry(db, professional_id, entry_id)
     if entry is None:
         raise WaitlistValidationError("Waitlist entry not found")
@@ -191,6 +237,8 @@ def fulfill_group_occurrence(
         or occurrence.ends_at.time() < entry.desired_end_time
     ):
         raise WaitlistValidationError("Group occurrence does not cover the requested time")
+    if occurrence.available_seats <= 0:
+        raise WaitlistValidationError("Group occurrence has no available seats")
 
     contact = (
         db.query(Contact)
@@ -199,6 +247,31 @@ def fulfill_group_occurrence(
     )
     if contact is None:
         raise WaitlistValidationError("Waitlist contact not found")
+    return entry, slot, occurrence, contact
+
+
+def fulfill_group_occurrence(
+    db: Session,
+    professional_id: uuid.UUID,
+    *,
+    entry_id: uuid.UUID,
+    recurring_slot_id: uuid.UUID,
+    occurrence_date: date,
+    enrollment_scope: str,
+) -> WaitlistEntry:
+    """Enroll a waiting contact in one compatible recurring group occurrence.
+
+    The caller must choose occurrence or series explicitly. The caller owns
+    the commit so enrollment and audit logging stay atomic.
+    """
+    entry, slot, _occurrence, contact = load_group_fulfillment(
+        db,
+        professional_id,
+        entry_id=entry_id,
+        recurring_slot_id=recurring_slot_id,
+        occurrence_date=occurrence_date,
+        enrollment_scope=enrollment_scope,
+    )
     if enrollment_scope == "occurrence":
         recurring_slot_occurrence_participants.add_participant(
             db, professional_id, slot, contact, occurrence_date

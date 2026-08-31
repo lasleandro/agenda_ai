@@ -228,9 +228,9 @@ export default function PlaceDetailPage() {
         ))}
       </div>
 
-      {place && (
+      {place && editPlaceOpen && (
         <PlaceFormDialog
-          open={editPlaceOpen}
+          open
           onOpenChange={setEditPlaceOpen}
           place={place}
           onSaved={(saved) => setPlace(saved)}

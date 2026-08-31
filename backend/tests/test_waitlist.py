@@ -8,6 +8,7 @@ from datetime import date, time, timedelta
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import pytest
 from fastapi.testclient import TestClient
 
 from datetime import datetime
@@ -18,6 +19,8 @@ from app.database import SessionLocal
 from app.main import app
 from app.models import (
     Appointment,
+    AppointmentParticipant,
+    AppointmentTransition,
     Contact,
     OperationalEvent,
     OperatorActionCandidate,
@@ -113,6 +116,20 @@ def _cleanup(db, *, professionals: list[Professional]) -> None:
         RecurringSlotParticipant.recurring_slot_id.in_(
             db.query(RecurringSlot.id).filter(
                 RecurringSlot.professional_id.in_(professional_ids)
+            )
+        )
+    ).delete(synchronize_session=False)
+    db.query(AppointmentTransition).filter(
+        AppointmentTransition.appointment_id.in_(
+            db.query(Appointment.id).filter(
+                Appointment.professional_id.in_(professional_ids)
+            )
+        )
+    ).delete(synchronize_session=False)
+    db.query(AppointmentParticipant).filter(
+        AppointmentParticipant.appointment_id.in_(
+            db.query(Appointment.id).filter(
+                Appointment.professional_id.in_(professional_ids)
             )
         )
     ).delete(synchronize_session=False)
@@ -1054,3 +1071,446 @@ def test_cancelling_an_occurrence_auto_matches_and_surfaces_in_summary() -> None
     finally:
         _cleanup(db, professionals=[professional])
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — atomic waitlist fulfillment
+# ---------------------------------------------------------------------------
+
+def _make_group_for_fulfillment(
+    db, professional_id, place_id, *, occurrence_date, max_participants: int = 2
+) -> RecurringSlot:
+    group = RecurringSlot(
+        professional_id=professional_id,
+        place_id=place_id,
+        day_of_week=occurrence_date.weekday(),
+        start_time=time(10, 0),
+        end_time=time(11, 0),
+        slot_kind="class",
+        class_type="group",
+        max_participants=max_participants,
+        recurrence_type="weekly",
+        valid_from=occurrence_date,
+    )
+    db.add(group)
+    db.commit()
+    return group
+
+
+def test_propose_fulfill_waitlist_with_appointment_creates_and_links_one_appointment() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    place = _make_place(db, professional.id)
+    contact = _make_contact(db, professional.id, "Ana")
+    correlation_id = uuid.uuid4()
+    try:
+        _give_capacity(db, professional.id, place.id)
+        entry = waitlist_service.create_entry(
+            db,
+            professional.id,
+            contact_id=contact.id,
+            place_id=place.id,
+            desired_date=MONDAY,
+            desired_start_time=time(10, 0),
+            desired_end_time=time(11, 0),
+        )
+
+        result = mutations.propose_fulfill_waitlist_with_appointment(
+            db,
+            professional.id,
+            user.id,
+            correlation_id,
+            waitlist_entry_id=str(entry.id),
+            place_id=str(place.id),
+        )
+        assert result["requires_confirmation"] is True
+        assert "Ana" in result["preview_text"]
+        assert "fila de espera" in result["preview_text"].lower()
+
+        exec_result = candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        )
+        assert exec_result.ok is True
+
+        db.refresh(entry)
+        assert entry.status == "fulfilled"
+        assert entry.fulfilled_appointment_id is not None
+
+        appointment = (
+            db.query(Appointment)
+            .filter(Appointment.id == entry.fulfilled_appointment_id)
+            .one()
+        )
+        assert appointment.contact_id == contact.id
+        assert appointment.place_id == place.id
+        assert appointment.source == "assistant"
+        assert appointment.class_type == "individual"
+        assert (
+            db.query(Appointment).filter(Appointment.professional_id == professional.id).count()
+            == 1
+        )
+
+        event_types = [
+            e.event_type
+            for e in db.query(OperationalEvent)
+            .filter(
+                OperationalEvent.operator_action_candidate_id
+                == uuid.UUID(result["candidate_id"])
+            )
+            .all()
+        ]
+        assert "schedule.appointment.created" in event_types
+        assert "waitlist.entry.fulfilled" in event_types
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_propose_fulfill_waitlist_with_appointment_conflict_race_leaves_entry_open() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    place = _make_place(db, professional.id)
+    contact = _make_contact(db, professional.id, "Ana")
+    other = _make_contact(db, professional.id, "Outro Aluno")
+    try:
+        _give_capacity(db, professional.id, place.id)
+        entry = waitlist_service.create_entry(
+            db,
+            professional.id,
+            contact_id=contact.id,
+            place_id=place.id,
+            desired_date=MONDAY,
+            desired_start_time=time(10, 0),
+            desired_end_time=time(11, 0),
+        )
+
+        result = mutations.propose_fulfill_waitlist_with_appointment(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            waitlist_entry_id=str(entry.id),
+            place_id=str(place.id),
+        )
+        assert result["requires_confirmation"] is True
+
+        booked_start = datetime.combine(MONDAY, time(10, 0), tzinfo=TIMEZONE)
+        db.add(
+            Appointment(
+                professional_id=professional.id,
+                contact_id=other.id,
+                place_id=place.id,
+                service="Aula",
+                start_at=booked_start,
+                end_at=booked_start + timedelta(hours=1),
+                status="confirmed",
+                source="dashboard",
+            )
+        )
+        db.commit()
+
+        exec_result = candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        )
+        assert exec_result.ok is False
+
+        db.refresh(entry)
+        assert entry.status == "open"
+        assert entry.fulfilled_appointment_id is None
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_propose_fulfill_waitlist_with_group_occurrence_scope() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    place = _make_place(db, professional.id)
+    contact = _make_contact(db, professional.id, "Ana")
+    try:
+        entry = waitlist_service.create_entry(
+            db,
+            professional.id,
+            contact_id=contact.id,
+            place_id=place.id,
+            desired_date=MONDAY,
+            desired_start_time=time(10, 0),
+            desired_end_time=time(11, 0),
+            class_type="group",
+        )
+        group = _make_group_for_fulfillment(db, professional.id, place.id, occurrence_date=MONDAY)
+
+        result = mutations.propose_fulfill_waitlist_with_group(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            waitlist_entry_id=str(entry.id),
+            recurring_slot_id=str(group.id),
+            occurrence_date=MONDAY.isoformat(),
+            enrollment_scope="occurrence",
+        )
+        assert result["requires_confirmation"] is True
+        assert "somente" in result["preview_text"].lower()
+
+        assert candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        ).ok is True
+
+        db.refresh(entry)
+        assert entry.status == "fulfilled"
+        assert entry.fulfilled_recurring_slot_id == group.id
+        assert entry.fulfilled_occurrence_date == MONDAY
+        assert entry.fulfillment_scope == "occurrence"
+        assert (
+            db.query(RecurringSlotOccurrenceParticipant)
+            .filter(
+                RecurringSlotOccurrenceParticipant.recurring_slot_id == group.id,
+                RecurringSlotOccurrenceParticipant.contact_id == contact.id,
+                RecurringSlotOccurrenceParticipant.occurrence_date == MONDAY,
+            )
+            .count()
+            == 1
+        )
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_propose_fulfill_waitlist_with_group_series_scope() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    place = _make_place(db, professional.id)
+    contact = _make_contact(db, professional.id, "Ana")
+    try:
+        entry = waitlist_service.create_entry(
+            db,
+            professional.id,
+            contact_id=contact.id,
+            place_id=place.id,
+            desired_date=MONDAY,
+            desired_start_time=time(10, 0),
+            desired_end_time=time(11, 0),
+            class_type="group",
+        )
+        group = _make_group_for_fulfillment(db, professional.id, place.id, occurrence_date=MONDAY)
+
+        result = mutations.propose_fulfill_waitlist_with_group(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            waitlist_entry_id=str(entry.id),
+            recurring_slot_id=str(group.id),
+            occurrence_date=MONDAY.isoformat(),
+            enrollment_scope="series",
+        )
+        assert result["requires_confirmation"] is True
+        assert "turma fixa" in result["preview_text"].lower()
+
+        assert candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        ).ok is True
+
+        db.refresh(entry)
+        assert entry.status == "fulfilled"
+        assert entry.fulfillment_scope == "series"
+        assert (
+            db.query(RecurringSlotParticipant)
+            .filter(
+                RecurringSlotParticipant.recurring_slot_id == group.id,
+                RecurringSlotParticipant.contact_id == contact.id,
+            )
+            .count()
+            == 1
+        )
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_propose_fulfill_waitlist_with_group_capacity_race_leaves_entry_open() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    place = _make_place(db, professional.id)
+    contact = _make_contact(db, professional.id, "Ana")
+    filler = _make_contact(db, professional.id, "Aluno A")
+    try:
+        entry = waitlist_service.create_entry(
+            db,
+            professional.id,
+            contact_id=contact.id,
+            place_id=place.id,
+            desired_date=MONDAY,
+            desired_start_time=time(10, 0),
+            desired_end_time=time(11, 0),
+            class_type="group",
+        )
+        group = _make_group_for_fulfillment(
+            db, professional.id, place.id, occurrence_date=MONDAY, max_participants=1
+        )
+
+        result = mutations.propose_fulfill_waitlist_with_group(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            waitlist_entry_id=str(entry.id),
+            recurring_slot_id=str(group.id),
+            occurrence_date=MONDAY.isoformat(),
+            enrollment_scope="occurrence",
+        )
+        assert result["requires_confirmation"] is True
+
+        # The single seat is taken by another participant after the proposal.
+        db.add(
+            RecurringSlotOccurrenceParticipant(
+                professional_id=professional.id,
+                recurring_slot_id=group.id,
+                contact_id=filler.id,
+                occurrence_date=MONDAY,
+            )
+        )
+        db.commit()
+
+        exec_result = candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        )
+        assert exec_result.ok is False
+
+        db.refresh(entry)
+        assert entry.status == "open"
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_propose_fulfill_waitlist_rejects_cancelled_entry() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    place = _make_place(db, professional.id)
+    contact = _make_contact(db, professional.id, "Ana")
+    try:
+        entry = waitlist_service.create_entry(
+            db,
+            professional.id,
+            contact_id=contact.id,
+            place_id=place.id,
+            desired_date=MONDAY,
+            desired_start_time=time(10, 0),
+            desired_end_time=time(11, 0),
+        )
+        waitlist_service.cancel_entry(db, professional.id, entry.id)
+
+        result = mutations.propose_fulfill_waitlist_with_appointment(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            waitlist_entry_id=str(entry.id),
+            place_id=str(place.id),
+        )
+        assert "error" in result
+        assert "not fulfillable" in result["error"]
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_propose_fulfill_waitlist_tools_are_tenant_scoped() -> None:
+    db = SessionLocal()
+    pro_a, user_a = _make_tenant(db)
+    pro_b, user_b = _make_tenant(db)
+    try:
+        place_a = _make_place(db, pro_a.id)
+        contact_a = _make_contact(db, pro_a.id, "Ana")
+        entry = waitlist_service.create_entry(
+            db,
+            pro_a.id,
+            contact_id=contact_a.id,
+            place_id=place_a.id,
+            desired_date=MONDAY,
+            desired_start_time=time(10, 0),
+            desired_end_time=time(11, 0),
+        )
+
+        appointment_result = mutations.propose_fulfill_waitlist_with_appointment(
+            db,
+            pro_b.id,
+            user_b.id,
+            uuid.uuid4(),
+            waitlist_entry_id=str(entry.id),
+            place_id=str(place_a.id),
+        )
+        assert "error" in appointment_result
+
+        group = _make_group_for_fulfillment(db, pro_a.id, place_a.id, occurrence_date=MONDAY)
+        group_result = mutations.propose_fulfill_waitlist_with_group(
+            db,
+            pro_b.id,
+            user_b.id,
+            uuid.uuid4(),
+            waitlist_entry_id=str(entry.id),
+            recurring_slot_id=str(group.id),
+            occurrence_date=MONDAY.isoformat(),
+            enrollment_scope="occurrence",
+        )
+        assert "error" in group_result
+    finally:
+        _cleanup(db, professionals=[pro_a, pro_b])
+        db.close()
+
+
+def test_waitlist_fulfillment_confirm_retry_is_idempotent() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    place = _make_place(db, professional.id)
+    contact = _make_contact(db, professional.id, "Ana")
+    try:
+        _give_capacity(db, professional.id, place.id)
+        entry = waitlist_service.create_entry(
+            db,
+            professional.id,
+            contact_id=contact.id,
+            place_id=place.id,
+            desired_date=MONDAY,
+            desired_start_time=time(10, 0),
+            desired_end_time=time(11, 0),
+        )
+        result = mutations.propose_fulfill_waitlist_with_appointment(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            waitlist_entry_id=str(entry.id),
+            place_id=str(place.id),
+        )
+        assert candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        ).ok is True
+
+        with pytest.raises(candidates.CandidateNotPendingError):
+            candidates.confirm(
+                db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+            )
+
+        assert (
+            db.query(Appointment).filter(Appointment.professional_id == professional.id).count()
+            == 1
+        )
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_waitlist_tool_descriptions_do_not_recommend_cancellation_after_booking() -> None:
+    match_spec = next(
+        spec
+        for spec in tools.TOOL_SPECS
+        if spec["function"]["name"] == "find_waitlist_matches"
+    )
+    description = match_spec["function"]["description"]
+    assert "propose_fulfill_waitlist_with_appointment" in description
+    assert "propose_fulfill_waitlist_with_group" in description
+    assert "cancelled" in description
+    assert "propose_create_appointment" not in description

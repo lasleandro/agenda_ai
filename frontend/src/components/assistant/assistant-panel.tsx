@@ -76,8 +76,18 @@ export function AssistantPanel({
     setError(null);
     setSending(true);
     try {
+      const recentCandidateIds = nextMessages
+        .filter(
+          (message) =>
+            message.pendingCandidate &&
+            message.candidateStatus &&
+            ["executed", "rejected", "failed"].includes(message.candidateStatus)
+        )
+        .map((message) => message.pendingCandidate!.id)
+        .slice(-5);
       const response = await sendAssistantMessage(
-        nextMessages.map(({ role, content }) => ({ role, content }))
+        nextMessages.map(({ role, content }) => ({ role, content })),
+        recentCandidateIds
       );
       setMessages((current) => [
         ...current,

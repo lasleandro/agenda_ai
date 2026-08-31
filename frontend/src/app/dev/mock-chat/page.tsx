@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   createMockCustomer,
@@ -12,7 +13,7 @@ import {
   resetMockConversation,
   sendMockMessage,
 } from "@/lib/api";
-import { fetchSession, login } from "@/lib/auth";
+import { fetchSession } from "@/lib/auth";
 import type { CandidateDetail, ConversationDetail, ConversationSummary, MockCustomer } from "@/lib/types";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
@@ -24,66 +25,36 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 const POLL_INTERVAL_MS = 1500;
 
 export default function MockChatPage() {
+  const router = useRouter();
   const [authChecked, setAuthChecked] = useState(false);
   const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
+    let active = true;
     fetchSession().then((user) => {
+      if (!active) return;
+      if (!user) {
+        router.replace("/login");
+        return;
+      }
+      if (user.role === "platform_admin" && !user.professional_id) {
+        router.replace("/admin/select-tenant");
+        return;
+      }
       setAuthed(!!user);
       setAuthChecked(true);
     });
-  }, []);
+    return () => {
+      active = false;
+    };
+  }, [router]);
 
   if (!authChecked) return null;
-  if (!authed) return <LoginGate onLoggedIn={() => setAuthed(true)} />;
+  if (!authed) return null;
   return (
     <AppShell>
       <MockChat />
     </AppShell>
-  );
-}
-
-function LoginGate({ onLoggedIn }: { onLoggedIn: () => void }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    try {
-      await login(username, password);
-      onLoggedIn();
-    } catch {
-      setError("Usuário ou senha inválidos");
-    }
-  }
-
-  return (
-    <div className="flex flex-1 items-center justify-center p-8">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Login necessário</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-            <Input
-              placeholder="Usuário"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
-            <Input
-              type="password"
-              placeholder="Senha"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button type="submit">Entrar</Button>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
   );
 }
 

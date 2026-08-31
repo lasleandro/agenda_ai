@@ -84,7 +84,16 @@ export function ScenarioResults({
             individual de uma hora.
           </CardDescription>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
+        <CardContent>
+          <p className="mb-2 text-xs text-muted-foreground sm:hidden">
+            Deslize para ver toda a comparação.
+          </p>
+          <div
+            className="overflow-x-auto"
+            role="region"
+            aria-label="Comparação entre formatos de aula"
+            tabIndex={0}
+          >
           <table className="w-full min-w-[620px] text-sm">
             <thead>
               <tr className="border-b text-left text-xs text-muted-foreground">
@@ -125,6 +134,7 @@ export function ScenarioResults({
               ))}
             </tbody>
           </table>
+          </div>
         </CardContent>
       </Card>
     </div>

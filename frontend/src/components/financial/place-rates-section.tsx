@@ -93,7 +93,15 @@ function RatesEditor({
 
   return (
     <>
-      <div className="overflow-x-auto rounded-lg border border-border">
+      <p className="text-xs text-muted-foreground sm:hidden">
+        Deslize para ver todos os valores.
+      </p>
+      <div
+        className="overflow-x-auto rounded-lg border border-border"
+        role="region"
+        aria-label="Valores por período e formato"
+        tabIndex={0}
+      >
         <div className="grid min-w-[620px] grid-cols-[160px_repeat(4,1fr)]">
           <div className="flex items-center gap-1.5 bg-muted/40 p-3 text-xs font-medium">
             Período
