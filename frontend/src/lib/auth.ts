@@ -113,13 +113,14 @@ export async function fetchSession(): Promise<SessionUser | null> {
 }
 
 export async function impersonate(
-  professionalId: string
+  professionalId: string,
+  { confirm = false }: { confirm?: boolean } = {}
 ): Promise<{ professional_id: string; professional_name: string }> {
   const res = await fetch(`${API_BASE}/api/auth/impersonate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify({ professional_id: professionalId }),
+    body: JSON.stringify({ professional_id: professionalId, confirm }),
   });
   if (!res.ok) {
     throw new AuthRequestError("Failed to impersonate tenant", res.status);

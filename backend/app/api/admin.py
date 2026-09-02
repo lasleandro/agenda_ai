@@ -43,13 +43,21 @@ from app.schemas.api import (
     TenantFeatureUpdate,
     TenantListResponse,
     TenantScheduledTaskSummary,
+    TenantStatusChangeRequest,
+    TenantStatusState,
     TenantSummary,
+)
+from app.models.professional import (
+    TENANT_STATUS_ACTIVE,
+    TENANT_STATUS_ARCHIVED,
+    TENANT_STATUS_SUSPENDED,
 )
 from app.services import assistant_settings as assistant_settings_service
 from app.services import daily_agenda
 from app.services.operational_events import record_event
 from app.services import scheduled_tasks as scheduled_tasks_service
 from app.services.tenant_features import COMMERCIAL_FINANCIALS, set_tenant_feature
+from app.services.tenant_lifecycle import TenantLifecycleError, set_tenant_status
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -126,6 +134,7 @@ def _tenant_task_summary(
 
 @router.get("/tenants", response_model=TenantListResponse)
 def list_tenants(
+    include_archived: bool = Query(default=False),
     db: Session = Depends(get_db),
     _admin: dict = Depends(require_platform_admin),
 ):
@@ -155,7 +164,12 @@ def list_tenants(
         row.professional_id: row for row in db.query(AssistantSettings).all()
     }
 
-    professionals = db.query(Professional).order_by(Professional.name).all()
+    professionals_query = db.query(Professional).order_by(Professional.name)
+    if not include_archived:
+        professionals_query = professionals_query.filter(
+            Professional.status != TENANT_STATUS_ARCHIVED
+        )
+    professionals = professionals_query.all()
     tasks_by_professional = {
         task.professional_id: task
         for task in db.query(ScheduledTask)
@@ -192,6 +206,8 @@ def list_tenants(
                 if p.id in assistant_settings_by_tenant
                 else assistant_settings_service.DEFAULT_MEMORY_WINDOW_MESSAGES
             ),
+            status_changed_at=p.status_changed_at,
+            status_reason=p.status_reason,
             scheduled_task=_tenant_task_summary(
                 tasks_by_professional.get(p.id),
                 p,
@@ -204,6 +220,107 @@ def list_tenants(
         for p in professionals
     ]
     return TenantListResponse(tenants=tenants)
+
+
+def _apply_tenant_status(
+    *,
+    professional_id: uuid.UUID,
+    target_status: str,
+    reason: str | None,
+    request: Request,
+    db: Session,
+    admin: dict,
+) -> TenantStatusState:
+    try:
+        professional = set_tenant_status(
+            db,
+            professional_id=professional_id,
+            target_status=target_status,
+            admin_user_id=uuid.UUID(admin["user_id"]),
+            reason=reason,
+            source_ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Tenant not found") from exc
+    except TenantLifecycleError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return TenantStatusState(
+        status=professional.status,
+        status_changed_at=professional.status_changed_at,
+        status_reason=professional.status_reason,
+    )
+
+
+@router.post("/tenants/{professional_id}/suspend", response_model=TenantStatusState)
+def suspend_tenant(
+    professional_id: uuid.UUID,
+    body: TenantStatusChangeRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_platform_admin),
+):
+    return _apply_tenant_status(
+        professional_id=professional_id,
+        target_status=TENANT_STATUS_SUSPENDED,
+        reason=body.reason,
+        request=request,
+        db=db,
+        admin=admin,
+    )
+
+
+@router.post("/tenants/{professional_id}/reactivate", response_model=TenantStatusState)
+def reactivate_tenant(
+    professional_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_platform_admin),
+):
+    return _apply_tenant_status(
+        professional_id=professional_id,
+        target_status=TENANT_STATUS_ACTIVE,
+        reason=None,
+        request=request,
+        db=db,
+        admin=admin,
+    )
+
+
+@router.post("/tenants/{professional_id}/archive", response_model=TenantStatusState)
+def archive_tenant(
+    professional_id: uuid.UUID,
+    body: TenantStatusChangeRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_platform_admin),
+):
+    return _apply_tenant_status(
+        professional_id=professional_id,
+        target_status=TENANT_STATUS_ARCHIVED,
+        reason=body.reason,
+        request=request,
+        db=db,
+        admin=admin,
+    )
+
+
+@router.post("/tenants/{professional_id}/restore", response_model=TenantStatusState)
+def restore_tenant(
+    professional_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_platform_admin),
+):
+    return _apply_tenant_status(
+        professional_id=professional_id,
+        target_status=TENANT_STATUS_ACTIVE,
+        reason=None,
+        request=request,
+        db=db,
+        admin=admin,
+    )
 
 
 @router.get("/scheduled-tasks", response_model=ScheduledTaskAdminListResponse)

@@ -64,6 +64,7 @@ import type {
   InstructorEventListResponse,
   TenantListResponse,
   TenantFeatureState,
+  TenantStatusState,
   WaitlistEntry,
   WaitlistEntryInput,
   WaitlistEntryListResponse,
@@ -244,8 +245,11 @@ export async function processConversationNow(
 // Platform admin — tenant tile grid (multi-tenancy roadmap Phase D)
 // ---------------------------------------------------------------------------
 
-export async function fetchTenants(): Promise<TenantListResponse> {
-  const res = await fetch(`${API_BASE}/api/admin/tenants`, {
+export async function fetchTenants(
+  { includeArchived = false }: { includeArchived?: boolean } = {}
+): Promise<TenantListResponse> {
+  const query = includeArchived ? "?include_archived=true" : "";
+  const res = await fetch(`${API_BASE}/api/admin/tenants${query}`, {
     credentials: "include",
   });
   if (!res.ok) {
@@ -253,6 +257,21 @@ export async function fetchTenants(): Promise<TenantListResponse> {
   }
   return res.json();
 }
+
+const tenantLifecycleAction = (tenantId: string, action: string, reason?: string) =>
+  apiRequest<TenantStatusState>(`/api/admin/tenants/${tenantId}/${action}`, {
+    method: "POST",
+    body: action === "suspend" || action === "archive" ? { reason: reason ?? null } : {},
+  });
+
+export const suspendTenant = (tenantId: string, reason?: string) =>
+  tenantLifecycleAction(tenantId, "suspend", reason);
+export const reactivateTenant = (tenantId: string) =>
+  tenantLifecycleAction(tenantId, "reactivate");
+export const archiveTenant = (tenantId: string, reason?: string) =>
+  tenantLifecycleAction(tenantId, "archive", reason);
+export const restoreTenant = (tenantId: string) =>
+  tenantLifecycleAction(tenantId, "restore");
 
 export const updateCommercialFinancials = (tenantId: string, enabled: boolean) =>
   apiRequest<TenantFeatureState>(

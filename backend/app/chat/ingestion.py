@@ -27,9 +27,17 @@ logger = logging.getLogger(__name__)
 
 def get_professional_by_phone(db: Session, assistant_phone: str) -> Professional | None:
     """Resolve the tenant owning a WhatsApp business number. Returns None if
-    no Professional is provisioned for it — callers must not silently
-    default to another tenant."""
-    return db.query(Professional).filter(Professional.assistant_phone == assistant_phone).first()
+    no active Professional is provisioned for it — a suspended/archived
+    tenant is treated as unknown, and callers must not silently default to
+    another tenant."""
+    return (
+        db.query(Professional)
+        .filter(
+            Professional.assistant_phone == assistant_phone,
+            Professional.status == "active",
+        )
+        .first()
+    )
 
 
 def get_or_create_contact(db: Session, professional_id, phone: str, name: str | None) -> Contact:

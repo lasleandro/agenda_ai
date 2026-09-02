@@ -10,6 +10,9 @@
 - **Phase D** — `platform_admin` role, `POST /api/auth/impersonate` and `POST /api/auth/stop-impersonating` ([auth.py](../../backend/app/api/auth.py)), `GET /api/admin/tenants` ([admin.py](../../backend/app/api/admin.py)), `ImpersonationLog` audit table (migration `c2b8e91a4d70`, same migration as `User`). Frontend: [`/admin/select-tenant`](../../frontend/src/app/admin/select-tenant/page.tsx) tile grid, `AuthGuard` force-redirects a `platform_admin` with no `professional_id` there, sidebar shows an "impersonando" role label + a "Trocar tenant" link back to the grid while impersonating. Verified live end-to-end via curl (login → 403 without impersonation → tenant list → impersonate → scoped calendar read → stop-impersonating) and via the running dev server, in addition to the automated tests.
 - **Phase E** — `sidebar.tsx` now fetches the real session (`professional_name`, role, impersonating) instead of the hardcoded "João Silva" placeholder; `types.ts`/`api.ts` gained `TenantSummary`/`fetchTenants`.
 
+**Follow-on work (separate roadmaps):**
+- Tenant lifecycle (suspend / archive) is [its own roadmap](tenant_suspend_and_archive_roadmap_v0.1_2026-09-01.md), implemented 2026-09-01 — reversible full-lockout states on `Professional.status` reachable from the admin **Configurações** modal, with login/impersonation/ingestion enforcement and audit. No hard delete.
+
 **Deviations from the original plan, and why:**
 - Login uses **email**, not username — matches the `User.email` field naturally and is what the `geoedge_municipios` reference pattern uses too; the original doc didn't specify either way.
 - Added `stop-impersonating` (not in the original phase text) so the sidebar's "Trocar tenant" link has a clean way back to an unscoped admin session, matching `geoedge_municipios`'s non-one-way impersonation requirement.

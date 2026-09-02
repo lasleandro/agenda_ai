@@ -25,12 +25,14 @@ A passive WhatsApp Business copilot that converts conversations between independ
 - [Simulador financeiro](docs/pages/simulador_financeiro.md) — dedicated what-if workspace for capacity, mix, and temporary price scenarios.
 - [Configurações (Tenant Definitions)](docs/pages/minhas_regras.md) — operational rules for every tenant plus financial definitions when the commercial_financials module is enabled.
 - [Chat / AI Assistant](docs/pages/chat.md) — floating chat panel accessible from every page, with tool call transparency and action confirmation.
+- [Admin — Tenant lifecycle](docs/pages/admin_tenant_lifecycle.md) — platform-admin suspend / reactivate / archive / restore for a tenant, from the Configurações modal, with full-lockout enforcement and audit.
 
 ### Roadmaps & Guides
 
 - [Project brief](docs/whatsapp_schedule_copilot_poc_project_brief_v0.1.md) — product thesis, architecture, domain model, and design principles. Source of truth for *why* decisions were made.
 - [Implementation roadmap](docs/ROADMAPS/whatsapp_schedule_copilot_poc_roadmap_v0.1.md) — phased, actionable plan for *what to build next*. Start here.
 - [Multi-tenancy roadmap](docs/ROADMAPS/multi_tenancy_roadmap_v0.1_2026-08-04.md) — assessment and phased plan for onboarding a second instructor (tenant isolation, auth, admin impersonation).
+- [Tenant suspend & archive roadmap](docs/ROADMAPS/tenant_suspend_and_archive_roadmap_v0.1_2026-09-01.md) — implemented: reversible platform-admin suspend/archive for a tenant with full-lockout enforcement (login, impersonation, ingestion, tasks), audit, and force-logout; no hard delete.
 - [Authentication, email verification, and password reset roadmap](docs/ROADMAPS/auth_email_verification_password_reset_roadmap_v0.1_2026-09-01.md) — Agenda/HoraH assessment and production path for verified manual onboarding, provider-neutral GoDaddy SMTP, password strength feedback, secure recovery, and session hardening.
 - [Authentication email configuration](docs/auth_email_configuration.md) — environment contract, GoDaddy SMTP profiles, worker operation, and production release checks.
 - [Operational ontology & AI agent roadmap](docs/ROADMAPS/operational_ontology_and_agent_roadmap_v0.2_2026-08-05.md) — historical roadmap; its place-stay semantics are superseded by the roadmap below.

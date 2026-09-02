@@ -51,6 +51,11 @@ EVENT_TYPES = (
     "waitlist.entry.cancelled",
     "waitlist.entry.fulfilled",
     "instructor_event.created",
+    "tenant.suspended",
+    "tenant.reactivated",
+    "tenant.archived",
+    "tenant.restored",
+    "tenant.impersonated_while_inactive",
 )
 
 

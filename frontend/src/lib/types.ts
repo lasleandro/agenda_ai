@@ -258,7 +258,16 @@ export interface TenantSummary {
   commercial_financials_enabled: boolean;
   assistant_temperature: number;
   assistant_memory_window_messages: number;
+  status_changed_at: string | null;
+  status_reason: string | null;
   scheduled_task: TenantScheduledTaskSummary;
+}
+
+/** Mirror of the FastAPI TenantStatusState schema. */
+export interface TenantStatusState {
+  status: string;
+  status_changed_at: string | null;
+  status_reason: string | null;
 }
 
 export interface TenantScheduledTaskSummary {

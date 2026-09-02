@@ -1,21 +1,40 @@
 """
 Professional model (Section 10.1).
 
-Represents the instructor / service provider.
+Represents the instructor / service provider — the tenant root.
 """
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 
+# Tenant lifecycle states (tenant suspend & archive roadmap v0.1).
+#   active   — normal operation.
+#   suspended — reversible full lockout (login, ingestion, tasks blocked).
+#   archived  — reversible soft delete; hidden from the default admin grid.
+TENANT_STATUS_ACTIVE = "active"
+TENANT_STATUS_SUSPENDED = "suspended"
+TENANT_STATUS_ARCHIVED = "archived"
+TENANT_STATUSES = (
+    TENANT_STATUS_ACTIVE,
+    TENANT_STATUS_SUSPENDED,
+    TENANT_STATUS_ARCHIVED,
+)
+
 
 class Professional(Base):
     __tablename__ = "professionals"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'suspended', 'archived')",
+            name="ck_professionals_status",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -31,7 +50,14 @@ class Professional(Base):
     # observer watches.
     agent_phone: Mapped[str | None] = mapped_column(String(50))
     daily_summary_time: Mapped[str] = mapped_column(String(5), default="07:00")
-    status: Mapped[str] = mapped_column(String(50), default="active")
+    status: Mapped[str] = mapped_column(String(50), default=TENANT_STATUS_ACTIVE)
+    # Lifecycle audit stamped on the row itself so the common "why is this
+    # tenant off?" question does not require an event-ledger join.
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status_changed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    status_reason: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

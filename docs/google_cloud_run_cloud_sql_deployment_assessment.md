@@ -480,8 +480,82 @@ Do not estimate the bill from request volume alone. The likely recurring cost dr
 
 Start with small measured allocations, low maximum instances, queue dispatch limits, log exclusions for noisy low-value records, and budget alerts. Each platform instance allocates one CPU/memory envelope shared by Next.js and FastAPI, so size it for their aggregate peak and observe per-process use inside the container. Do not reduce reliability by removing the durable webhook handoff; if cost must be cut, first evaluate a single-zone database, zero-minimum platform, and right-sized worker resources with the corresponding availability trade-offs documented.
 
+A quantified estimate is in Section 14.
+
 ## 13. Final assessment
 
 Cloud Run plus Cloud SQL is the recommended Google Cloud equivalent of the team's Azure pattern. For the MVP, Next.js and FastAPI should be built into one `agenda-platform` image and run as two supervised processes in one Cloud Run container: Next.js is the ingress and same-origin proxy, while FastAPI remains loopback-only. This consolidation does not require a domain rewrite, PostgreSQL features are compatible, and the three existing pollers have a suitable managed home in generally available Cloud Run worker pools.
 
 The webhook remains intentionally separate from the unified platform. Its HTTPS exposure and signature base are good, but synchronous private-agent work, incomplete event-path deduplication, a two-commit ingestion gap, and delete-before-process worker semantics make retries unsafe. The recommended ingress → Cloud Tasks → private processor design is the central MVP deployment adaptation. After that reliability work and the P0 production controls are verified in staging, the remaining deployment is a conventional managed-container, managed-PostgreSQL rollout.
+
+## 14. Estimated monthly cost (Google Cloud only)
+
+This estimate covers **Google Cloud infrastructure only**. It excludes WhatsApp/YCloud provider fees, Azure OpenAI token consumption (which stays on the Azure invoice unless the model provider is also migrated — see Section 15), one-time data-migration effort, applicable Brazilian taxes, and any free-trial or committed-use discount credits.
+
+### Basis and caveats
+
+- **Prices are public list prices** for region `southamerica-east1` (São Paulo), which carries a Tier-2 premium of roughly 40–50% over `us-central1`. Treat every figure as an order-of-magnitude planning number, not a quote.
+- The estimate assumes **MVP traffic**: one active tenant plus onboarding, low request volume, WhatsApp bursts measured in messages-per-minute rather than per-second, and a database well under 10 GB.
+- Cloud Run **worker pools bill for allocated CPU and memory continuously** (no scale-to-zero). This, together with Cloud SQL and the load balancer, forms the fixed monthly floor regardless of traffic.
+- The final numbers are outputs of the Phase 4 staging load tests in Section 10, not constants to copy forward.
+- **Worker count correction:** Sections 1–3 describe three pollers. The repository currently runs **four** continuous workers — `candidate_worker`, `passive_escalation_worker`, `scheduled_task_worker`, and `email_delivery_worker` (authentication email delivery). The worker pool must host four containers, and the connection-budget math in Section 6 must use four worker processes, not three.
+
+### Recurring cost by component
+
+| Component | Configuration assumed | Lean MVP (USD/mo) | Standard production (USD/mo) |
+|---|---|---:|---:|
+| Cloud SQL for PostgreSQL | Lean: `db-custom-1-3840` (1 vCPU / 3.75 GB), single-zone, ~20–30 GB SSD, automated backups + PITR. Standard: same tier with **regional HA** (synchronous standby). | 60–85 | 130–180 |
+| Cloud Run worker pool | One always-on instance, four poller containers, ~1 vCPU / 2 GiB allocated continuously (instance-based billing). | 70–95 | 80–110 |
+| Cloud Run — unified platform | Next.js + FastAPI, 1 vCPU / 1–2 GiB. Lean: scale-to-zero. Standard: `min-instances=1` warm. | 5–15 | 25–50 |
+| Cloud Run — webhook ingress | One warm small instance (`min-instances=1`), 0.5 vCPU / 512 MiB, short timeout. | 8–15 | 8–18 |
+| Cloud Run — webhook processor | Scale-to-zero, dispatched by Cloud Tasks, low volume. | 2–6 | 3–10 |
+| Cloud Run — migration job | Seconds of execution per release. | <1 | <1 |
+| Global external Application Load Balancer | One forwarding rule (~$0.025/hr) plus modest request/data processing. | 18–25 | 20–30 |
+| Cloud Armor | Deferred in the lean profile. Standard: one policy + a small rule set + request charges. | 0 | 8–25 |
+| Cloud Tasks | Within the 1M free operations/month tier at MVP volume. | 0 | 0–2 |
+| Artifact Registry | A handful of multi-stage image versions under a retention policy. | 1–3 | 2–6 |
+| Secret Manager | ~15 active secret versions plus access operations. | 1–3 | 1–4 |
+| Cloud Logging + Monitoring | Near the 50 GiB/month free logging tier with exclusions for noisy low-value logs. | 0–12 | 10–35 |
+| Network egress (excl. WhatsApp) | Small JSON to Azure OpenAI, Langfuse, and clients; database traffic is in-VPC and free. | 2–10 | 5–20 |
+| Cloud NAT | Not needed with Direct VPC egress. Add only if a provider later requires a fixed outbound IP. | 0 | 0–35 |
+| Cloud Build | Within the free build-minute tier, or GitHub Actions free minutes. | 0 | 0–10 |
+| **Estimated monthly total** | | **~US$ 170–235** | **~US$ 320–450** |
+
+### Headline figures
+
+- **Lean MVP** (single-zone database, platform scaled to zero, no Cloud Armor, Direct VPC egress): **roughly US$ 200/month**.
+- **Standard production** (regional-HA database, one warm platform instance, Cloud Armor enabled, higher log retention): **roughly US$ 350–420/month**.
+- The single largest lever is **Cloud SQL regional HA** (about +US$ 70–100/month). The second is the **always-on worker pool**; right-sizing its CPU/memory or, later, moving a poller to an event-driven trigger is the main way to reduce it without losing reliability.
+
+### Not included
+
+- **Azure OpenAI usage** — billed by Azure on token volume. If the agent and extraction pipeline stay on Azure OpenAI, that cost is unchanged by this migration and does not appear on the Google Cloud bill. Egress for those calls is the only Google-side cost, already counted above.
+- **YCloud / WhatsApp** — per-message and per-conversation fees, excluded by request.
+- **One-time migration and staging** — the staging environment duplicates the worker pool, Cloud SQL, and load balancer for the duration of Phases 3–4; budget a second near-full monthly total while staging is live.
+
+## 15. Managed LLM platform on Google Cloud (Azure OpenAI equivalent)
+
+Google Cloud's equivalent of Azure OpenAI / Azure AI Foundry is **Vertex AI**. The mapping is close enough that the application's current `openai`-plus-`instructor` structured-output pattern has a direct counterpart, and migrating the model provider is **optional** — the deployment in this document assumes Azure OpenAI is kept and reached over normal Cloud Run egress.
+
+### Azure-to-Vertex AI translation
+
+| Azure AI concept | Vertex AI equivalent |
+|---|---|
+| Azure AI Foundry portal / project | Vertex AI Studio (prompt design, comparison, evaluation) in the Google Cloud console |
+| Azure OpenAI model deployment | A Vertex AI model endpoint: Google first-party (Gemini) or a partner model served as Model-as-a-Service |
+| Foundry model catalog | **Vertex AI Model Garden** — Gemini, Imagen, Veo, plus partner models including Anthropic Claude, Meta Llama, Mistral, AI21, Qwen, and open-weight models |
+| `AzureOpenAI` client (via the `openai` SDK) | `google-genai` / Vertex AI SDK for Gemini; the Anthropic SDK's `AnthropicVertex` client for Claude on Vertex |
+| Provisioned Throughput Units (PTUs) | Vertex AI **Provisioned Throughput** (reserved, committed capacity) |
+| Azure OpenAI "On Your Data" / Azure AI Search | Vertex AI **RAG Engine** and Vertex AI Search for grounding |
+| Content filters | Vertex AI safety filters plus **Model Armor** |
+| Key Vault–stored API key | Vertex AI authenticates with **IAM / service-account credentials**, not a static key — no secret to store or rotate for first-party and MaaS models |
+| Batch deployments | Vertex AI **batch prediction** |
+| Fine-tuning | Vertex AI supervised tuning (Gemini) and tuning for selected partner models |
+
+### Relevance to this application
+
+- **Structured extraction** (`instructor`) works with Gemini on Vertex AI and with Claude on Vertex AI, so the propose-confirm-execute extraction pipeline could move without a rewrite of its output-schema approach.
+- **No API key to manage.** Vertex AI calls from Cloud Run use the workload's service-account identity. This removes the `AZURE_OPENAI_*` key from the Secret Manager inventory in Section 7 for any model moved to Vertex, and replaces it with an IAM role (`roles/aiplatform.user`) on `agenda-webhook-processor-sa` and `agenda-workers-sa`.
+- **Regional availability matters.** Gemini models are available from `southamerica-east1` and from a multi-region global endpoint, keeping model traffic in-region. **Partner models (Claude, Llama) served as MaaS are currently offered mainly from US and EU regions**; using Claude on Vertex from São Paulo means cross-region calls and a data-residency decision. Confirm the exact region list for the chosen model before committing.
+- **If Azure OpenAI is kept**, the only change for Google Cloud is allowing outbound HTTPS egress to the Azure endpoint (already assumed in Sections 6 and 8) and keeping the `AZURE_OPENAI_*` values in Secret Manager. No Vertex AI resource is required.
+- **Decision to record** (add to Section 11 if pursued): keep Azure OpenAI, or migrate extraction/agent inference to Vertex AI (Gemini in-region, or Claude on Vertex cross-region). This is independent of the compute and database migration and should not block the MVP cutover.

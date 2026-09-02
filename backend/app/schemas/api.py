@@ -285,6 +285,8 @@ class TenantSummary(BaseModel):
     commercial_financials_enabled: bool
     assistant_temperature: float
     assistant_memory_window_messages: int
+    status_changed_at: datetime | None = None
+    status_reason: str | None = None
     scheduled_task: TenantScheduledTaskSummary
 
     model_config = {"from_attributes": True}
@@ -294,6 +296,20 @@ class TenantListResponse(BaseModel):
     """Response for GET /api/admin/tenants."""
 
     tenants: list[TenantSummary]
+
+
+class TenantStatusChangeRequest(BaseModel):
+    """Admin request body for suspend / archive (reason is optional)."""
+
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class TenantStatusState(BaseModel):
+    """Current tenant lifecycle state returned after a transition."""
+
+    status: str
+    status_changed_at: datetime | None
+    status_reason: str | None
 
 
 class TenantFeatureUpdate(BaseModel):

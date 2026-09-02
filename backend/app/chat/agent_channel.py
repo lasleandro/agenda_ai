@@ -124,7 +124,15 @@ COMMANDS = {
 
 
 def get_professional_by_agent_phone(db: Session, agent_phone: str) -> Professional | None:
-    return db.query(Professional).filter(Professional.agent_phone == agent_phone).first()
+    """A suspended/archived tenant is treated as unknown (full lockout)."""
+    return (
+        db.query(Professional)
+        .filter(
+            Professional.agent_phone == agent_phone,
+            Professional.status == "active",
+        )
+        .first()
+    )
 
 
 def _resolve_actor_user(db: Session, professional_id: uuid.UUID) -> User | None:

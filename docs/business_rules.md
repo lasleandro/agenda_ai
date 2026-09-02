@@ -241,6 +241,26 @@ be misleading.
   - Financial rates in the calendar context
 - Feature toggles are managed by the platform admin panel and audited.
 
+### 4.3 Tenant Lifecycle
+
+`Professional.status` has exactly three values, enforced by the
+`ck_professionals_status` check constraint:
+
+| Status | Meaning | Effect |
+|---|---|---|
+| `active` | Normal operation | — |
+| `suspended` | Reversible full lockout | Tenant users cannot log in; inbound WhatsApp / agent messages are dropped at number resolution; daily-agenda tasks are skipped; platform-admin impersonation requires an explicit confirm |
+| `archived` | Reversible soft delete | Same lockout as `suspended`, plus the tile is hidden from the default admin grid (`GET /api/admin/tenants?include_archived=true` to see it) |
+
+- Transitions are platform-admin only, via `POST /api/admin/tenants/{id}/{suspend,reactivate,archive,restore}`.
+- Any transition out of `active` bumps `auth_version` for every user of that
+  tenant, invalidating live sessions.
+- Every transition writes `status_changed_at/_by/_reason` on the row and one
+  `tenant.{suspended,reactivated,archived,restored}` row in the operational
+  event ledger. Impersonating an inactive tenant logs
+  `tenant.impersonated_while_inactive`.
+- Nothing is ever physically deleted; a hard purge is not implemented.
+
 ---
 
 ## 5. Authentication & Authorization Rules
@@ -256,8 +276,8 @@ be misleading.
 
 | Role | Access |
 |---|---|
-| `platform_admin` | Admin panel (`/api/admin/*`), impersonation, tenant management |
-| `professional` | Own tenant data only, all regular endpoints |
+| `platform_admin` | Admin panel (`/api/admin/*`), impersonation, tenant management (feature gating, assistant tuning, scheduled tasks, lifecycle — see 4.3) |
+| `professional` | Own tenant data only, all regular endpoints; blocked entirely while the tenant is `suspended` / `archived` |
 
 ---
 

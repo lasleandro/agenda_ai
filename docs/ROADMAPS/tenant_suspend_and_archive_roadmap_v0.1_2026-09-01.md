@@ -1,6 +1,25 @@
 # Tenant Suspend & Archive Roadmap v0.1 — 2026-09-01
 
-**Status: planning.** Not implemented.
+**Status: implemented locally on 2026-09-01.** Phases A–G landed. Page doc:
+[docs/pages/admin_tenant_lifecycle.md](../pages/admin_tenant_lifecycle.md).
+
+Implementation notes / deviations:
+
+- The operational-event ledger has a `ck_operational_events_event_type` check
+  constraint, so Phase B added five event types (`tenant.suspended`,
+  `tenant.reactivated`, `tenant.archived`, `tenant.restored`,
+  `tenant.impersonated_while_inactive`) via migration `c7e1a9d3b5f8` rather
+  than adding a separate audit table.
+- `professionals.status_changed_by` is `ON DELETE SET NULL` (matching
+  `auth_security_events.user_id`), and `User.professional` gained an explicit
+  `foreign_keys=[professional_id]` because the new column created a second
+  `users`↔`professionals` FK path.
+- `include_archived` on `GET /api/admin/tenants` plus a "Mostrar arquivados"
+  toggle in the grid, as planned.
+- Pre-existing, unrelated: `backend/tests/test_makeup_credits.py` /
+  `test_passive_escalation.py` fail on the clean tree; the frontend
+  `next build` prerender of `/admin/scheduled-tasks` also fails on the clean
+  tree. Neither is touched by this work.
 
 ## 1. Goal and product outcome
 

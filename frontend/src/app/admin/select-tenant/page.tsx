@@ -1,26 +1,37 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  Archive,
+  ArchiveRestore,
   Building2,
   Calendar,
   CalendarClock,
   CircleDollarSign,
+  RotateCcw,
   Settings2,
+  ShieldOff,
   Sparkles,
   Users,
   X,
 } from "lucide-react";
 import { AuthRequestError, fetchSession, impersonate } from "@/lib/auth";
 import {
+  archiveTenant,
   fetchTenants,
+  reactivateTenant,
+  restoreTenant,
+  suspendTenant,
   updateAssistantSettings,
   updateCommercialFinancials,
 } from "@/lib/api";
 import type { TenantSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+type LifecycleAction = "suspend" | "reactivate" | "archive" | "restore";
+type SettingsTab = "assistant" | "financial" | "tasks" | "lifecycle";
 
 export default function SelectTenantPage() {
   const router = useRouter();
@@ -28,9 +39,20 @@ export default function SelectTenantPage() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [pendingFeatureIds, setPendingFeatureIds] = useState<Set<string>>(new Set());
   const [pendingAssistantIds, setPendingAssistantIds] = useState<Set<string>>(new Set());
+  const [pendingLifecycleIds, setPendingLifecycleIds] = useState<Set<string>>(new Set());
   const [settingsTenant, setSettingsTenant] = useState<TenantSummary | null>(null);
-  const [settingsTab, setSettingsTab] = useState<"assistant" | "financial" | "tasks">("assistant");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("assistant");
+  const [showArchived, setShowArchived] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const loadTenants = useCallback(async (includeArchived: boolean) => {
+    try {
+      const res = await fetchTenants({ includeArchived });
+      setTenants(res.tenants);
+    } catch {
+      setError("Falha ao carregar tenants");
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -44,17 +66,18 @@ export default function SelectTenantPage() {
         router.replace("/agenda");
         return;
       }
-      try {
-        const res = await fetchTenants();
-        if (active) setTenants(res.tenants);
-      } catch {
-        if (active) setError("Falha ao carregar tenants");
-      }
+      await loadTenants(false);
     });
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [router, loadTenants]);
+
+  function handleToggleArchived() {
+    const next = !showArchived;
+    setShowArchived(next);
+    void loadTenants(next);
+  }
 
   async function handleSelect(tenant: TenantSummary) {
     setPendingId(tenant.id);
@@ -67,9 +90,98 @@ export default function SelectTenantPage() {
         router.replace("/login");
         return;
       }
+      if (requestError instanceof AuthRequestError && requestError.status === 409) {
+        const label = tenant.status === "archived" ? "arquivado" : "suspenso";
+        if (window.confirm(`${tenant.name} está ${label}. Acessar mesmo assim?`)) {
+          try {
+            await impersonate(tenant.id, { confirm: true });
+            router.replace("/agenda");
+            return;
+          } catch {
+            setError("Falha ao acessar o tenant");
+          }
+        }
+        setPendingId(null);
+        return;
+      }
       setError("Falha ao acessar o tenant");
       setPendingId(null);
     }
+  }
+
+  function handleLifecycleAction(
+    tenant: TenantSummary,
+    action: LifecycleAction,
+    reason?: string
+  ) {
+    const optimisticStatus =
+      action === "suspend"
+        ? "suspended"
+        : action === "archive"
+          ? "archived"
+          : "active";
+    const optimisticReason =
+      action === "suspend" || action === "archive" ? reason ?? null : null;
+    const previous = {
+      status: tenant.status,
+      status_changed_at: tenant.status_changed_at,
+      status_reason: tenant.status_reason,
+    };
+    setError(null);
+
+    const applyLocal = (patch: Partial<TenantSummary>) => {
+      setTenants(
+        (current) =>
+          current?.map((item) =>
+            item.id === tenant.id ? { ...item, ...patch } : item
+          ) ?? null
+      );
+      setSettingsTenant((current) =>
+        current?.id === tenant.id ? { ...current, ...patch } : current
+      );
+    };
+
+    applyLocal({ status: optimisticStatus, status_reason: optimisticReason });
+    setPendingLifecycleIds((current) => new Set(current).add(tenant.id));
+
+    const call =
+      action === "suspend"
+        ? suspendTenant(tenant.id, reason)
+        : action === "reactivate"
+          ? reactivateTenant(tenant.id)
+          : action === "archive"
+            ? archiveTenant(tenant.id, reason)
+            : restoreTenant(tenant.id);
+
+    void call
+      .then((state) => {
+        const dropTile = state.status === "archived" && !showArchived;
+        if (dropTile) {
+          setTenants(
+            (current) => current?.filter((item) => item.id !== tenant.id) ?? null
+          );
+          setSettingsTenant((current) =>
+            current?.id === tenant.id ? null : current
+          );
+          return;
+        }
+        applyLocal({
+          status: state.status,
+          status_changed_at: state.status_changed_at,
+          status_reason: state.status_reason,
+        });
+      })
+      .catch(() => {
+        applyLocal(previous);
+        setError(`Falha ao atualizar o ciclo de vida de ${tenant.name}`);
+      })
+      .finally(() => {
+        setPendingLifecycleIds((current) => {
+          const next = new Set(current);
+          next.delete(tenant.id);
+          return next;
+        });
+      });
   }
 
   function handleFeatureToggle(tenant: TenantSummary) {
@@ -220,12 +332,26 @@ export default function SelectTenantPage() {
               Selecione um tenant para acessar sua agenda.
             </p>
           </div>
-          <Link
-            href="/admin/scheduled-tasks"
-            className="ml-auto rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
-          >
-            Tarefas agendadas
-          </Link>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleToggleArchived}
+              className={cn(
+                "rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-muted",
+                showArchived
+                  ? "bg-muted text-foreground"
+                  : "bg-card text-muted-foreground"
+              )}
+            >
+              {showArchived ? "Ocultar arquivados" : "Mostrar arquivados"}
+            </button>
+            <Link
+              href="/admin/scheduled-tasks"
+              className="rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
+            >
+              Tarefas agendadas
+            </Link>
+          </div>
         </div>
 
         {error && (
@@ -271,12 +397,10 @@ export default function SelectTenantPage() {
                     <span
                       className={cn(
                         "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
-                        tenant.status === "active"
-                          ? "bg-emerald-500/10 text-emerald-600"
-                          : "bg-muted text-muted-foreground"
+                        statusBadgeClass(tenant.status)
                       )}
                     >
-                      {tenant.status}
+                      {statusLabel(tenant.status)}
                     </span>
                   </div>
                 </div>
@@ -322,6 +446,7 @@ export default function SelectTenantPage() {
             onClose={() => setSettingsTenant(null)}
             financialSaving={pendingFeatureIds.has(settingsTenant.id)}
             assistantSaving={pendingAssistantIds.has(settingsTenant.id)}
+            lifecycleSaving={pendingLifecycleIds.has(settingsTenant.id)}
             onFeatureToggle={() => handleFeatureToggle(settingsTenant)}
             onAssistantSave={(temperature, memoryWindowMessages) =>
               handleAssistantSettingsSave(
@@ -329,6 +454,9 @@ export default function SelectTenantPage() {
                 temperature,
                 memoryWindowMessages
               )
+            }
+            onLifecycleAction={(action, reason) =>
+              handleLifecycleAction(settingsTenant, action, reason)
             }
           />
         )}
@@ -404,17 +532,21 @@ function TenantSettingsDialog({
   onClose,
   financialSaving,
   assistantSaving,
+  lifecycleSaving,
   onFeatureToggle,
   onAssistantSave,
+  onLifecycleAction,
 }: {
   tenant: TenantSummary;
-  tab: "assistant" | "financial" | "tasks";
-  onTabChange: (tab: "assistant" | "financial" | "tasks") => void;
+  tab: SettingsTab;
+  onTabChange: (tab: SettingsTab) => void;
   onClose: () => void;
   financialSaving: boolean;
   assistantSaving: boolean;
+  lifecycleSaving: boolean;
   onFeatureToggle: () => void;
   onAssistantSave: (temperature: number, memoryWindowMessages: number) => void;
+  onLifecycleAction: (action: LifecycleAction, reason?: string) => void;
 }) {
   const task = tenant.scheduled_task;
 
@@ -455,6 +587,10 @@ function TenantSettingsDialog({
           <SettingsTabButton active={tab === "tasks"} onClick={() => onTabChange("tasks")}>
             <CalendarClock className="h-4 w-4" />
             Resumo de tarefas
+          </SettingsTabButton>
+          <SettingsTabButton active={tab === "lifecycle"} onClick={() => onTabChange("lifecycle")}>
+            <ShieldOff className="h-4 w-4" />
+            Ciclo de vida
           </SettingsTabButton>
         </div>
 
@@ -556,10 +692,161 @@ function TenantSettingsDialog({
               )}
             </div>
           )}
+
+          {tab === "lifecycle" && (
+            <LifecycleTab
+              tenant={tenant}
+              saving={lifecycleSaving}
+              onAction={onLifecycleAction}
+            />
+          )}
         </div>
       </section>
     </div>
   );
+}
+
+function LifecycleTab({
+  tenant,
+  saving,
+  onAction,
+}: {
+  tenant: TenantSummary;
+  saving: boolean;
+  onAction: (action: LifecycleAction, reason?: string) => void;
+}) {
+  const [suspendReason, setSuspendReason] = useState("");
+  const [archiveReason, setArchiveReason] = useState("");
+  const [archiveConfirm, setArchiveConfirm] = useState("");
+
+  const changedAt = tenant.status_changed_at
+    ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(
+        new Date(tenant.status_changed_at)
+      )
+    : null;
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-lg border border-border p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium text-foreground">Status atual</h3>
+          <span
+            className={cn(
+              "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
+              statusBadgeClass(tenant.status)
+            )}
+          >
+            {statusLabel(tenant.status)}
+          </span>
+        </div>
+        {tenant.status !== "active" && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Alterado {changedAt ?? "—"}
+            {tenant.status_reason ? ` · ${tenant.status_reason}` : ""}
+          </p>
+        )}
+      </div>
+
+      {tenant.status === "suspended" && (
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => onAction("reactivate")}
+          className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-60"
+        >
+          <RotateCcw className="h-4 w-4" />
+          Reativar tenant
+        </button>
+      )}
+
+      {tenant.status === "archived" ? (
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => onAction("restore")}
+          className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-60"
+        >
+          <ArchiveRestore className="h-4 w-4" />
+          Restaurar tenant
+        </button>
+      ) : (
+        <>
+          {tenant.status === "active" && (
+            <div className="rounded-lg border border-border p-4">
+              <h3 className="text-sm font-medium text-foreground">Suspender</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Bloqueia login, mensagens do agente e tarefas agendadas. Reversível.
+              </p>
+              <textarea
+                value={suspendReason}
+                onChange={(e) => setSuspendReason(e.target.value)}
+                placeholder="Motivo (opcional)"
+                rows={2}
+                maxLength={500}
+                className="mt-3 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+              />
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => onAction("suspend", suspendReason.trim() || undefined)}
+                className="mt-3 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-500/20 disabled:opacity-60"
+              >
+                <ShieldOff className="h-4 w-4" />
+                Suspender tenant
+              </button>
+            </div>
+          )}
+
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+            <h3 className="text-sm font-medium text-foreground">Zona de risco</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Arquivar remove o tenant da grade e desconecta todos os seus usuários.
+              Nenhum dado é apagado; a ação é reversível em Restaurar.
+            </p>
+            <textarea
+              value={archiveReason}
+              onChange={(e) => setArchiveReason(e.target.value)}
+              placeholder="Motivo (opcional)"
+              rows={2}
+              maxLength={500}
+              className="mt-3 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+            />
+            <label className="mt-3 block text-xs text-muted-foreground">
+              Digite <span className="font-medium text-foreground">{tenant.name}</span> para confirmar
+              <input
+                value={archiveConfirm}
+                onChange={(e) => setArchiveConfirm(e.target.value)}
+                className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={saving || archiveConfirm.trim() !== tenant.name}
+              onClick={() => onAction("archive", archiveReason.trim() || undefined)}
+              className="mt-3 flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive hover:bg-destructive/20 disabled:opacity-50"
+            >
+              <Archive className="h-4 w-4" />
+              Arquivar tenant
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function statusBadgeClass(status: string): string {
+  if (status === "active") return "bg-emerald-500/10 text-emerald-600";
+  if (status === "suspended") return "bg-amber-500/10 text-amber-700";
+  if (status === "archived") return "bg-slate-500/10 text-slate-600";
+  return "bg-muted text-muted-foreground";
+}
+
+function statusLabel(status: string): string {
+  if (status === "active") return "ativo";
+  if (status === "suspended") return "suspenso";
+  if (status === "archived") return "arquivado";
+  return status;
 }
 
 function SettingsTabButton({

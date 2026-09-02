@@ -55,4 +55,8 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    professional: Mapped["Professional"] = relationship("Professional")
+    # professionals.status_changed_by adds a second users<->professionals FK
+    # path, so the join column must be named explicitly.
+    professional: Mapped["Professional"] = relationship(
+        "Professional", foreign_keys=[professional_id]
+    )

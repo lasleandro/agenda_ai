@@ -1,7 +1,7 @@
 """Cookie-based authentication, activation, and password recovery routes."""
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
@@ -22,8 +22,10 @@ from app.core.settings import get_int
 from app.database import SessionLocal
 from app.models import ImpersonationLog, Professional, User
 from app.models.auth_action_token import ACCOUNT_ACTIVATION, PASSWORD_RESET
+from app.models.professional import TENANT_STATUS_ACTIVE, TENANT_STATUS_ARCHIVED
 from app.services.auth_emails import enqueue_auth_email
 from app.services.auth_security import rate_limit_exceeded, record_auth_event
+from app.services.operational_events import record_event
 from app.services.auth_tokens import ActionTokenError, consume_action_token
 from app.services.email_identity import InvalidEmailError, normalize_email
 from app.services.password_policy import (
@@ -71,6 +73,8 @@ class ForgotPasswordRequest(BaseModel):
 
 class ImpersonateRequest(BaseModel):
     professional_id: uuid.UUID
+    # Required to impersonate a suspended/archived tenant (otherwise 409).
+    confirm: bool = False
 
 
 def _source_ip(request: Request) -> str | None:
@@ -142,6 +146,27 @@ def login(
         )
         db.commit()
         return error_response(401, error_codes.INVALID_CREDENTIALS, "Email ou senha inválidos.")
+
+    if user.role == "professional" and user.professional_id is not None:
+        tenant = db.get(Professional, user.professional_id)
+        if tenant is not None and tenant.status != TENANT_STATUS_ACTIVE:
+            record_auth_event(
+                db,
+                event_type="login_blocked_tenant_inactive",
+                user_id=user.id,
+                email=user.email,
+                source_ip=source_ip,
+                metadata={"tenant_status": tenant.status},
+            )
+            db.commit()
+            code = (
+                error_codes.TENANT_ARCHIVED
+                if tenant.status == TENANT_STATUS_ARCHIVED
+                else error_codes.TENANT_SUSPENDED
+            )
+            return error_response(
+                403, code, "Acesso indisponível no momento. Fale com o administrador."
+            )
 
     if needs_rehash:
         user.hashed_password = hash_password(normalize_password(body.password))
@@ -298,7 +323,30 @@ def impersonate(
     admin_user = db.get(User, uuid.UUID(admin["user_id"]))
     if admin_user is None:
         return error_response(401, error_codes.SESSION_INVALID, "Sessão inválida.")
+
+    tenant_inactive = professional.status != TENANT_STATUS_ACTIVE
+    if tenant_inactive and not body.confirm:
+        return error_response(
+            409,
+            error_codes.TENANT_INACTIVE_CONFIRM_REQUIRED,
+            "Tenant inativo. Confirme para acessar mesmo assim.",
+        )
+
     db.add(ImpersonationLog(admin_user_id=admin_user.id, professional_id=professional.id))
+    if tenant_inactive:
+        record_event(
+            db,
+            professional_id=professional.id,
+            event_type="tenant.impersonated_while_inactive",
+            occurred_at=datetime.now(timezone.utc),
+            actor_type="platform_admin",
+            actor_id=admin_user.id,
+            source_channel="web",
+            entity_type="professional",
+            entity_id=professional.id,
+            correlation_id=uuid.uuid4(),
+            payload={"tenant_status": professional.status},
+        )
     db.commit()
     _issue_session_cookie(
         response,

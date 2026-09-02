@@ -76,6 +76,35 @@ def _cleanup(
     db.commit()
 
 
+def test_daily_agenda_task_skips_suspended_tenant() -> None:
+    db = SessionLocal()
+    now = datetime(2026, 8, 17, 10, 0, tzinfo=timezone.utc)
+    professional = _professional("Suspended tenant")
+    professional.status = "suspended"
+    db.add(professional)
+    db.flush()
+    task = ScheduledTask(
+        professional_id=professional.id,
+        task_type=DAILY_AGENDA_SUMMARY,
+        enabled=True,
+        local_time=time(7, 0),
+        enabled_at=now - timedelta(days=1),
+    )
+    db.add(task)
+    db.commit()
+    provider = _FakeWhatsAppProvider()
+
+    try:
+        assert process_due_scheduled_tasks(db, provider, now) == 0
+        assert provider.requests == []
+        assert (
+            db.query(ScheduledTaskRun).filter_by(scheduled_task_id=task.id).count() == 0
+        )
+    finally:
+        _cleanup(db, [professional.id])
+        db.close()
+
+
 def test_daily_agenda_task_sends_once_for_its_own_tenant() -> None:
     db = SessionLocal()
     now = datetime(2026, 8, 17, 10, 0, tzinfo=timezone.utc)
