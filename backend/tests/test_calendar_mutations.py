@@ -295,7 +295,7 @@ def test_propose_create_appointment_rejects_conflict() -> None:
         db.close()
 
 
-def test_propose_create_appointment_rejects_outside_configured_work_journey() -> None:
+def test_propose_create_appointment_advises_outside_configured_work_journey() -> None:
     db = SessionLocal()
     professional, user = _make_tenant(db)
     try:
@@ -324,12 +324,18 @@ def test_propose_create_appointment_rejects_outside_configured_work_journey() ->
             end_at=(start_at + timedelta(hours=1)).isoformat(),
             service="Aula individual",
         )
-        assert "error" in result
+        assert result["requires_confirmation"] is True
+        assert "Fora da sua jornada configurada" in result["advisory_text"]
+
+        exec_result = candidates.confirm(
+            db, professional.id, user.id, uuid.UUID(result["candidate_id"])
+        )
+        assert exec_result.ok is True
         assert (
-            db.query(OperatorActionCandidate)
-            .filter(OperatorActionCandidate.professional_id == professional.id)
+            db.query(Appointment)
+            .filter(Appointment.professional_id == professional.id)
             .count()
-            == 0
+            == 1
         )
     finally:
         _cleanup(db, professionals=[professional], users=[user])
@@ -366,6 +372,52 @@ def test_propose_create_appointment_allows_time_within_configured_work_journey()
             service="Aula individual",
         )
         assert result["requires_confirmation"] is True
+    finally:
+        _cleanup(db, professionals=[professional], users=[user])
+        db.close()
+
+
+def test_propose_create_appointment_advises_during_configured_break() -> None:
+    db = SessionLocal()
+    professional, user = _make_tenant(db)
+    try:
+        place = _make_place(db, professional.id)
+        contact = _make_contact(db, professional.id, "Aluno Na Pausa")
+        db.add_all(
+            [
+                WorkJourneyInterval(
+                    professional_id=professional.id,
+                    day_of_week=MONDAY.weekday(),
+                    interval_type="work",
+                    start_time=time(8, 0),
+                    end_time=time(18, 0),
+                ),
+                WorkJourneyInterval(
+                    professional_id=professional.id,
+                    day_of_week=MONDAY.weekday(),
+                    interval_type="break",
+                    start_time=time(12, 0),
+                    end_time=time(13, 0),
+                ),
+            ]
+        )
+        db.commit()
+
+        start_at = datetime.combine(MONDAY, time(12, 0), tzinfo=TIMEZONE)
+        result = mutations.propose_create_appointment(
+            db,
+            professional.id,
+            user.id,
+            uuid.uuid4(),
+            contact_id=str(contact.id),
+            place_id=str(place.id),
+            start_at=start_at.isoformat(),
+            end_at=(start_at + timedelta(hours=1)).isoformat(),
+            service="Aula individual",
+        )
+
+        assert result["requires_confirmation"] is True
+        assert "Durante uma pausa configurada" in result["advisory_text"]
     finally:
         _cleanup(db, professionals=[professional], users=[user])
         db.close()
@@ -546,7 +598,18 @@ def test_propose_reschedule_occurrence_full_cycle() -> None:
             status="confirmed",
             source="dashboard",
         )
-        db.add(appointment)
+        db.add_all(
+            [
+                appointment,
+                WorkJourneyInterval(
+                    professional_id=professional.id,
+                    day_of_week=(MONDAY + timedelta(days=1)).weekday(),
+                    interval_type="work",
+                    start_time=time(8, 0),
+                    end_time=time(12, 0),
+                ),
+            ]
+        )
         db.commit()
 
         new_start = datetime.combine(MONDAY + timedelta(days=1), time(14, 0), tzinfo=TIMEZONE)
@@ -563,6 +626,7 @@ def test_propose_reschedule_occurrence_full_cycle() -> None:
             new_place_id=str(place.id),
         )
         assert result["requires_confirmation"] is True
+        assert "Fora da sua jornada configurada" in result["advisory_text"]
 
         exec_result = candidates.confirm(
             db, professional.id, user.id, uuid.UUID(result["candidate_id"])

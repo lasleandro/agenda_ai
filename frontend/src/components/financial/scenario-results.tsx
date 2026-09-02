@@ -1,4 +1,5 @@
 import { ArrowRight, Scale } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -21,6 +22,11 @@ export function ScenarioResults({
 }) {
   return (
     <div className="space-y-5">
+      {result.capacity_source?.mode === "estimated_default" && (
+        <Badge variant="outline" className="border-amber-500/40 bg-amber-500/5 text-amber-800 dark:text-amber-200">
+          Estimativa de capacidade
+        </Badge>
+      )}
       <div className="grid items-stretch gap-3 md:grid-cols-[1fr_auto_1fr]">
         <Card>
           <CardHeader>

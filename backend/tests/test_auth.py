@@ -87,6 +87,8 @@ def test_login_with_valid_credentials_issues_session_cookie() -> None:
         res = client.post("/api/auth/login", json={"email": user.email, "password": "correct-password"})
         assert res.status_code == 200
         assert SESSION_COOKIE_NAME in res.cookies
+        assert res.headers["cache-control"] == "no-store"
+        assert "default-src 'none'" in res.headers["content-security-policy"]
 
         me = client.get("/api/auth/me", cookies=res.cookies)
         assert me.status_code == 200

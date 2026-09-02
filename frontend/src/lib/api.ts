@@ -14,6 +14,7 @@ import type {
   CommercialOverrideInput,
   CustomerFinancialDetail,
   FinancialConfigurationDetail,
+  FinancialCapacityMode,
   FinancialDashboardDetail,
   FinancialOperationalAnalyticsDetail,
   FinancialScenarioDetail,
@@ -560,13 +561,15 @@ export const updateCancellationNoticeHours = (hours: number) =>
 export const fetchFinancialDashboard = (
   dateFrom: string,
   dateTo: string,
-  placeIds: string[] = []
+  placeIds: string[] = [],
+  capacityMode: FinancialCapacityMode = "configured_only"
 ) => {
   const params = new URLSearchParams({
     date_from: dateFrom,
     date_to: dateTo,
   });
   placeIds.forEach((placeId) => params.append("place_id", placeId));
+  params.set("capacity_mode", capacityMode);
   return apiRequest<FinancialDashboardDetail>(
     `/api/financial/dashboard?${params.toString()}`
   );

@@ -11,6 +11,7 @@ from app.schemas.financial import (
     CapacityPresetDetail,
     CapacitySourceDetail,
     FinancialAnalyticsAssumptions,
+    FinancialCapacitySource,
     FinancialDashboardDetail,
     FinancialMetricBreakdown,
     FinancialScenarioInput,
@@ -26,11 +27,15 @@ from app.services.financial_capacity import (
     PART_OF_DAY_RANGES,
     BookingOccurrence,
     CapacitySegment,
+    ESTIMATED_MINUTES_PER_WORKING_DAY,
+    ESTIMATED_WORKING_DAYS,
     PricingRules,
     assert_all_places_found,
     build_capacity_segments,
     build_uncovered_capacity_segments,
     build_uncovered_capacity_minutes,
+    estimated_capacity_minutes,
+    has_configured_work_journey,
     iter_dates,
     load_booking_occurrences,
     load_places,
@@ -69,6 +74,8 @@ class AnalyticsContext:
     simulation_capacity: list[CapacitySegment]
     bookings: list[BookingOccurrence]
     uncovered_minutes: dict[str, int]
+    capacity_source: FinancialCapacitySource
+    uses_estimated_capacity: bool
 
 
 def _round_cents(value: Decimal) -> int:
@@ -84,7 +91,22 @@ def _percentage(numerator: int | float, denominator: int | float) -> float:
 def _assumptions(
     date_from: date,
     date_to: date,
+    *,
+    uses_estimated_capacity: bool = False,
 ) -> FinancialAnalyticsAssumptions:
+    capacity_basis = (
+        "Estimativa: 8 horas por dia, de segunda-feira a sábado, "
+        "valorizadas pela tarifa regular e sem atribuição de local. "
+        "Configure a jornada para uma projeção personalizada."
+        if uses_estimated_capacity
+        else (
+            "Total geral: jornada líquida (jornada menos pausas), independente "
+            "de local. A capacidade coberta por permanências é atribuída aos "
+            "respectivos locais; o restante aparece como Sem local definido. "
+            "Quebras por local/dia/período/categoria mostram somente a "
+            "interseção entre a jornada e permanências ativas."
+        )
+    )
     return FinancialAnalyticsAssumptions(
         period_start=date_from,
         period_end=date_to,
@@ -93,13 +115,7 @@ def _assumptions(
             "Agendamentos e grupos ativos valorizados pelas regras atuais; "
             "não representa receita reconhecida."
         ),
-        capacity_basis=(
-            "Total geral: jornada líquida (jornada menos pausas), independente "
-            "de local. A capacidade coberta por permanências é atribuída aos "
-            "respectivos locais; o restante aparece como Sem local definido. "
-            "Quebras por local/dia/período/categoria mostram somente a "
-            "interseção entre a jornada e permanências ativas."
-        ),
+        capacity_basis=capacity_basis,
         excluded_constraints=[
             "presença, cancelamentos e faltas",
             "impostos, custos e inadimplência",
@@ -115,27 +131,42 @@ def _load_context(
     date_from: date,
     date_to: date,
     place_ids: list[uuid.UUID] | None,
+    capacity_mode: str = "configured_only",
 ) -> AnalyticsContext:
     places = load_places(db, professional_id, place_ids)
     assert_all_places_found(places, place_ids)
     prime_ranges = load_prime_ranges(db, professional_id)
+    has_journey = has_configured_work_journey(db, professional_id)
+    uses_estimated_capacity = (
+        capacity_mode == "estimated_when_unconfigured" and not has_journey
+    )
     # Uncovered (place-agnostic) work-journey time only makes sense to
     # fold into potential-revenue calculations for the "all places" view
     # — with a place filter, time not covered by the filtered place(s)
     # may well be covered by a place the user filtered out, so crediting
     # it to the filtered place(s) would overstate their potential.
-    uncovered_minutes = (
-        build_uncovered_capacity_minutes(
-            db,
-            professional_id,
-            date_from,
-            date_to,
-            places,
-            prime_ranges,
+    if uses_estimated_capacity:
+        uncovered_minutes = {
+            "regular": (
+                estimated_capacity_minutes(date_from, date_to)
+                if place_ids is None
+                else 0
+            ),
+            "prime": 0,
+        }
+    else:
+        uncovered_minutes = (
+            build_uncovered_capacity_minutes(
+                db,
+                professional_id,
+                date_from,
+                date_to,
+                places,
+                prime_ranges,
+            )
+            if place_ids is None
+            else {"regular": 0, "prime": 0}
         )
-        if place_ids is None
-        else {"regular": 0, "prime": 0}
-    )
     capacity = build_capacity_segments(
         db,
         professional_id,
@@ -170,6 +201,17 @@ def _load_context(
             places,
         ),
         uncovered_minutes=uncovered_minutes,
+        capacity_source=FinancialCapacitySource(
+            mode="estimated_default" if uses_estimated_capacity else "configured",
+            configured=has_journey,
+            working_days=list(ESTIMATED_WORKING_DAYS) if uses_estimated_capacity else [],
+            minutes_per_working_day=(
+                ESTIMATED_MINUTES_PER_WORKING_DAY if uses_estimated_capacity else None
+            ),
+            rate_basis="regular" if uses_estimated_capacity else "configured",
+            configuration_path="/minhas-regras" if uses_estimated_capacity else None,
+        ),
+        uses_estimated_capacity=uses_estimated_capacity,
     )
 
 
@@ -457,6 +499,7 @@ def build_financial_dashboard(
     date_from: date,
     date_to: date,
     place_ids: list[uuid.UUID] | None = None,
+    capacity_mode: str = "configured_only",
 ) -> FinancialDashboardDetail:
     context = _load_context(
         db,
@@ -464,6 +507,7 @@ def build_financial_dashboard(
         date_from,
         date_to,
         place_ids,
+        capacity_mode,
     )
     place_labels = {str(place.id): place.name for place in context.places}
     by_place = {key: MetricBucket() for key in place_labels}
@@ -564,15 +608,22 @@ def build_financial_dashboard(
     # (the place-scoped, RecurringSlot-based total) or the ratio would
     # compare a filtered numerator against a tenant-wide denominator.
     if place_ids is None:
-        top_available_minutes = total_work_journey_minutes(
-            db, professional_id, date_from, date_to
+        top_available_minutes = (
+            sum(context.uncovered_minutes.values())
+            if context.uses_estimated_capacity
+            else total_work_journey_minutes(db, professional_id, date_from, date_to)
         )
         top_booked_minutes = raw_booked_minutes
     else:
         top_available_minutes = total.available_minutes
         top_booked_minutes = total.booked_minutes
     return FinancialDashboardDetail(
-        assumptions=_assumptions(date_from, date_to),
+        assumptions=_assumptions(
+            date_from,
+            date_to,
+            uses_estimated_capacity=context.uses_estimated_capacity,
+        ),
+        capacity_source=context.capacity_source,
         available_minutes=top_available_minutes,
         booked_minutes=top_booked_minutes,
         unused_minutes=max(0, top_available_minutes - top_booked_minutes),
@@ -683,6 +734,44 @@ def _tradeoffs(
             )
         )
     return tradeoffs
+
+
+def _estimated_tradeoffs(
+    pricing: PricingRules,
+    overrides: dict[tuple[str, int], int],
+) -> list[FinancialTradeoffDetail]:
+    """Trade-offs for the generic, regular-price estimated baseline."""
+    rates = {
+        participant_count: (
+            overrides.get(("regular", participant_count))
+            if ("regular", participant_count) in overrides
+            else pricing.resolve(None, "regular", participant_count)
+        )
+        for participant_count in range(1, 5)
+    }
+    individual_revenue = rates[1]
+    return [
+        FinancialTradeoffDetail(
+            participant_count=participant_count,
+            average_hourly_rate_cents=rate,
+            full_class_revenue_cents=(
+                rate * participant_count if rate is not None else None
+            ),
+            revenue_vs_individual_pct=(
+                _percentage(rate * participant_count, individual_revenue)
+                if rate is not None and individual_revenue is not None
+                else None
+            ),
+            break_even_occupancy_pct=(
+                round(individual_revenue / (rate * participant_count) * 100, 1)
+                if rate is not None
+                and individual_revenue is not None
+                and rate * participant_count > 0
+                else None
+            ),
+        )
+        for participant_count, rate in rates.items()
+    ]
 
 
 def _minutes_to_time(value: int) -> time:
@@ -808,6 +897,7 @@ def evaluate_financial_scenario(
         body.date_from,
         body.date_to,
         body.place_ids,
+        body.capacity_mode,
     )
     dashboard = build_financial_dashboard(
         db,
@@ -815,30 +905,49 @@ def evaluate_financial_scenario(
         body.date_from,
         body.date_to,
         body.place_ids,
+        body.capacity_mode,
     )
     mixes = _scenario_mixes(body, dashboard.observed_participant_mix)
     overrides = {
         (rate.time_category, rate.participant_count): rate.hourly_rate_cents
         for rate in body.rate_overrides
     }
-    schedule = _simulated_schedule(
-        context.simulation_capacity,
-        mixes,
-        body.occupancy_pct,
-        context.pricing,
-        overrides,
-    )
-    scenario = _scenario_metric_from_schedule(context.simulation_capacity, schedule)
-    mix = _normalize_mix(
-        {
-            participant_count: sum(
-                1
-                for event in schedule
-                if event.participant_count == participant_count
-            )
-            for participant_count in range(1, 5)
-        }
-    )
+    if context.uses_estimated_capacity and context.uncovered_minutes["regular"] > 0:
+        schedule = []
+        scenario = _potential_metric(
+            [],
+            context.pricing,
+            mixes,
+            body.occupancy_pct,
+            overrides,
+            uncovered_minutes=context.uncovered_minutes,
+        )
+        mix = mixes["regular"]
+        tradeoffs = _estimated_tradeoffs(context.pricing, overrides)
+    else:
+        schedule = _simulated_schedule(
+            context.simulation_capacity,
+            mixes,
+            body.occupancy_pct,
+            context.pricing,
+            overrides,
+        )
+        scenario = _scenario_metric_from_schedule(context.simulation_capacity, schedule)
+        mix = _normalize_mix(
+            {
+                participant_count: sum(
+                    1
+                    for event in schedule
+                    if event.participant_count == participant_count
+                )
+                for participant_count in range(1, 5)
+            }
+        )
+        tradeoffs = _tradeoffs(
+            context.capacity,
+            context.pricing,
+            overrides,
+        )
     baseline = FinancialScenarioMetric(
         available_minutes=dashboard.available_minutes,
         utilized_minutes=dashboard.booked_minutes,
@@ -848,6 +957,7 @@ def evaluate_financial_scenario(
     )
     return FinancialScenarioResult(
         assumptions=dashboard.assumptions,
+        capacity_source=dashboard.capacity_source,
         mode=body.mode,
         participant_mix=mix,
         baseline=baseline,
@@ -860,11 +970,7 @@ def evaluate_financial_scenario(
             scenario.participant_hours - baseline.participant_hours,
             2,
         ),
-        tradeoffs=_tradeoffs(
-            context.capacity,
-            context.pricing,
-            overrides,
-        ),
+        tradeoffs=tradeoffs,
         simulated_schedule=schedule,
         customer_estimate=estimate_customer_range(
             scenario.participant_hours,

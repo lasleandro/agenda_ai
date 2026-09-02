@@ -281,6 +281,9 @@ the instructor's configured rates:
 - `load_net_work_ranges(...)` -- a date's Work Journey (work minus breaks),
   used to tell "no journey configured for this weekday" apart from
   "journey fully booked" when there are no openings to report.
+- `estimated_capacity_minutes(...)` -- simulator-only 8-hour Monday–Saturday
+  generic baseline used only when the tenant has no configured journey. It is
+  regular-rate capacity, not a suggested work schedule.
 
 ### Waitlist Matching (`app/services/waitlist.py`)
 

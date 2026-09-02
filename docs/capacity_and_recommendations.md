@@ -46,9 +46,10 @@ weekday contributes **zero** capacity for that weekday, regardless of how
 broad the work journey is. This is a different (stricter) notion of
 "available" than one-off appointment booking uses: `propose_create_appointment`
 / `assert_no_conflict` (`app/services/appointments.py`) only checks the
-work journey directly plus real conflicts — it does **not** require a
+real conflicts and uses work journey only as an advisory — it does **not** require a
 pre-declared `RecurringSlot` window. So a time slot can be legitimately
-bookable via chat/dashboard while still showing as zero capacity in the
+bookable via chat/dashboard, including an explicitly confirmed journey
+exception, while still showing as zero capacity in the
 named-place Financeiro breakdown and invisible to the recommender if no
 stay covers it. Financeiro still retains that time as generic capacity under
 `Sem local definido`; the recommender omits it because a concrete recommendation

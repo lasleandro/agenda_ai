@@ -14,13 +14,12 @@ It is the tenant-facing home for operational definitions and, when enabled,
 financial definitions. The route name remains unchanged for bookmark
 compatibility.
 
-Operational settings are available to every tenant and are enforced by
-scheduling and make-up credit logic independently of whether the Financeiro
-module is enabled:
+Operational settings are available to every tenant independently of whether
+the Financeiro module is enabled:
 
-- `assert_within_work_journey` (`app/services/appointments.py`) reads the
-  work journey directly and fails open (unrestricted) only if no rows
-  exist.
+- Work journey guides scheduling recommendations and financial capacity. It
+  does not reject a conflict-free confirmed booking; the assistant displays an
+  advisory for an exception.
 - `grant_credit_if_eligible` (`app/services/makeup_credits.py`) reads
   `cancellation_notice_hours` directly, defaulting to 24h if unset.
 
@@ -50,10 +49,11 @@ forms without changing their API or audit behavior.
 ### Jornada de Trabalho (Work Journey)
 
 - For each day of week (0-6), define work and break intervals
-- Work intervals: when the instructor is available for classes
-- Break intervals: mid-day gaps where no classes are scheduled; must be
-  fully contained within a work interval for that day. A day may have multiple
-  pauses, provided they do not overlap.
+- Work intervals: usual hours used in recommendations and capacity estimates.
+- Break intervals: usual mid-day gaps; they must be fully contained within a
+  work interval for that day. A day may have multiple pauses, provided they do
+  not overlap. An exception can still be confirmed after the assistant warns
+  the instructor.
 - Endpoints: `GET /api/rules/work-journey`, `PUT /api/rules/work-journey`
 
 ### Aviso Prévio para Reposição (Cancellation Notice)

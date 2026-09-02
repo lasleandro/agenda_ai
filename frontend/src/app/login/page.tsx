@@ -2,32 +2,69 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Calendar, Lock, Mail } from "lucide-react";
+import Link from "next/link";
+import { ArrowLeft, Calendar, Lock, Mail, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { login } from "@/lib/auth";
+import { login, requestPasswordReset } from "@/lib/auth";
+
+type AuthView = "login" | "signup" | "forgot";
+
+const SUPPORT_EMAIL = "contato@tennisos.com.br";
 
 export default function LoginPage() {
   const router = useRouter();
+  const [view, setView] = useState<AuthView>("login");
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  async function handleSubmit(e: FormEvent) {
+  const [reqName, setReqName] = useState("");
+  const [reqEmail, setReqEmail] = useState("");
+  const [reqMessage, setReqMessage] = useState("");
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetSubmitted, setResetSubmitted] = useState(false);
+
+  async function handleLogin(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
       await login(email, password);
-      router.replace("/");
+      router.replace("/agenda");
     } catch {
       setError("Email ou senha inválidos");
     } finally {
       setSubmitting(false);
     }
   }
+
+  async function handlePasswordReset(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      await requestPasswordReset(resetEmail);
+      setResetSubmitted(true);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Não foi possível solicitar a redefinição."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const requestAccessHref = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
+    "Solicitação de acesso ao Tennis OS"
+  )}&body=${encodeURIComponent(
+    `Nome: ${reqName}\nE-mail: ${reqEmail}\n\n${reqMessage}`
+  )}`;
 
   return (
     <div className="flex min-h-dvh w-full">
@@ -45,14 +82,14 @@ export default function LoginPage() {
           style={{ background: "radial-gradient(circle, #4f46e5, transparent 70%)" }}
         />
 
-        <div className="relative flex items-center gap-2.5">
+        <Link href="/" className="relative flex items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500 text-sm font-bold text-white">
             T
           </div>
           <span className="text-[15px] font-semibold tracking-tight text-white">
             Tennis OS
           </span>
-        </div>
+        </Link>
 
         <div className="relative max-w-md space-y-4">
           <h1 className="text-3xl font-semibold leading-tight text-white">
@@ -82,64 +119,246 @@ export default function LoginPage() {
           </div>
 
           <div className="rounded-2xl border border-border bg-card p-8 shadow-sm">
-            <div className="mb-6 space-y-1">
-              <h2 className="text-xl font-semibold text-foreground">Entrar</h2>
-              <p className="text-sm text-muted-foreground">
-                Acesse sua agenda com suas credenciais.
-              </p>
-            </div>
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="email">Email</Label>
-                <div className="relative">
-                  <Mail className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    autoFocus
-                    required
-                    className="h-10 pl-9"
-                  />
-                </div>
+            {view !== "forgot" && (
+              <div className="mb-6 flex gap-1 rounded-lg bg-secondary p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView("login");
+                    setError(null);
+                  }}
+                  className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                    view === "login"
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Entrar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView("signup");
+                    setError(null);
+                  }}
+                  className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                    view === "signup"
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  Criar conta
+                </button>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="password">Senha</Label>
-                <div className="relative">
-                  <Lock className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="password"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    className="h-10 pl-9"
-                  />
+            )}
+
+            {view === "login" && (
+              <>
+                <div className="mb-6 space-y-1">
+                  <h2 className="text-xl font-semibold text-foreground">Entrar</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Acesse sua agenda com suas credenciais.
+                  </p>
                 </div>
-              </div>
 
-              {error && (
-                <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {error}
-                </p>
-              )}
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="email">Email</Label>
+                    <div className="relative">
+                      <Mail className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        id="email"
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        autoComplete="username"
+                        autoFocus
+                        required
+                        className="h-10 pl-9"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="password">Senha</Label>
+                    <div className="relative">
+                      <Lock className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        id="password"
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        autoComplete="current-password"
+                        required
+                        className="h-10 pl-9"
+                      />
+                    </div>
+                  </div>
 
-              <Button
-                type="submit"
-                className="h-10 w-full text-[15px]"
-                disabled={submitting}
-              >
-                {submitting ? "Entrando..." : "Entrar"}
-              </Button>
-            </form>
+                  {error && (
+                    <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                      {error}
+                    </p>
+                  )}
+
+                  <Button
+                    type="submit"
+                    className="h-10 w-full text-[15px]"
+                    disabled={submitting}
+                  >
+                    {submitting ? "Entrando..." : "Entrar"}
+                  </Button>
+                </form>
+
+                <button
+                  type="button"
+                  onClick={() => setView("forgot")}
+                  className="mt-4 w-full text-center text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Esqueci minha senha
+                </button>
+              </>
+            )}
+
+            {view === "signup" && (
+              <>
+                <div className="mb-6 space-y-1">
+                  <h2 className="text-xl font-semibold text-foreground">
+                    Solicitar acesso
+                  </h2>
+                  <p className="text-sm text-muted-foreground">
+                    As contas do Tennis OS são criadas manualmente pela nossa equipe.
+                    Envie seus dados e entraremos em contato para configurar o seu
+                    acesso.
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="req-name">Nome</Label>
+                    <div className="relative">
+                      <User className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        id="req-name"
+                        value={reqName}
+                        onChange={(e) => setReqName(e.target.value)}
+                        className="h-10 pl-9"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="req-email">Email</Label>
+                    <div className="relative">
+                      <Mail className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        id="req-email"
+                        type="email"
+                        value={reqEmail}
+                        onChange={(e) => setReqEmail(e.target.value)}
+                        className="h-10 pl-9"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="req-message">Mensagem (opcional)</Label>
+                    <textarea
+                      id="req-message"
+                      value={reqMessage}
+                      onChange={(e) => setReqMessage(e.target.value)}
+                      rows={3}
+                      className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  </div>
+
+                  <Button
+                    className="h-10 w-full text-[15px]"
+                    render={<a href={requestAccessHref} />}
+                  >
+                    Enviar solicitação
+                  </Button>
+                  <p className="text-center text-xs text-muted-foreground">
+                    Ou escreva para{" "}
+                    <a
+                      className="underline hover:text-foreground"
+                      href={`mailto:${SUPPORT_EMAIL}`}
+                    >
+                      {SUPPORT_EMAIL}
+                    </a>
+                  </p>
+                </div>
+              </>
+            )}
+
+            {view === "forgot" && (
+              <>
+                <div className="mb-6 space-y-1">
+                  <h2 className="text-xl font-semibold text-foreground">
+                    Redefinir senha
+                  </h2>
+                  <p className="text-sm text-muted-foreground">
+                    Informe seu e-mail. Se existir uma conta ativa, enviaremos as
+                    instruções de redefinição.
+                  </p>
+                </div>
+
+                <form className="space-y-4" onSubmit={handlePasswordReset}>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reset-email">Email</Label>
+                    <div className="relative">
+                      <Mail className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        id="reset-email"
+                        type="email"
+                        value={resetEmail}
+                        onChange={(e) => setResetEmail(e.target.value)}
+                        autoComplete="email"
+                        required
+                        className="h-10 pl-9"
+                      />
+                    </div>
+                  </div>
+
+                  {resetSubmitted && (
+                    <p className="rounded-md bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">
+                      Se houver uma conta ativa para este e-mail, enviaremos as
+                      instruções em instantes.
+                    </p>
+                  )}
+                  {error && (
+                    <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                      {error}
+                    </p>
+                  )}
+                  <Button className="h-10 w-full text-[15px]" type="submit" disabled={submitting}>
+                    {submitting ? "Enviando..." : "Enviar instruções"}
+                  </Button>
+                </form>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView("login");
+                    setError(null);
+                    setResetSubmitted(false);
+                  }}
+                  className="mt-4 flex w-full items-center justify-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  Voltar para entrar
+                </button>
+              </>
+            )}
           </div>
 
-          <p className="mt-6 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
-            <Calendar className="h-3.5 w-3.5" />
-            Copiloto de agendamento via WhatsApp
-          </p>
+          <div className="mt-6 flex items-center justify-center gap-4 text-xs text-muted-foreground">
+            <Link href="/" className="flex items-center gap-1.5 hover:text-foreground">
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Voltar ao site
+            </Link>
+            <span className="flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5" />
+              Copiloto de agendamento via WhatsApp
+            </span>
+          </div>
         </div>
       </div>
     </div>

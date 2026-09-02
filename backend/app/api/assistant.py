@@ -135,6 +135,7 @@ def send_message(
         pending = PendingActionCandidate(
             id=candidate.id,
             preview_text=candidate.preview_text,
+            advisory_text=candidate.advisory_text,
             affected_entities=candidate.affected_entities,
             expires_at=candidate.expires_at.isoformat(),
         )

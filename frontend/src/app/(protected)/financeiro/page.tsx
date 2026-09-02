@@ -77,7 +77,7 @@ export default function FinanceiroPage() {
     fetchSession().then(async (user) => {
       if (!active) return;
       if (!sessionHasFeature(user, "commercial_financials")) {
-        router.replace("/");
+        router.replace("/agenda");
         return;
       }
       try {

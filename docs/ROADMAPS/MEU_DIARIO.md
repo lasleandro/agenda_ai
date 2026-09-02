@@ -13,9 +13,9 @@ disponível em cada quadra, por exemplo.
 - Fazer a agenda compatível com o Google Agenda e Outlook Calendar, para replicar os eventos nesses padrões de mercado.
 
 
-Senhas de teste: 
-admin@agenda.ai / agenda-dev-2026 — platform admin, lands on the tile grid
-joao@agenda.ai / agenda-dev-2026 — direct professional login (the existing "Joao" tenant)
+Credenciais históricas de teste removidas em 2026-09-01: qualquer senha antes
+registrada aqui deve ser tratada como comprometida. Use o fluxo de ativação ou
+redefinição de senha para contas locais existentes.
 
 
 

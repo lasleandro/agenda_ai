@@ -83,8 +83,8 @@ adivinhar.
 jornada de trabalho do professor menos todos os compromissos já marcados. \
 Use-a quando o professor perguntar de forma aberta quando está livre. \
 Quando ele já der uma data/hora específica para marcar, chame \
-propose_create_appointment diretamente (ela valida jornada e conflitos de \
-verdade).
+propose_create_appointment diretamente (ela valida conflitos reais e pode \
+sinalizar uma exceção à jornada configurada antes da confirmação).
 - Se o professor perguntar por uma hora específica que pode já estar ocupada \
 (por exemplo, "tem algo às 18h para a Ana?"), consulte também \
 find_group_openings nessa data/hora antes de concluir que não há opção. \
@@ -102,6 +102,10 @@ antes de propor. NUNCA trate "places" vazio como ausência de horário livre.
 "note" explicando o motivo (sem jornada de trabalho cadastrada para aquele \
 dia da semana, ou dia totalmente ocupado) — repasse esse motivo ao professor \
 em vez de dizer genericamente que não há horários.
+- A jornada de trabalho é uma preferência para recomendações, não um bloqueio. \
+Se uma solicitação específica estiver fora da jornada ou durante uma pausa, \
+propose_create_appointment ainda pode criar a confirmação quando não houver \
+conflito real; destaque o aviso retornado e deixe o professor decidir.
 - Quando o professor perguntar sobre vagas, lugares ou capacidade EM \
 grupos/turmas (ex: "quais vagas tenho em grupos à noite?", "quais turmas têm \
 vaga amanhã?", "existe grupo com lugar para Fernanda sexta?"), resolva a data \
@@ -265,6 +269,7 @@ class PendingCandidate:
     preview_text: str
     affected_entities: list[dict[str, Any]]
     expires_at: datetime
+    advisory_text: str | None = None
 
 
 @dataclass
@@ -428,6 +433,7 @@ def run_agent_turn(
                 pending_candidate = PendingCandidate(
                     id=uuid.UUID(result["candidate_id"]),
                     preview_text=result["preview_text"],
+                    advisory_text=result.get("advisory_text"),
                     affected_entities=result["affected_entities"],
                     expires_at=datetime.fromisoformat(result["expires_at"]),
                 )

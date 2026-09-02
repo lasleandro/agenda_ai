@@ -262,15 +262,25 @@ def _handle_agent_turn(
             .filter(OperatorActionCandidate.id == response.pending_candidate.id)
             .first()
         )
-        previews = (
-            [c.preview_text for c in _pending_candidates_for_turn(
-                db, professional.id, pending_row.correlation_id
-            )]
+        proposals = (
+            _pending_candidates_for_turn(db, professional.id, pending_row.correlation_id)
             if pending_row is not None
-            else [response.pending_candidate.preview_text]
+            else []
         )
+        previews = [proposal.preview_text for proposal in proposals] or [
+            response.pending_candidate.preview_text
+        ]
+        advisories = [
+            proposal.resolved_arguments.get("journey_advisory")
+            for proposal in proposals
+            if proposal.resolved_arguments.get("journey_advisory")
+        ]
+        if not advisories and response.pending_candidate.advisory_text:
+            advisories = [response.pending_candidate.advisory_text]
+        advisory_body = "\n".join(advisories)
+        advisory_text = f"\n\n{advisory_body}" if advisory_body else ""
         reply = (
-            f"{reply}\n\n" + "\n".join(previews) + "\n\n"
+            f"{reply}\n\n" + "\n".join(previews) + advisory_text + "\n\n"
             "Responda *sim* para confirmar ou *nao* para cancelar."
         )
     return reply

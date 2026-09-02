@@ -177,8 +177,9 @@ export function WorkJourneySection({
       <CardHeader>
         <CardTitle>Jornada de trabalho</CardTitle>
         <CardDescription>
-          Defina dias úteis, finais de semana e pausas. A jornada alimentará os
-          cálculos de capacidade.
+          Defina dias úteis, finais de semana e pausas. A jornada orienta
+          recomendações de horário e cálculos de capacidade, sem bloquear
+          agendamentos confirmados.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">

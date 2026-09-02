@@ -51,7 +51,7 @@ export default function ScheduledTasksPage() {
     void fetchSession().then((user) => {
       if (!active) return;
       if (!user) router.replace("/login");
-      else if (user.role !== "platform_admin") router.replace("/");
+      else if (user.role !== "platform_admin") router.replace("/agenda");
       else setAuthorized(true);
     });
     return () => { active = false; };

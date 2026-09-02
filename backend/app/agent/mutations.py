@@ -1430,6 +1430,9 @@ def propose_create_appointment(
         )
     except HTTPException as exc:
         return {"error": exc.detail}
+    journey_advisory = appointments.get_work_journey_advisory(
+        db, professional_id, start_at=parsed_start, end_at=parsed_end
+    ).message
 
     local_start = parsed_start.astimezone(TIMEZONE)
     courtesy_label = " (Cortesia)" if billing_type == "courtesy" else ""
@@ -1470,6 +1473,7 @@ def propose_create_appointment(
             "service": service,
             "billing_type": billing_type,
             "is_recurring": is_recurring,
+            "journey_advisory": journey_advisory,
         },
         preview_text=preview_text,
         affected_entities=[
@@ -1622,6 +1626,9 @@ def propose_redeem_makeup_credit(
         )
     except HTTPException as exc:
         return {"error": exc.detail}
+    journey_advisory = appointments.get_work_journey_advisory(
+        db, professional_id, start_at=parsed_start, end_at=parsed_end
+    ).message
 
     local_start = parsed_start.astimezone(TIMEZONE)
     preview_text = (
@@ -1638,6 +1645,7 @@ def propose_redeem_makeup_credit(
             "place_id": place_id,
             "start_at": parsed_start.isoformat(),
             "end_at": parsed_end.isoformat(),
+            "journey_advisory": journey_advisory,
         },
         preview_text=preview_text,
         affected_entities=[
@@ -2069,6 +2077,10 @@ def propose_reschedule_occurrence(
     except HTTPException as exc:
         return {"error": exc.detail}
 
+    journey_advisory = appointments.get_work_journey_advisory(
+        db, professional_id, start_at=parsed_new_start, end_at=parsed_new_end
+    ).message
+
     effective_place_id = str(place_resolution.place_id)
     new_place_name = _place_name(db, place_resolution.place_id)
 
@@ -2090,6 +2102,7 @@ def propose_reschedule_occurrence(
             "new_start_at": parsed_new_start.isoformat(),
             "new_end_at": parsed_new_end.isoformat(),
             "new_place_id": effective_place_id,
+            "journey_advisory": journey_advisory,
         },
         preview_text=preview_text,
         affected_entities=[
@@ -2397,6 +2410,9 @@ def propose_fulfill_waitlist_with_appointment(
         )
     except HTTPException as exc:
         return {"error": exc.detail}
+    journey_advisory = appointments.get_work_journey_advisory(
+        db, professional_id, start_at=start_at, end_at=end_at
+    ).message
 
     resolved_service = (service or "Aula").strip() or "Aula"
     preview_text = (
@@ -2413,6 +2429,7 @@ def propose_fulfill_waitlist_with_appointment(
             "waitlist_entry_id": waitlist_entry_id,
             "place_id": place_id,
             "service": resolved_service,
+            "journey_advisory": journey_advisory,
         },
         preview_text=preview_text,
         affected_entities=[
@@ -2831,6 +2848,7 @@ def _pending_result(candidate: OperatorActionCandidate) -> dict[str, Any]:
         "requires_confirmation": True,
         "candidate_id": str(candidate.id),
         "preview_text": candidate.preview_text,
+        "advisory_text": candidate.resolved_arguments.get("journey_advisory"),
         "affected_entities": candidate.affected_entities,
         "expires_at": candidate.expires_at.isoformat(),
     }

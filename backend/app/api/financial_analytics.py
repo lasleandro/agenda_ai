@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import date
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
@@ -69,6 +70,9 @@ def get_financial_dashboard(
     date_from: date = Query(...),
     date_to: date = Query(...),
     place_id: list[uuid.UUID] | None = Query(default=None),
+    capacity_mode: Literal["configured_only", "estimated_when_unconfigured"] = Query(
+        default="configured_only"
+    ),
     db: Session = Depends(get_db),
     professional_id: uuid.UUID = Depends(require_commercial_financials),
 ):
@@ -80,6 +84,7 @@ def get_financial_dashboard(
             date_from,
             date_to,
             place_id,
+            capacity_mode,
         )
     except ValueError as error:
         raise _not_found_from_value_error(error) from error

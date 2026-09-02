@@ -44,19 +44,27 @@ the financial feature is redirected to the home page.
   existing immutable input/result snapshot behavior.
 - The simulated and real calendar views are read-only. They never create,
   alter, or cancel appointments.
-- The page reuses the existing dashboard baseline, financial configuration,
-  and saved-scenario endpoints. It adds no financial API or calculation;
-  Potential uses the already-returned capacity presets.
+- When no journey is configured, the simulator uses an explicitly labeled
+  estimate: 8 hours per day from Monday through Saturday (48 hours per full
+  week), valued at the regular generic rate. The banner directs the instructor
+  to **Configurações → Jornada de trabalho**.
+- Estimated capacity has no inferred place or clock time. It is not applied to
+  a selected location, and the simulated-agenda tab explains that configuring
+  the journey is required before it can render appointment-like blocks.
+- The standard Financeiro dashboard remains configured-only; this fallback is
+  requested only by the simulator.
 
 ## Data sources
 
 | Data | Endpoint |
 |---|---|
 | Financial configuration and locations | `GET /api/financial/configuration` |
-| Capacity baseline | `GET /api/financial/dashboard?date_from=&date_to=&place_id=` |
+| Capacity baseline | `GET /api/financial/dashboard?date_from=&date_to=&place_id=&capacity_mode=estimated_when_unconfigured` |
 | Saved scenarios | `GET /api/financial/scenarios` |
 | Evaluate scenario | `POST /api/financial/scenarios/evaluate` |
 | Save scenario | `POST /api/financial/scenarios` |
 
 The scenario route is intentionally client-composed. It preserves tenant scope
 and the existing `commercial_financials` feature boundary on every request.
+`FinancialScenarioInput.capacity_mode` is persisted in the immutable snapshot,
+alongside response metadata identifying configured versus estimated capacity.

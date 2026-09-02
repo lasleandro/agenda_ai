@@ -8,7 +8,9 @@ from fastapi import Depends, HTTPException, Request
 import jwt
 
 from app.core.security import SESSION_COOKIE_NAME, decode_access_token
+from app.core.settings import allowed_origins, is_production
 from app.database import SessionLocal
+from app.models import User
 from app.services.tenant_features import COMMERCIAL_FINANCIALS, is_tenant_feature_enabled
 
 
@@ -29,13 +31,44 @@ def require_authenticated(request: Request) -> dict:
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    return {
-        "user_id": payload.get("sub"),
-        "email": payload.get("email"),
-        "role": payload.get("role"),
-        "professional_id": payload.get("professional_id"),
-        "impersonating": payload.get("impersonating", False),
-    }
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and is_production():
+        origin = request.headers.get("origin", "").rstrip("/")
+        if origin not in allowed_origins():
+            raise HTTPException(status_code=403, detail="Invalid request origin")
+
+    try:
+        user_id = uuid.UUID(payload["sub"])
+        token_auth_version = int(payload["auth_version"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    db = SessionLocal()
+    try:
+        user = db.get(User, user_id)
+        if user is None or user.status != "active" or user.auth_version != token_auth_version:
+            raise HTTPException(status_code=401, detail="Session is no longer active")
+
+        professional_id = None
+        impersonating = False
+        if user.role == "professional":
+            professional_id = str(user.professional_id) if user.professional_id else None
+        elif user.role == "platform_admin":
+            selected = payload.get("professional_id")
+            if selected is not None:
+                try:
+                    professional_id = str(uuid.UUID(selected))
+                    impersonating = bool(payload.get("impersonating", False))
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=401, detail="Invalid token")
+        return {
+            "user_id": str(user.id),
+            "email": user.email,
+            "role": user.role,
+            "professional_id": professional_id,
+            "impersonating": impersonating,
+        }
+    finally:
+        db.close()
 
 
 def require_professional_id(user: dict = Depends(require_authenticated)) -> uuid.UUID:

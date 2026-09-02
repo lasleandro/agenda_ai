@@ -31,9 +31,8 @@ def assert_no_event_conflict(
 ) -> None:
     """Events and classes share one busy-time set — an event can't be
     created on top of an existing class, same as the reverse
-    (app.services.appointments.assert_no_conflict). Deliberately does NOT
-    check assert_within_work_journey — a Saturday tournament is by
-    definition outside normal teaching hours."""
+    (app.services.appointments.assert_no_conflict). Work journey is advisory
+    for every booking, so a Saturday tournament remains a valid event."""
     if has_appointment_overlap(
         db, professional_id, start_at=start_at, end_at=end_at, is_recurring=False
     ):

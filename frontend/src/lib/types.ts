@@ -471,6 +471,19 @@ export interface FinancialAnalyticsAssumptions {
   excluded_constraints: string[];
 }
 
+export type FinancialCapacityMode =
+  | "configured_only"
+  | "estimated_when_unconfigured";
+
+export interface FinancialCapacitySource {
+  mode: "configured" | "estimated_default";
+  configured: boolean;
+  working_days: number[];
+  minutes_per_working_day: number | null;
+  rate_basis: "configured" | "regular";
+  configuration_path: string | null;
+}
+
 export interface FinancialMetricBreakdown {
   key: string;
   label: string;
@@ -517,6 +530,7 @@ export interface CapacitySourceDetail {
 
 export interface FinancialDashboardDetail {
   assumptions: FinancialAnalyticsAssumptions;
+  capacity_source: FinancialCapacitySource;
   available_minutes: number;
   booked_minutes: number;
   unused_minutes: number;
@@ -588,6 +602,7 @@ export interface FinancialScenarioInput {
   date_from: string;
   date_to: string;
   place_ids?: string[] | null;
+  capacity_mode?: FinancialCapacityMode;
   mode: FinancialScenarioMode;
   occupancy_pct: number;
   participant_mix?: ParticipantMixItem[] | null;
@@ -631,6 +646,7 @@ export interface FinancialScenarioCustomerEstimate {
 
 export interface FinancialScenarioResult {
   assumptions: FinancialAnalyticsAssumptions;
+  capacity_source?: FinancialCapacitySource | null;
   mode: FinancialScenarioMode;
   participant_mix: ParticipantMixItem[];
   baseline: FinancialScenarioMetric;
@@ -1024,6 +1040,7 @@ export interface AssistantToolCallTrace {
 export interface PendingActionCandidate {
   id: string;
   preview_text: string;
+  advisory_text?: string | null;
   affected_entities: { entity_type: string; entity_id: string; label: string }[];
   expires_at: string;
 }

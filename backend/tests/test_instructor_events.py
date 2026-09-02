@@ -308,8 +308,7 @@ def test_event_creation_ignores_cancelled_events_and_appointments() -> None:
 
 
 def test_event_creation_not_restricted_by_work_journey() -> None:
-    """Events are deliberately exempt from assert_within_work_journey — a
-    Saturday tournament is outside normal teaching hours by definition."""
+    """Events remain valid outside usual work preferences."""
     db = SessionLocal()
     professional, _ = _make_tenant(db)
     try:

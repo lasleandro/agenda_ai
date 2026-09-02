@@ -31,6 +31,8 @@ A passive WhatsApp Business copilot that converts conversations between independ
 - [Project brief](docs/whatsapp_schedule_copilot_poc_project_brief_v0.1.md) — product thesis, architecture, domain model, and design principles. Source of truth for *why* decisions were made.
 - [Implementation roadmap](docs/ROADMAPS/whatsapp_schedule_copilot_poc_roadmap_v0.1.md) — phased, actionable plan for *what to build next*. Start here.
 - [Multi-tenancy roadmap](docs/ROADMAPS/multi_tenancy_roadmap_v0.1_2026-08-04.md) — assessment and phased plan for onboarding a second instructor (tenant isolation, auth, admin impersonation).
+- [Authentication, email verification, and password reset roadmap](docs/ROADMAPS/auth_email_verification_password_reset_roadmap_v0.1_2026-09-01.md) — Agenda/HoraH assessment and production path for verified manual onboarding, provider-neutral GoDaddy SMTP, password strength feedback, secure recovery, and session hardening.
+- [Authentication email configuration](docs/auth_email_configuration.md) — environment contract, GoDaddy SMTP profiles, worker operation, and production release checks.
 - [Operational ontology & AI agent roadmap](docs/ROADMAPS/operational_ontology_and_agent_roadmap_v0.2_2026-08-05.md) — historical roadmap; its place-stay semantics are superseded by the roadmap below.
 - [Place stays & schedule overlay roadmap](docs/ROADMAPS/place_stays_and_schedule_overlay_roadmap_v0.1_2026-08-15.md) — approved, trackable plan to make Meus Locais a neutral place/time/pricing substrate beneath classes and events, including Agenda, Financeiro, waitlist, makeup, and active/passive agent migration.
 - [Group capacity & slot promotion roadmap](docs/ROADMAPS/group_capacity_and_slot_promotion_roadmap_v0.1_2026-08-21.md) — implemented locally: empty and partially occupied group slots, explicit individual-to-group promotion, dated guests, capacity-aware Agenda/agent scheduling, and a separately approved remote rollout checklist.
@@ -67,7 +69,7 @@ Always starts the FastAPI backend (`:8005`) and the Next.js frontend (`:3010`, p
 | Flag | What it adds | When you need it |
 |---|---|---|
 | `--tunnel` | A `cloudflared` quick tunnel exposing the backend, with the webhook URL printed once connected and auto-recorded in [docs/local_dev_webhook_tunnel.md](docs/local_dev_webhook_tunnel.md) | Registering/testing the real YCloud webhook |
-| `--worker` | Candidate, passive-escalation, and scheduled-task workers, polling pending work, ambiguity deliveries, and due tenant tasks | Running WhatsApp processing and scheduled daily agenda delivery |
+| `--worker` | Candidate, passive-escalation, scheduled-task, and authentication-email workers | Running WhatsApp processing, scheduled daily agenda delivery, and activation/reset email delivery |
 
 Both are additive and commonly used together: `python start_server.py --tunnel --worker`. Press `Ctrl+C` to stop everything started.
 

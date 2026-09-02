@@ -281,6 +281,11 @@ function ActionPreviewCard({
         </Badge>
       </div>
       <p className="mt-2 text-foreground">{candidate.preview_text}</p>
+      {candidate.advisory_text && (
+        <p className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-2 py-1.5 text-xs text-amber-950 dark:text-amber-100">
+          {candidate.advisory_text}
+        </p>
+      )}
       {status === "pending" ? (
         <div className="mt-3 flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={handleReject} disabled={busy}>

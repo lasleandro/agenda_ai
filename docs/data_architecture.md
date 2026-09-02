@@ -601,9 +601,9 @@ Key indexes (defined in model files, applied via Alembic):
 POST /api/appointments
   → calendar.py validates contact/place belong to the tenant, calls
     appointments.create_appointment()
-    → assert_no_conflict(): validates against the work journey (fails open
-      if the professional never configured one) + existing appointment/
-      class overlap
+    → assert_no_conflict(): validates existing appointment/class/event overlap
+      only; configured journey is returned as advisory guidance in assistant
+      confirmation flows
     → INSERT INTO appointments (write)
     → INSERT INTO appointment_transitions (status history)
     → Return detail

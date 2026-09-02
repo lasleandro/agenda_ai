@@ -41,7 +41,7 @@ export default function SelectTenantPage() {
         return;
       }
       if (user.role !== "platform_admin") {
-        router.replace("/");
+        router.replace("/agenda");
         return;
       }
       try {
@@ -61,7 +61,7 @@ export default function SelectTenantPage() {
     setError(null);
     try {
       await impersonate(tenant.id);
-      router.replace("/");
+      router.replace("/agenda");
     } catch (requestError) {
       if (requestError instanceof AuthRequestError && requestError.status === 401) {
         router.replace("/login");

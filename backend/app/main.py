@@ -26,6 +26,7 @@ from app.api.revenue import router as revenue_router
 from app.api.rules import router as rules_router
 from app.api.waitlist import router as waitlist_router
 from app.api.whatsapp import router as whatsapp_router
+from app.core.settings import allowed_origins, is_production, validate_startup_settings
 
 app = FastAPI(
     title="Tennis OS",
@@ -38,14 +39,39 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3010",
-        "http://127.0.0.1:3010",
-    ],
+    allow_origins=allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def validate_production_configuration() -> None:
+    """Fail early when production authentication/email settings are unsafe."""
+    validate_startup_settings()
+    if is_production():
+        from app.integrations.email.smtp import SmtpEmailSender
+
+        SmtpEmailSender()
+
+
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+    """Apply conservative browser hardening without changing API responses."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+        )
+    if is_production():
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 
 app.include_router(admin_router)
 app.include_router(appointment_candidates_router)

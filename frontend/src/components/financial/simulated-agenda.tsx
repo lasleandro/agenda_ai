@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
@@ -85,9 +86,11 @@ function realSlotEvent(slot: RecurringSlot): EventInput | null {
 export function SimulatedAgenda({
   events,
   period,
+  estimated = false,
 }: {
   events: FinancialScenarioScheduleEvent[];
   period: { from: string; to: string };
+  estimated?: boolean;
 }) {
   const [selectedEvent, setSelectedEvent] =
     useState<FinancialScenarioScheduleEvent | null>(null);
@@ -176,7 +179,9 @@ export function SimulatedAgenda({
         </CardTitle>
         <CardDescription>
           {agendaView === "simulated"
-            ? "Alocação ilustrativa da capacidade do cenário. Não altera a agenda real."
+            ? estimated
+              ? "A estimativa não inventa horários ou locais para a agenda simulada."
+              : "Alocação ilustrativa da capacidade do cenário. Não altera a agenda real."
             : "Agenda atual do período selecionado, em modo somente leitura."}
         </CardDescription>
       </CardHeader>
@@ -197,7 +202,20 @@ export function SimulatedAgenda({
             Real
           </Button>
         </div>
-        {agendaView === "simulated" && calendarEvents.length === 0 ? (
+        {agendaView === "simulated" && estimated ? (
+          <div className="space-y-2 py-8 text-center text-sm text-muted-foreground">
+            <p>
+              A capacidade estimada aparece nos resultados, mas uma agenda
+              simulada por horário e local exige sua jornada configurada.
+            </p>
+            <Link
+              href="/minhas-regras"
+              className="inline-flex h-8 items-center rounded-md border px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+            >
+              Configurar jornada
+            </Link>
+          </div>
+        ) : agendaView === "simulated" && calendarEvents.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
             Este cenário não preenche horários reservados no período selecionado.
           </p>

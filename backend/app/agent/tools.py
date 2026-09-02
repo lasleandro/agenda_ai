@@ -356,8 +356,9 @@ def find_instructor_openings(
     if not financial_capacity.load_net_work_ranges(db, professional_id, target_date):
         result["note"] = (
             "O professor não tem jornada de trabalho cadastrada para este dia da "
-            "semana — por isso não há horários livres a reportar. Diga isso ao "
-            "professor (não diga apenas que a agenda está cheia)."
+            "semana — por isso não há horários recomendados a reportar. Oriente "
+            "a configuração em Configurações > Jornada de trabalho (não diga "
+            "apenas que a agenda está cheia)."
         )
     else:
         result["note"] = (

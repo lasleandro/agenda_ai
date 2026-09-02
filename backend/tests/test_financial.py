@@ -1243,6 +1243,168 @@ def test_financial_dashboard_top_line_uses_work_journey_not_recurring_slots() ->
         db.close()
 
 
+def test_simulator_uses_estimated_capacity_without_work_journey() -> None:
+    db = SessionLocal()
+    professional, owner, admin, cookies = _create_tenant(db, enabled=True)
+    try:
+        rates = client.put(
+            "/api/financial/rates/default",
+            json={
+                "rates": [
+                    {
+                        "time_category": time_category,
+                        "participant_count": participant_count,
+                        "hourly_rate_cents": 2500,
+                    }
+                    for time_category in ("regular", "prime")
+                    for participant_count in range(1, 5)
+                ]
+            },
+            cookies=cookies,
+        )
+        assert rates.status_code == 200
+
+        standard = client.get(
+            "/api/financial/dashboard",
+            params={"date_from": "2026-08-10", "date_to": "2026-08-16"},
+            cookies=cookies,
+        )
+        assert standard.status_code == 200
+        assert standard.json()["available_minutes"] == 0
+        assert standard.json()["capacity_source"] == {
+            "mode": "configured",
+            "configured": False,
+            "working_days": [],
+            "minutes_per_working_day": None,
+            "rate_basis": "configured",
+            "configuration_path": None,
+        }
+
+        estimated = client.get(
+            "/api/financial/dashboard",
+            params={
+                "date_from": "2026-08-10",
+                "date_to": "2026-08-16",
+                "capacity_mode": "estimated_when_unconfigured",
+            },
+            cookies=cookies,
+        )
+        assert estimated.status_code == 200
+        assert estimated.json()["available_minutes"] == 2_880
+        assert estimated.json()["capacity_source"] == {
+            "mode": "estimated_default",
+            "configured": False,
+            "working_days": [0, 1, 2, 3, 4, 5],
+            "minutes_per_working_day": 480,
+            "rate_basis": "regular",
+            "configuration_path": "/minhas-regras",
+        }
+
+        scenario = client.post(
+            "/api/financial/scenarios/evaluate",
+            json={
+                "name": "Estimativa inicial",
+                "date_from": "2026-08-10",
+                "date_to": "2026-08-16",
+                "capacity_mode": "estimated_when_unconfigured",
+                "mode": "all_individual",
+                "occupancy_pct": 100,
+                "rate_overrides": [],
+            },
+            cookies=cookies,
+        )
+        assert scenario.status_code == 200
+        assert scenario.json()["scenario"] == {
+            "available_minutes": 2_880,
+            "utilized_minutes": 2_880,
+            "occupancy_pct": 100.0,
+            "participant_hours": 48.0,
+            "projected_revenue_cents": 120_000,
+        }
+        assert scenario.json()["simulated_schedule"] == []
+        assert scenario.json()["capacity_source"]["mode"] == "estimated_default"
+
+        saved = client.post(
+            "/api/financial/scenarios",
+            json={
+                "name": "Estimativa salva",
+                "date_from": "2026-08-10",
+                "date_to": "2026-08-16",
+                "capacity_mode": "estimated_when_unconfigured",
+                "mode": "all_individual",
+                "occupancy_pct": 100,
+                "rate_overrides": [],
+            },
+            cookies=cookies,
+        )
+        assert saved.status_code == 201
+        assert saved.json()["input_snapshot"]["capacity_mode"] == (
+            "estimated_when_unconfigured"
+        )
+        assert saved.json()["result_snapshot"]["capacity_source"]["mode"] == (
+            "estimated_default"
+        )
+
+        invalid_mode = client.get(
+            "/api/financial/dashboard",
+            params={
+                "date_from": "2026-08-10",
+                "date_to": "2026-08-16",
+                "capacity_mode": "unsupported",
+            },
+            cookies=cookies,
+        )
+        assert invalid_mode.status_code == 422
+
+        place = Place(
+            professional_id=professional.id,
+            name="Quadra da estimativa",
+            normalized_name="quadra da estimativa",
+        )
+        db.add(place)
+        db.commit()
+        place_filtered = client.get(
+            "/api/financial/dashboard",
+            params={
+                "date_from": "2026-08-10",
+                "date_to": "2026-08-16",
+                "place_id": str(place.id),
+                "capacity_mode": "estimated_when_unconfigured",
+            },
+            cookies=cookies,
+        )
+        assert place_filtered.status_code == 200
+        assert place_filtered.json()["available_minutes"] == 0
+        assert place_filtered.json()["capacity_source"]["mode"] == "estimated_default"
+
+        db.add(
+            WorkJourneyInterval(
+                professional_id=professional.id,
+                day_of_week=0,
+                interval_type="work",
+                start_time=time(8, 0),
+                end_time=time(12, 0),
+            )
+        )
+        db.commit()
+        configured = client.get(
+            "/api/financial/dashboard",
+            params={
+                "date_from": "2026-08-10",
+                "date_to": "2026-08-16",
+                "capacity_mode": "estimated_when_unconfigured",
+            },
+            cookies=cookies,
+        )
+        assert configured.status_code == 200
+        assert configured.json()["available_minutes"] == 240
+        assert configured.json()["capacity_source"]["mode"] == "configured"
+        assert configured.json()["capacity_source"]["configured"] is True
+    finally:
+        _cleanup(db, professionals=[professional], users=[owner, admin])
+        db.close()
+
+
 def test_financial_operational_analytics_classifies_outcomes_and_rankings() -> None:
     db = SessionLocal()
     professional, owner, admin, cookies = _create_tenant(db, enabled=True)

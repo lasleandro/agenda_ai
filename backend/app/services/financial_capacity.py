@@ -39,6 +39,8 @@ PART_OF_DAY_RANGES = (
     ("afternoon", "Tarde", 12 * 60, 18 * 60),
     ("evening", "Noite", 18 * 60, 24 * 60),
 )
+ESTIMATED_WORKING_DAYS = (0, 1, 2, 3, 4, 5)
+ESTIMATED_MINUTES_PER_WORKING_DAY = 8 * 60
 
 
 @dataclass(frozen=True)
@@ -189,6 +191,31 @@ def load_net_work_ranges(
     apart from "journey fully booked" — two very different answers to
     "when am I free?" that an empty free-range list alone can't distinguish."""
     return _load_net_work_ranges_by_day(db, professional_id)[target_date.weekday()]
+
+
+def has_configured_work_journey(
+    db: Session,
+    professional_id: uuid.UUID,
+) -> bool:
+    """Whether the professional deliberately configured any journey interval."""
+    return (
+        db.query(WorkJourneyInterval.id)
+        .filter(WorkJourneyInterval.professional_id == professional_id)
+        .first()
+        is not None
+    )
+
+
+def estimated_capacity_minutes(
+    date_from: date,
+    date_to: date,
+) -> int:
+    """Generic simulator baseline: 8 regular-price hours, Monday–Saturday."""
+    return sum(
+        ESTIMATED_MINUTES_PER_WORKING_DAY
+        for local_date in iter_dates(date_from, date_to)
+        if local_date.weekday() in ESTIMATED_WORKING_DAYS
+    )
 
 
 def total_work_journey_minutes(

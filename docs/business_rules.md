@@ -19,19 +19,18 @@ validation, and agent prompt instructions.
   execute time (re-validated inside the transaction, since state may have
   changed).
 
-### 1.2 Work Journey Boundaries
+### 1.2 Work Journey Guidance
 
-- Appointments must fall within the instructor's configured work journey
-  intervals (`WorkJourneyInterval` rows), and must not overlap a break
-  interval.
-- Each day of week has zero or more work intervals and optionally break
-  intervals.
-- **Fails open until configured:** a professional who has never added any
-  `WorkJourneyInterval` row (any day) is left unrestricted — the check
-  only starts enforcing once they've actually set working hours, so
-  onboarding isn't blocked by a screen they haven't visited yet. Once at
-  least one row exists, appointments outside the configured intervals for
-  that weekday are rejected.
+- Work intervals and pauses (`WorkJourneyInterval` rows) describe the
+  instructor's usual working preference. Each day has zero or more work
+  intervals and optionally break intervals.
+- A conflict-free appointment may be created outside a configured work interval
+  or during a configured pause. The active assistant shows a non-blocking
+  advisory before confirmation; real appointment, class, and event conflicts
+  remain hard failures.
+- Open-ended availability recommendations use the configured journey. If no
+  journey exists for a weekday, the assistant explains that it has no preferred
+  openings to recommend and directs the instructor to Configurações.
 
 ### 1.3 Recurrence Expansion
 
@@ -186,6 +185,16 @@ Every booked occurrence must have a `place_id` to be counted at all
 dashboard/agent appointment creation paths always require a place, so this
 should never happen in real usage, but if it ever does the occurrence is
 silently excluded from both capacity and revenue.
+
+**Simulator estimate before configuration:** the standard Financeiro dashboard
+remains configured-only. The Financial Simulator may request
+`capacity_mode=estimated_when_unconfigured`; only when the tenant has zero
+journey rows, it uses generic capacity of 8 regular-price hours per day from
+Monday through Saturday (48 hours per full week), with Sunday excluded. It is
+not assigned to a place or a clock time, so the simulated agenda stays empty
+until the instructor configures Jornada de trabalho. Any configured interval,
+including a partial week, is authoritative and is never supplemented with
+default days.
 
 **Place filter narrows both sides together:** when `GET
 /api/financial/dashboard` is called with `place_id` (viewing one or more
@@ -449,9 +458,10 @@ agent (Mode 1) reachable over WhatsApp on a separate number
   `cancelled` event or appointment never blocks — same convention as
   `Appointment.status` filtering elsewhere. Confirmed events are also
   subtracted from the agent's free-time and place-availability answers.
-- **Exempt from work-journey enforcement:** Unlike appointments, an event
-  can be created outside the professional's configured work journey — a
-  Saturday tournament is by definition outside normal teaching hours.
+- **Journey-independent:** An event can be created outside the professional's
+  configured work journey — as can a conflict-free appointment after an
+  advisory. A Saturday tournament is still a normal example of work outside
+  usual teaching hours.
 - **Revenue integration is additive, not merged:** Confirmed events'
   `income_cents` are summed into `RevenueSummaryDetail.event_income_cents`
   (`GET /api/revenue/summary`) — surfaced alongside, never merged into,

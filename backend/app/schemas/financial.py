@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 CommercialStatus = Literal["active", "waiting", "paused"]
 ValueSource = Literal["customer", "group", "place", "tenant", "unset"]
+FinancialCapacityMode = Literal["configured_only", "estimated_when_unconfigured"]
 
 
 class CommercialOverrideUpdate(BaseModel):
@@ -165,6 +166,15 @@ class FinancialAnalyticsAssumptions(BaseModel):
     excluded_constraints: list[str]
 
 
+class FinancialCapacitySource(BaseModel):
+    mode: Literal["configured", "estimated_default"]
+    configured: bool
+    working_days: list[int] = Field(default_factory=list)
+    minutes_per_working_day: int | None = None
+    rate_basis: Literal["configured", "regular"]
+    configuration_path: str | None = None
+
+
 class FinancialMetricBreakdown(BaseModel):
     key: str
     label: str
@@ -205,6 +215,7 @@ class CapacitySourceDetail(BaseModel):
 
 class FinancialDashboardDetail(BaseModel):
     assumptions: FinancialAnalyticsAssumptions
+    capacity_source: FinancialCapacitySource
     available_minutes: int
     booked_minutes: int
     unused_minutes: int
@@ -273,6 +284,7 @@ class FinancialScenarioInput(BaseModel):
     date_from: date
     date_to: date
     place_ids: list[uuid.UUID] | None = None
+    capacity_mode: FinancialCapacityMode = "configured_only"
     mode: Literal[
         "all_individual",
         "observed_demand",
@@ -359,6 +371,7 @@ class FinancialScenarioCustomerEstimate(BaseModel):
 
 class FinancialScenarioResult(BaseModel):
     assumptions: FinancialAnalyticsAssumptions
+    capacity_source: FinancialCapacitySource | None = None
     mode: str
     participant_mix: list[ParticipantMixItem]
     baseline: FinancialScenarioMetric

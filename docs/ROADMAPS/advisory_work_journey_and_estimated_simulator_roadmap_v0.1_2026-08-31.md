@@ -2,7 +2,13 @@
 
 ## Status
 
-**Roadmap state:** proposed; no implementation has started.
+**Roadmap state:** implemented locally on 2026-08-31. Focused scheduling,
+assistant, passive-confirmation, and financial integration suites plus
+frontend type-check and lint pass. A complete backend run also surfaced six
+unchanged, date-dependent make-up-credit test failures that use a fixed August
+2026 baseline; they are unrelated to this feature. The repository's Turbopack
+production build remains environment-blocked while processing the pre-existing
+global stylesheet (local process/port permission), not by this change.
 
 Status notation:
 
@@ -200,7 +206,7 @@ instructor later configures a real journey.
 
 ## Delivery phases
 
-### [ ] Phase 0 — Lock contracts and reproduce the baseline
+### [x] Phase 0 — Lock contracts and reproduce the baseline
 
 - [ ] Add focused regression cases that reproduce the current hard rejection:
   one direct service/API booking and one active-agent proposal outside a saved
@@ -222,7 +228,7 @@ instructor later configures a real journey.
 the expected baseline is unambiguous: six eligible days in a full Monday–Sunday
 week produce `2,880` estimated minutes.
 
-### [ ] Phase 1 — Convert journey enforcement into advisory evaluation
+### [x] Phase 1 — Convert journey enforcement into advisory evaluation
 
 **Primary files**
 
@@ -266,7 +272,7 @@ the required environment:
 conda run -n agenda pytest backend/tests/test_calendar_mutations.py backend/tests/test_instructor_events.py -q
 ```
 
-### [ ] Phase 2 — Carry the advisory through every booking experience
+### [x] Phase 2 — Carry the advisory through every booking experience
 
 **Primary files**
 
@@ -319,7 +325,7 @@ conda run -n agenda pytest backend/tests/test_calendar_mutations.py backend/test
 - [ ] A generic assistant answer to “when am I free?” stays limited to the
   configured journey and does not borrow the simulator baseline.
 
-### [ ] Phase 3 — Add isolated estimated capacity to the simulator backend
+### [x] Phase 3 — Add isolated estimated capacity to the simulator backend
 
 **Primary files**
 
@@ -388,7 +394,7 @@ conda run -n agenda pytest backend/tests/test_calendar_mutations.py backend/test
   generic capacity cannot truthfully be attributed to a selected place; a
   selected-place result remains zero until that place has configured capacity.
 
-### [ ] Phase 4 — Make estimated mode explicit in the simulator UI
+### [x] Phase 4 — Make estimated mode explicit in the simulator UI
 
 **Primary files**
 
@@ -452,7 +458,7 @@ conda run -n agenda pytest backend/tests/test_calendar_mutations.py backend/test
   error state; it never shows estimated metadata attached to stale configured
   figures.
 
-### [ ] Phase 5 — Align documentation, contracts, and regression coverage
+### [x] Phase 5 — Align documentation, contracts, and regression coverage
 
 **Documentation files**
 

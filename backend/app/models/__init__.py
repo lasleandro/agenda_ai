@@ -12,6 +12,9 @@ from app.models.appointment_evidence import AppointmentEvidence  # noqa: F401
 from app.models.appointment_transition import AppointmentTransition  # noqa: F401
 from app.models.pending_processing import PendingProcessing  # noqa: F401
 from app.models.user import User  # noqa: F401
+from app.models.auth_action_token import AuthActionToken  # noqa: F401
+from app.models.auth_security_event import AuthSecurityEvent  # noqa: F401
+from app.models.email_delivery import EmailDelivery  # noqa: F401
 from app.models.impersonation_log import ImpersonationLog  # noqa: F401
 from app.models.tenant_feature import TenantFeature  # noqa: F401
 from app.models.tenant_feature_audit_log import TenantFeatureAuditLog  # noqa: F401

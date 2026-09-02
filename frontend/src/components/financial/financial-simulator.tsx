@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Calculator, Info, Pencil, Save, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +37,8 @@ import type {
 } from "@/lib/types";
 import { ScenarioResults } from "./scenario-results";
 import { SimulatedAgenda } from "./simulated-agenda";
+
+const ESTIMATED_CAPACITY_MODE = "estimated_when_unconfigured" as const;
 
 const MODE_OPTIONS: {
   value: FinancialScenarioMode;
@@ -178,6 +181,7 @@ export function FinancialSimulator({
       date_from: dateFrom,
       date_to: dateTo,
       place_ids: placeId ? [placeId] : null,
+      capacity_mode: ESTIMATED_CAPACITY_MODE,
       mode,
       occupancy_pct: occupancy,
       participant_mix: mode === "custom" ? customMix : null,
@@ -263,6 +267,37 @@ export function FinancialSimulator({
 
   return (
     <div className="space-y-5">
+      {dashboard.capacity_source.mode === "estimated_default" && (
+        <Card className="border-amber-500/40 bg-amber-500/5">
+          <CardContent className="space-y-2 p-4 text-sm text-amber-950 dark:text-amber-100">
+            <p className="font-medium">Jornada estimada</p>
+            <p>
+              Você ainda não configurou sua jornada de trabalho. Para uma
+              projeção personalizada, configure-a em Configurações → Jornada
+              de trabalho.
+            </p>
+            {placeId ? (
+              <p>
+                A estimativa genérica não pode ser atribuída a um local
+                específico. Selecione todos os locais ou configure sua jornada
+                para projetar este local.
+              </p>
+            ) : (
+              <p>
+                Enquanto isso, esta simulação considera 8 horas por dia, de
+                segunda-feira a sábado (48 horas por semana), avaliadas pela
+                tarifa regular.
+              </p>
+            )}
+            <Link
+              href={dashboard.capacity_source.configuration_path ?? "/minhas-regras"}
+              className="inline-flex h-8 items-center rounded-md border border-amber-700/30 px-3 text-xs font-medium transition-colors hover:bg-amber-500/10"
+            >
+              Configurar jornada
+            </Link>
+          </CardContent>
+        </Card>
+      )}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -483,6 +518,7 @@ export function FinancialSimulator({
           <SimulatedAgenda
             events={result.simulated_schedule}
             period={{ from: dateFrom, to: dateTo }}
+            estimated={result.capacity_source?.mode === "estimated_default"}
           />
         </>
       ) : (
@@ -515,7 +551,15 @@ export function FinancialSimulator({
                   className="flex flex-wrap items-center justify-between gap-3 py-3"
                 >
                   <div>
-                    <p className="font-medium">{scenario.name}</p>
+                    <p className="flex items-center gap-2 font-medium">
+                      {scenario.name}
+                      {scenario.result_snapshot.capacity_source?.mode ===
+                        "estimated_default" && (
+                        <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-200">
+                          Estimativa
+                        </span>
+                      )}
+                    </p>
                     <p className="text-xs text-muted-foreground">
                       {new Date(scenario.created_at).toLocaleString("pt-BR")} ·{" "}
                       {scenario.input_snapshot.occupancy_pct}% de ocupação

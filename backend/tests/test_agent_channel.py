@@ -340,6 +340,7 @@ def test_pending_candidate_appends_confirmation_prompt(monkeypatch) -> None:
         preview_text="Cancelar aula de Joao amanha as 10h.",
         affected_entities=[],
         expires_at=datetime.now(TIMEZONE),
+        advisory_text="Fora da sua jornada configurada. O agendamento pode continuar, mas revise o horário antes de confirmar.",
     )
     monkeypatch.setattr(
         agent_channel,
@@ -360,6 +361,7 @@ def test_pending_candidate_appends_confirmation_prompt(monkeypatch) -> None:
         )
         assert "Vou cancelar essa aula." in sent["body"]
         assert "Cancelar aula de Joao amanha as 10h." in sent["body"]
+        assert "Fora da sua jornada configurada." in sent["body"]
         assert "sim" in sent["body"].lower()
     finally:
         _cleanup(db, professionals=[professional])

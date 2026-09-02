@@ -10,7 +10,7 @@ Two roles:
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -25,18 +25,29 @@ class User(Base):
             "(role = 'professional' AND professional_id IS NOT NULL)",
             name="ck_users_role_professional_id",
         ),
+        CheckConstraint(
+            "status IN ('pending_activation', 'active', 'disabled')",
+            name="ck_users_status",
+        ),
+        CheckConstraint(
+            "status <> 'active' OR hashed_password IS NOT NULL",
+            name="ck_users_active_requires_password",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(50), nullable=False)
     professional_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("professionals.id"), nullable=True
     )
     status: Mapped[str] = mapped_column(String(50), default="active")
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    auth_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -15,7 +15,7 @@ import {
 // Mock Chat is a dev-only testing aid (see README "Dev tool — mock WhatsApp
 // chat"); remove this entry once real WhatsApp traffic replaces it.
 const navItems = [
-  { label: "Agenda", icon: Calendar, href: "/" },
+  { label: "Agenda", icon: Calendar, href: "/agenda", exact: true },
   { label: "Clientes", icon: Users, href: "/clientes" },
   { label: "Meus Locais", icon: MapPin, href: "/places" },
   {

@@ -1,10 +1,10 @@
 """Operational rules (work journey, make-up cancellation notice window).
 
 Unlike Financeiro, these settings are not gated behind the
-commercial_financials feature flag: scheduling (assert_within_work_journey)
-and make-up credit eligibility (grant_credit_if_eligible) enforce them for
-every tenant regardless of that flag, so every tenant must be able to
-configure them.
+commercial_financials feature flag: work journey guides scheduling
+recommendations and capacity calculations, while make-up credit eligibility
+(grant_credit_if_eligible) is enforced for every tenant regardless of that
+flag. Every tenant must therefore be able to configure them.
 """
 
 import uuid

@@ -4,6 +4,7 @@ instructor agent's mutation tools share the same checks instead of risking
 divergence. Callers own the transaction (commit after calling)."""
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone as dt_timezone
 
 from fastapi import HTTPException
@@ -22,6 +23,36 @@ from app.services.place_stays import resolve_place_stay
 
 TZ_SP = dt_timezone(timedelta(hours=-3))  # America/Sao_Paulo
 DEFAULT_GROUP_MAX_PARTICIPANTS = 4
+
+
+@dataclass(frozen=True)
+class WorkJourneyAdvisory:
+    """Non-blocking guidance for bookings outside usual work preferences."""
+
+    has_configured_journey: bool
+    outside_work_interval: bool
+    overlaps_break: bool
+
+    @property
+    def message(self) -> str | None:
+        if not self.has_configured_journey:
+            return None
+        if self.outside_work_interval and self.overlaps_break:
+            return (
+                "Fora da sua jornada configurada e durante uma pausa configurada. "
+                "O agendamento pode continuar, mas revise o horário antes de confirmar."
+            )
+        if self.outside_work_interval:
+            return (
+                "Fora da sua jornada configurada. O agendamento pode continuar, "
+                "mas revise o horário antes de confirmar."
+            )
+        if self.overlaps_break:
+            return (
+                "Durante uma pausa configurada. O agendamento pode continuar, "
+                "mas revise o horário antes de confirmar."
+            )
+        return None
 
 
 def has_scheduled_class_overlap(
@@ -118,23 +149,19 @@ def has_appointment_overlap(
     return False
 
 
-def assert_within_work_journey(
+def get_work_journey_advisory(
     db: Session,
     professional_id: uuid.UUID,
     *,
     start_at: datetime,
     end_at: datetime,
-) -> None:
-    """Reject a one-off appointment outside the professional's configured
-    work journey (Financeiro > Jornada de trabalho) — the screen that data
-    comes from states it feeds capacity calculations, so appointment
-    creation should actually honor it instead of only the financial
-    capacity report.
+) -> WorkJourneyAdvisory:
+    """Describe a booking's exception to configured work preferences.
 
-    A professional who has never configured a journey (zero rows, of any
-    weekday) is left unrestricted — this only starts enforcing once they've
-    actually set working hours, so onboarding isn't blocked by a screen
-    they haven't visited yet."""
+    Work journey is advisory: it helps the active assistant warn before a
+    confirmation, but never turns a conflict-free booking into a rejection.
+    A tenant with no configured journey receives no advisory.
+    """
     has_any_journey = (
         db.query(WorkJourneyInterval.professional_id)
         .filter(WorkJourneyInterval.professional_id == professional_id)
@@ -142,7 +169,7 @@ def assert_within_work_journey(
         is not None
     )
     if not has_any_journey:
-        return
+        return WorkJourneyAdvisory(False, False, False)
 
     local_start = start_at.astimezone(TZ_SP)
     local_end = end_at.astimezone(TZ_SP)
@@ -164,20 +191,13 @@ def assert_within_work_journey(
         and end_time <= interval.end_time
         for interval in intervals
     )
-    if not within_work:
-        raise HTTPException(
-            status_code=409,
-            detail="This time is outside the professional's configured work journey",
-        )
-
     overlaps_break = any(
         interval.interval_type == "break"
         and start_time < interval.end_time
         and end_time > interval.start_time
         for interval in intervals
     )
-    if overlaps_break:
-        raise HTTPException(status_code=409, detail="This time overlaps a configured break")
+    return WorkJourneyAdvisory(True, not within_work, overlaps_break)
 
 
 def has_event_overlap(
@@ -211,7 +231,6 @@ def assert_no_conflict(
     end_at: datetime,
     is_recurring: bool = False,
 ) -> None:
-    assert_within_work_journey(db, professional_id, start_at=start_at, end_at=end_at)
     if has_appointment_overlap(
         db, professional_id, start_at=start_at, end_at=end_at, is_recurring=is_recurring
     ):

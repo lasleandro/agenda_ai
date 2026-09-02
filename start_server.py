@@ -13,8 +13,8 @@ Usage:
                                        # cloudflared quick tunnel, for
                                        # registering the YCloud webhook
                                        # (see docs/local_dev_webhook_tunnel.md)
-    python start_server.py --worker   # also run the candidate, ambiguity,
-                                       # and scheduled-task workers
+    python start_server.py --worker   # also run candidate, ambiguity,
+                                       # scheduled-task, and auth-email workers
 
 Access:
     Frontend  → http://localhost:3010
@@ -258,6 +258,17 @@ def _start_scheduled_task_worker() -> subprocess.Popen:
     )
 
 
+def _start_email_delivery_worker() -> subprocess.Popen:
+    print("  Starting authentication email delivery worker ...")
+    return _popen(
+        [PYTHON_BIN, "-m", "app.chat.email_delivery_worker"],
+        cwd=str(BACKEND_DIR),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+
 def _stream_output(label: str, proc: subprocess.Popen, out: "queue.Queue[tuple[str, str | None]]"):
     """Feed one process's stdout, line by line, into the shared queue. Runs
     in its own thread per process so a quiet process (e.g. backend between
@@ -322,6 +333,7 @@ def main():
     worker = _start_worker() if args.worker else None
     escalation_worker = _start_escalation_worker() if args.worker else None
     scheduled_task_worker = _start_scheduled_task_worker() if args.worker else None
+    email_delivery_worker = _start_email_delivery_worker() if args.worker else None
 
     # Give servers a moment to start
     time.sleep(2)
@@ -338,6 +350,7 @@ def main():
         print("  Candidate worker -> polling pending_processing")
         print("  Escalation worker -> polling durable ambiguity delivery")
         print("  Scheduled task worker -> polling due tenant tasks")
+        print("  Email delivery worker -> polling durable auth emails")
     print()
     print("  Press Ctrl+C to stop all servers.")
     print("=" * 80)
@@ -355,6 +368,8 @@ def main():
         active.append(("escalation-worker", escalation_worker))
     if scheduled_task_worker is not None:
         active.append(("scheduled-task-worker", scheduled_task_worker))
+    if email_delivery_worker is not None:
+        active.append(("email-delivery-worker", email_delivery_worker))
 
     tunnel_url_announced = False
     output_queue: "queue.Queue[tuple[str, str | None]]" = queue.Queue()

@@ -137,7 +137,12 @@ def deliver(
     candidate.operator_action_candidate_id = proposal.id
     proposal.expires_at = now + timedelta(minutes=TTL_MINUTES)
     try:
-        body = f"{proposal.preview_text}\n\nResponda *sim* para confirmar ou *nao* para cancelar."
+        journey_advisory = proposal.resolved_arguments.get("journey_advisory")
+        advisory_text = f"\n\n{journey_advisory}" if journey_advisory else ""
+        body = (
+            f"{proposal.preview_text}{advisory_text}\n\n"
+            "Responda *sim* para confirmar ou *nao* para cancelar."
+        )
         if provider is None:
             send_text_message_or_raise(
                 from_phone=professional.agent_phone,

@@ -4,7 +4,7 @@
 // never serve it stale. Satisfies PWA installability (Chrome's
 // `beforeinstallprompt`) and speeds up repeat asset loads on flaky
 // connections.
-const CACHE_NAME = "tennis-os-static-v1";
+const CACHE_NAME = "tennis-os-static-v2";
 
 self.addEventListener("install", () => {
   self.skipWaiting();
@@ -27,6 +27,7 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  if (url.hostname === "localhost" || url.hostname === "127.0.0.1") return;
   if (!url.pathname.startsWith("/_next/static/")) return;
 
   event.respondWith(

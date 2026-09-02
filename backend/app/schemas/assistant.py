@@ -27,6 +27,7 @@ class ToolCallTraceDetail(BaseModel):
 class PendingActionCandidate(BaseModel):
     id: uuid.UUID
     preview_text: str
+    advisory_text: str | None = None
     affected_entities: list[dict[str, Any]]
     expires_at: str
 

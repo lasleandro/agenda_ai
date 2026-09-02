@@ -179,7 +179,11 @@ Key behavioral rules from the system prompt:
   agent must list it and ask which place to use, never report it as "no
   availability". When `openings` comes back empty the result carries a
   `note` saying *why* (no Work Journey configured for that weekday vs. the
-  day being fully booked); the agent relays that reason.
+  day being fully booked); the agent relays that reason and directs the
+  instructor to Configurações when no preferred journey exists.
+- A direct, conflict-free booking outside the configured journey or during a
+  configured pause remains eligible for confirmation. The pending action
+  carries a non-blocking advisory; the journey is never a refusal reason.
 - Always mention the place (quadra) when presenting results.
 
 ---

@@ -59,7 +59,7 @@ export default function FinancialSimulatorPage() {
     fetchSession().then(async (user) => {
       if (!active) return;
       if (!sessionHasFeature(user, "commercial_financials")) {
-        router.replace("/");
+        router.replace("/agenda");
         return;
       }
       try {
@@ -67,7 +67,12 @@ export default function FinancialSimulatorPage() {
         const [configurationResult, dashboardResult, scenariosResult] =
           await Promise.all([
             fetchFinancialConfiguration(),
-            fetchFinancialDashboard(initial.dateFrom, initial.dateTo),
+            fetchFinancialDashboard(
+              initial.dateFrom,
+              initial.dateTo,
+              [],
+              "estimated_when_unconfigured"
+            ),
             fetchFinancialScenarios(),
           ]);
         if (!active) return;
@@ -100,7 +105,8 @@ export default function FinancialSimulatorPage() {
       const result = await fetchFinancialDashboard(
         nextFilters.dateFrom,
         nextFilters.dateTo,
-        nextFilters.placeId ? [nextFilters.placeId] : []
+        nextFilters.placeId ? [nextFilters.placeId] : [],
+        "estimated_when_unconfigured"
       );
       setFilters(nextFilters);
       setDashboard(result);
