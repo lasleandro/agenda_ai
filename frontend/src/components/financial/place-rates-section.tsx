@@ -83,7 +83,7 @@ function RatesEditor({
     } catch (caught) {
       setDraft(initialDraft(matrix));
       setNotice({
-          text: caught instanceof Error ? caught.message : "Falha ao salvar valores",
+          text: caught instanceof Error ? caught.message : "Não foi possível salvar os valores. Tente novamente.",
         error: true,
       });
     } finally {
@@ -136,6 +136,14 @@ function RatesEditor({
                     item.participant_count === count
                 );
                 const key = ruleKey(category, count);
+                const hasOwnValue = Boolean(draft[key]?.trim());
+                const caption = hasOwnValue
+                  ? valueLabel
+                  : rate?.effective_hourly_rate_cents != null
+                    ? `Valor global definido: ${formatBrlFromCents(
+                        rate.effective_hourly_rate_cents
+                      )}`
+                    : null;
                 return (
                   <div key={key} className="space-y-1 border-t border-border p-2">
                     <Input
@@ -153,13 +161,9 @@ function RatesEditor({
                           : centsToRateInput(rate?.effective_hourly_rate_cents ?? null)
                       }
                     />
-                    <p className="text-[11px] text-muted-foreground">
-                      {rate?.hourly_rate_cents === null
-                        ? `Herda ${formatBrlFromCents(
-                            rate.effective_hourly_rate_cents
-                          )}`
-                        : valueLabel}
-                    </p>
+                    {caption && (
+                      <p className="text-[11px] text-muted-foreground">{caption}</p>
+                    )}
                   </div>
                 );
               })}
@@ -198,7 +202,7 @@ export function PlaceRateEditor({
   );
 }
 
-function DefaultRateEditor({
+export function DefaultRatesCard({
   matrix,
   onSaved,
 }: {
@@ -206,66 +210,21 @@ function DefaultRateEditor({
   onSaved: (matrix: PlaceRateMatrixDetail) => void;
 }) {
   return (
-    <RatesEditor
-      matrix={matrix}
-      savedMessage="Salvar valores padrão"
-      valueLabel="Valor padrão"
-      onSave={async (rates) => onSaved(await replaceDefaultRates(rates))}
-    />
-  );
-}
-
-export function PlaceRatesSection({
-  defaultRates,
-  places,
-  onSaved,
-  onDefaultSaved,
-}: {
-  defaultRates: PlaceRateMatrixDetail;
-  places: PlaceRateMatrixDetail[];
-  onSaved: (matrix: PlaceRateMatrixDetail) => void;
-  onDefaultSaved: (matrix: PlaceRateMatrixDetail) => void;
-}) {
-  const [selectedPlaceId, setSelectedPlaceId] = useState("");
-  const selected = places.find((place) => place.place_id === selectedPlaceId) ?? null;
-
-  return (
     <Card>
       <CardHeader>
-        <CardTitle>Valores por local</CardTitle>
+        <CardTitle>Valores padrão</CardTitle>
         <CardDescription>
-          Defina os valores padrão para compromissos sem local ou valores específicos
-          para cada local. Campos vazios herdam a tabela padrão.
+          Valores por participante aplicados a compromissos sem local definido. Cada
+          local pode substituí-los na sua própria página, em &quot;Meus Locais&quot;.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <>
-          <select
-              value={selectedPlaceId}
-              onChange={(event) => setSelectedPlaceId(event.target.value)}
-              className="h-9 w-full max-w-sm rounded-md border border-input bg-transparent px-3 text-sm"
-          >
-            <option value="">Padrão — sem local definido</option>
-              {places.map((place) => (
-                <option key={place.place_id} value={place.place_id ?? ""}>
-                  {place.place_name}
-                </option>
-              ))}
-          </select>
-          {selectedPlaceId === "" ? (
-            <DefaultRateEditor
-              key="default-rates"
-              matrix={defaultRates}
-              onSaved={onDefaultSaved}
-            />
-          ) : selected ? (
-              <PlaceRateEditor
-                key={selected.place_id}
-                matrix={selected}
-                onSaved={onSaved}
-              />
-          ) : null}
-        </>
+        <RatesEditor
+          matrix={matrix}
+          savedMessage="Salvar valores padrão"
+          valueLabel="Valor padrão"
+          onSave={async (rates) => onSaved(await replaceDefaultRates(rates))}
+        />
       </CardContent>
     </Card>
   );

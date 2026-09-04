@@ -79,7 +79,7 @@ export function PlaceFormDialog({
         setError("Nenhum local encontrado. Verifique o nome ou preencha o endereço manualmente.");
       }
     } catch {
-      setError("Falha ao buscar endereço. Tente novamente.");
+      setError("Não foi possível buscar o endereço. Tente novamente.");
     } finally {
       setSearching(false);
     }
@@ -115,7 +115,7 @@ export function PlaceFormDialog({
       onOpenChange(false);
       resetForm();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao salvar local");
+      setError(e instanceof Error ? e.message : "Não foi possível salvar o local. Tente novamente.");
     } finally {
       setSaving(false);
     }

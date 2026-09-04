@@ -226,7 +226,7 @@ export function DetectedCandidatesTab({
                     {candidate.escalation_delivery_status === "queued" && "Aguardando envio ao agente"}
                     {candidate.escalation_delivery_status === "needs_place_review" && "Aguardando escolha de local"}
                     {candidate.escalation_delivery_status === "sent" && "Confirmação enviada ao agente"}
-                    {candidate.escalation_delivery_status === "failed" && "Falha ao enviar confirmação"}
+                    {candidate.escalation_delivery_status === "failed" && "Não foi possível enviar a confirmação. Tente novamente."}
                     {candidate.escalation_delivery_status === "expired" && "Confirmação expirada"}
                     {candidate.escalation_status === "executed" && " · Executado"}
                     {candidate.escalation_status === "rejected" && " · Recusado"}

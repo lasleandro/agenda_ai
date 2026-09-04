@@ -36,7 +36,7 @@ client = TestClient(app)
 def _create_tenant(db):
     professional = Professional(
         name="Tenant Receita",
-        assistant_phone=f"+55119{uuid.uuid4().hex[:8]}",
+        assistant_phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}",
     )
     db.add(professional)
     db.commit()
@@ -150,7 +150,7 @@ def test_revenue_confirmation_snapshots_reporting_and_tenant_scope() -> None:
         contacts = [
             Contact(
                 professional_id=professional.id,
-                phone=f"+55119{uuid.uuid4().hex[:8]}",
+                phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}",
                 display_name=name,
                 normalized_name=name.lower(),
                 hourly_rate_cents=rate,
@@ -421,7 +421,7 @@ def test_revenue_candidate_marks_future_occurrence_as_not_confirmable() -> None:
     try:
         contact = Contact(
             professional_id=professional.id,
-            phone=f"+55119{uuid.uuid4().hex[:8]}",
+            phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}",
             display_name="Cliente futuro",
             normalized_name="cliente futuro",
         )

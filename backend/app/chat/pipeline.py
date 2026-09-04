@@ -74,6 +74,25 @@ def schedule_processing(db: Session, conversation_id: uuid.UUID) -> None:
     db.execute(stmt)
 
 
+def ensure_processing_scheduled(db: Session, conversation_id: uuid.UUID) -> None:
+    """Guarantee a debounce row exists without touching an existing one.
+
+    Recovery path: a webhook retry that finds the message already persisted
+    still needs downstream extraction to be scheduled if that row was lost
+    after a partial failure. Unlike ``schedule_processing`` this never moves
+    ``process_after`` forward, so a duplicate delivery cannot delay a window
+    that is already due.
+    """
+    process_after = datetime.now(timezone.utc) + timedelta(seconds=DEBOUNCE_SECONDS)
+    stmt = pg_insert(PendingProcessing).values(
+        conversation_id=conversation_id, process_after=process_after
+    )
+    stmt = stmt.on_conflict_do_nothing(
+        index_elements=[PendingProcessing.conversation_id]
+    )
+    db.execute(stmt)
+
+
 def build_conversation_window(db: Session, conversation: Conversation) -> ConversationWindow:
     professional = db.query(Professional).filter(Professional.id == conversation.professional_id).first()
     contact = db.query(Contact).filter(Contact.id == conversation.contact_id).first()

@@ -34,14 +34,19 @@ const OUTCOME_LABELS = {
   mixed: "Mista",
 };
 
+// Labels RevenueRateSource, which is wider than FinancialValueSource (it keeps
+// the legacy "generic"/"tenant" values for historical snapshots), so this can't
+// share commercial-fields-card's map. The account-level default and the unset
+// case must read the same in both, though — the user follows those two across
+// screens to find where a price came from.
 const SOURCE_LABELS = {
   customer: "Cliente",
   group: "Grupo",
   place: "Local",
-  default: "Padrão",
+  default: "Padrão da conta",
   generic: "Local padrão",
-  tenant: "Padrão",
-  unset: "Sem preço",
+  tenant: "Padrão da conta",
+  unset: "Não definido",
 };
 
 type BreakdownKey = "place" | "customer" | "group";
@@ -66,7 +71,7 @@ function MoneyBreakdown({ rows }: { rows: RevenueSummaryBreakdown[] }) {
   if (rows.length === 0) {
     return (
       <p className="py-10 text-center text-sm text-muted-foreground">
-        Sem receita reconhecida neste recorte.
+        Nenhuma receita confirmada neste período.
       </p>
     );
   }
@@ -119,7 +124,7 @@ export function RevenueSection({
       .catch((caught) => {
         if (!active) return;
         setError(
-          caught instanceof Error ? caught.message : "Falha ao carregar a receita"
+          caught instanceof Error ? caught.message : "Não foi possível carregar a receita. Tente novamente."
         );
       })
     return () => {
@@ -242,7 +247,7 @@ export function RevenueSection({
           <CardContent>
             <RevenueLineChart
               points={chartPoints}
-              ariaLabel="Série temporal de receita reconhecida"
+              ariaLabel="Evolução da receita confirmada no período"
             />
           </CardContent>
         </Card>
@@ -264,7 +269,7 @@ export function RevenueSection({
             </div>
             <div>
               <CardTitle>{selectedBreakdown.title}</CardTitle>
-              <CardDescription>Ocorrências confirmadas no período.</CardDescription>
+              <CardDescription>Aulas confirmadas no período.</CardDescription>
             </div>
           </CardHeader>
           <CardContent>
@@ -284,7 +289,7 @@ export function RevenueSection({
           <CardContent>
             {summary.occurrences.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">
-                Nenhuma receita reconhecida no período.
+                Nenhuma receita confirmada neste período.
               </p>
             ) : (
               <div className="divide-y">

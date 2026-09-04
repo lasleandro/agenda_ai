@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   CalendarClock,
   CircleDollarSign,
@@ -12,7 +13,8 @@ import {
 import { CancellationNoticeSection } from "@/components/rules/cancellation-notice-section";
 import { WorkJourneySection } from "@/components/rules/work-journey-section";
 import { GlobalRatesSection } from "@/components/financial/global-rates-section";
-import { PlaceRatesSection } from "@/components/financial/place-rates-section";
+import { DefaultRatesCard } from "@/components/financial/place-rates-section";
+import { PlacesSection } from "@/components/ontology/places-section";
 import { PrimeTimeSection } from "@/components/financial/prime-time-section";
 import {
   fetchCancellationNoticeHours,
@@ -34,9 +36,19 @@ type ConfigurationTab =
   | "makeup"
   | "global-rates"
   | "prime-time"
-  | "place-rates";
+  | "places";
+
+const TAB_KEYS: ConfigurationTab[] = [
+  "journey",
+  "makeup",
+  "global-rates",
+  "prime-time",
+  "places",
+];
 
 export default function MinhasRegrasPage() {
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab") as ConfigurationTab | null;
   const [workJourney, setWorkJourney] = useState<
     WorkJourneyIntervalDetail[] | null
   >(null);
@@ -48,7 +60,9 @@ export default function MinhasRegrasPage() {
     useState<FinancialSettingsDetail | null>(null);
   const [financialConfiguration, setFinancialConfiguration] =
     useState<FinancialConfigurationDetail | null>(null);
-  const [activeTab, setActiveTab] = useState<ConfigurationTab>("journey");
+  const [activeTab, setActiveTab] = useState<ConfigurationTab>(
+    requestedTab && TAB_KEYS.includes(requestedTab) ? requestedTab : "journey"
+  );
   const [error, setError] = useState<string | null>(null);
   const [financialError, setFinancialError] = useState<string | null>(null);
 
@@ -65,7 +79,7 @@ export default function MinhasRegrasPage() {
           setError(
             caught instanceof Error
               ? caught.message
-              : "Falha ao carregar Minhas Regras"
+              : "Não foi possível carregar Minha Operação. Tente novamente."
           );
         }
       });
@@ -97,7 +111,7 @@ export default function MinhasRegrasPage() {
           setFinancialError(
             caught instanceof Error
               ? caught.message
-              : "Falha ao carregar configurações financeiras"
+              : "Não foi possível carregar as configurações financeiras. Tente novamente."
           );
         }
       }
@@ -108,19 +122,6 @@ export default function MinhasRegrasPage() {
       active = false;
     };
   }, []);
-
-  function updatePlace(matrix: PlaceRateMatrixDetail) {
-    setFinancialConfiguration((current) =>
-      current
-        ? {
-            ...current,
-            places: current.places.map((place) =>
-              place.place_id === matrix.place_id ? matrix : place
-            ),
-          }
-        : current
-    );
-  }
 
   function updateDefaultRates(matrix: PlaceRateMatrixDetail) {
     setFinancialConfiguration((current) =>
@@ -147,9 +148,9 @@ export default function MinhasRegrasPage() {
       ? [
           { key: "global-rates" as const, label: "Valores globais", icon: CircleDollarSign },
           { key: "prime-time" as const, label: "Horários nobres", icon: Sun },
-          { key: "place-rates" as const, label: "Valores por local", icon: MapPin },
         ]
       : []),
+    { key: "places", label: "Meus Locais", icon: MapPin },
   ];
 
   return (
@@ -157,11 +158,11 @@ export default function MinhasRegrasPage() {
       <div>
         <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
           <Settings className="h-5 w-5 text-primary" />
-          Configurações
+          Minha Operação
         </h1>
         <p className="text-sm text-muted-foreground">
-          Defina regras operacionais e, quando disponível, parâmetros financeiros
-          do seu tenant.
+          Defina regras operacionais, locais de atendimento e, quando disponível,
+          parâmetros financeiros da sua operação.
         </p>
       </div>
 
@@ -175,7 +176,7 @@ export default function MinhasRegrasPage() {
         <div
           className="flex w-fit gap-1 rounded-lg border bg-muted/30 p-1"
           role="tablist"
-          aria-label="Áreas de Configurações"
+          aria-label="Áreas de Minha Operação"
         >
           {tabs.map(({ key, label, icon: Icon }) => (
             <button
@@ -204,11 +205,17 @@ export default function MinhasRegrasPage() {
         )}
         {activeTab === "global-rates" && (
           <FinancialTabState error={financialError}>
-            {financialSettings && (
-              <GlobalRatesSection
-                settings={financialSettings}
-                onSaved={setFinancialSettings}
-              />
+            {financialSettings && financialConfiguration && (
+              <div className="flex flex-col gap-5">
+                <GlobalRatesSection
+                  settings={financialSettings}
+                  onSaved={setFinancialSettings}
+                />
+                <DefaultRatesCard
+                  matrix={financialConfiguration.default_rates}
+                  onSaved={updateDefaultRates}
+                />
+              </div>
             )}
           </FinancialTabState>
         )}
@@ -226,18 +233,7 @@ export default function MinhasRegrasPage() {
             )}
           </FinancialTabState>
         )}
-        {activeTab === "place-rates" && (
-          <FinancialTabState error={financialError}>
-            {financialConfiguration && (
-              <PlaceRatesSection
-                defaultRates={financialConfiguration.default_rates}
-                places={financialConfiguration.places}
-                onSaved={updatePlace}
-                onDefaultSaved={updateDefaultRates}
-              />
-            )}
-          </FinancialTabState>
-        )}
+        {activeTab === "places" && <PlacesSection />}
       </div>
     </div>
   );

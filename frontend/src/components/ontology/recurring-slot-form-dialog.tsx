@@ -94,7 +94,7 @@ export function RecurringSlotFormDialog({
       onSaved(saved);
       onOpenChange(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao salvar horário");
+      setError(e instanceof Error ? e.message : "Não foi possível salvar o horário. Tente novamente.");
     } finally {
       setSaving(false);
     }
@@ -108,7 +108,7 @@ export function RecurringSlotFormDialog({
       onDeleted?.(slot.id);
       onOpenChange(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao remover horário");
+      setError(e instanceof Error ? e.message : "Não foi possível remover o horário. Tente novamente.");
     } finally {
       setSaving(false);
     }

@@ -65,7 +65,7 @@ export default function ContactDetailPage() {
             setError(
               caught instanceof Error
                 ? caught.message
-                : "Falha ao carregar dados financeiros"
+                : "Não foi possível carregar os dados financeiros. Tente novamente."
             )
           );
       }
@@ -80,7 +80,7 @@ export default function ContactDetailPage() {
       const updated = await updateContact(contactId, fields);
       setContact(updated);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao salvar");
+      setError(e instanceof Error ? e.message : "Não foi possível salvar. Tente novamente.");
     } finally {
       setSaving(false);
     }
@@ -122,7 +122,7 @@ export default function ContactDetailPage() {
       setFinancial(await updateCustomerFinancials(contactId, input));
     } catch (caught) {
       setFinancial(previous);
-      setError(caught instanceof Error ? caught.message : "Falha ao salvar comercial");
+      setError(caught instanceof Error ? caught.message : "Não foi possível salvar os dados comerciais. Tente novamente.");
       throw caught;
     }
   }

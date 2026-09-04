@@ -14,7 +14,8 @@ Usage:
                                        # registering the YCloud webhook
                                        # (see docs/local_dev_webhook_tunnel.md)
     python start_server.py --worker   # also run candidate, ambiguity,
-                                       # scheduled-task, and auth-email workers
+                                       # scheduled-task, auth-email, and
+                                       # webhook-processor workers
 
 Access:
     Frontend  → http://localhost:3010
@@ -269,6 +270,17 @@ def _start_email_delivery_worker() -> subprocess.Popen:
     )
 
 
+def _start_webhook_processor_worker() -> subprocess.Popen:
+    print("  Starting webhook processor worker ...")
+    return _popen(
+        [PYTHON_BIN, "-m", "app.chat.webhook_processor_worker"],
+        cwd=str(BACKEND_DIR),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+
 def _stream_output(label: str, proc: subprocess.Popen, out: "queue.Queue[tuple[str, str | None]]"):
     """Feed one process's stdout, line by line, into the shared queue. Runs
     in its own thread per process so a quiet process (e.g. backend between
@@ -316,7 +328,8 @@ def main():
     )
     parser.add_argument(
         "--worker", action="store_true",
-        help="also run candidate, ambiguity-escalation, and scheduled-task workers",
+        help="also run candidate, ambiguity-escalation, scheduled-task, "
+        "auth-email, and webhook-processor workers",
     )
     args = parser.parse_args()
 
@@ -334,6 +347,9 @@ def main():
     escalation_worker = _start_escalation_worker() if args.worker else None
     scheduled_task_worker = _start_scheduled_task_worker() if args.worker else None
     email_delivery_worker = _start_email_delivery_worker() if args.worker else None
+    webhook_processor_worker = (
+        _start_webhook_processor_worker() if args.worker else None
+    )
 
     # Give servers a moment to start
     time.sleep(2)
@@ -351,6 +367,7 @@ def main():
         print("  Escalation worker -> polling durable ambiguity delivery")
         print("  Scheduled task worker -> polling due tenant tasks")
         print("  Email delivery worker -> polling durable auth emails")
+        print("  Webhook processor worker -> draining webhook_receipts")
     print()
     print("  Press Ctrl+C to stop all servers.")
     print("=" * 80)
@@ -370,6 +387,8 @@ def main():
         active.append(("scheduled-task-worker", scheduled_task_worker))
     if email_delivery_worker is not None:
         active.append(("email-delivery-worker", email_delivery_worker))
+    if webhook_processor_worker is not None:
+        active.append(("webhook-processor-worker", webhook_processor_worker))
 
     tunnel_url_announced = False
     output_queue: "queue.Queue[tuple[str, str | None]]" = queue.Queue()

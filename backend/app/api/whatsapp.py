@@ -1,4 +1,13 @@
-"""Provider-aware WhatsApp webhook boundary."""
+"""Provider-aware WhatsApp webhook boundary.
+
+The endpoint does the minimum that must happen inside the provider request:
+resolve the provider, read the raw body once, verify the signature, and
+durably hand the delivery off (``webhook_receipts`` +
+``get_webhook_task_queue()``). Ingestion, LLM turns, and outbound sends run
+afterwards — in the webhook processor worker, or inline in local
+development — so provider acknowledgement never waits on them and retries
+are idempotent on the receipt key.
+"""
 
 import logging
 import os
@@ -7,8 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.chat.ingestion import ingest_provider_webhook
-from app.integrations.whatsapp.contracts import WhatsAppPermanentError
+from app.integrations.tasks import get_webhook_task_queue
 from app.integrations.whatsapp.registry import get_whatsapp_provider
 
 router = APIRouter(prefix="/webhooks", tags=["whatsapp"])
@@ -46,12 +54,10 @@ async def _handle_webhook(
             provider.key,
         )
 
-    try:
-        ingest_provider_webhook(db, raw_body, provider)
-    except WhatsAppPermanentError:
-        logger.warning("Rejected malformed WhatsApp webhook (provider=%s)", provider.key)
-        return Response(status_code=400)
-
+    result = get_webhook_task_queue().enqueue(db, provider.key, raw_body)
+    if not result.accepted:
+        # Handoff failed transiently — let the provider retry.
+        return Response(status_code=503)
     return Response(status_code=200)
 
 

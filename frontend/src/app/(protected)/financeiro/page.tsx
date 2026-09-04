@@ -96,7 +96,7 @@ export default function FinanceiroPage() {
           setError(
             caught instanceof Error
               ? caught.message
-              : "Falha ao carregar o Financeiro"
+              : "Não foi possível carregar o Financeiro. Tente novamente."
           );
         }
       }
@@ -129,7 +129,7 @@ export default function FinanceiroPage() {
       setError(
         caught instanceof Error
           ? caught.message
-          : "Falha ao atualizar o dashboard"
+          : "Não foi possível atualizar o painel. Tente novamente."
       );
     } finally {
       setRefreshing(false);

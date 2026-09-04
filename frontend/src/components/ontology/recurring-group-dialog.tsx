@@ -91,7 +91,7 @@ export function RecurringGroupDialog({
       onCreated(slot);
       onOpenChange(false);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Falha ao criar grupo");
+      setError(caught instanceof Error ? caught.message : "Não foi possível criar o grupo. Tente novamente.");
     } finally {
       setSaving(false);
     }

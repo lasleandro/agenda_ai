@@ -7,20 +7,24 @@ provider-specific payload normalization.
 """
 
 import logging
+import uuid
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Contact, Conversation, Message, Professional
 from app.chat import agent_channel
-from app.chat.pipeline import schedule_processing
+from app.chat.pipeline import ensure_processing_scheduled, schedule_processing
 from app.integrations.whatsapp.contracts import (
     WhatsAppDeliveryUpdated,
     WhatsAppEvent,
     WhatsAppMessageEvent,
+    WhatsAppPermanentError,
 )
 from app.integrations.whatsapp.provider import WhatsAppProvider
-from app.services.text_normalization import normalize_name
+from app.services.contacts import get_or_create_contact_by_phone
+from app.services.operational_events import record_event
+from app.services.phone_numbers import PhoneNumberValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -41,25 +45,7 @@ def get_professional_by_phone(db: Session, assistant_phone: str) -> Professional
 
 
 def get_or_create_contact(db: Session, professional_id, phone: str, name: str | None) -> Contact:
-    contact = (
-        db.query(Contact)
-        .filter(Contact.professional_id == professional_id, Contact.phone == phone)
-        .first()
-    )
-    if contact is None:
-        display_name = name or phone
-        contact = Contact(
-            professional_id=professional_id,
-            phone=phone,
-            display_name=display_name,
-            normalized_name=normalize_name(display_name),
-        )
-        db.add(contact)
-        db.flush()
-    elif name and contact.display_name == contact.phone:
-        # Backfill: earlier messages didn't carry a WhatsApp profile name.
-        contact.display_name = name
-        contact.normalized_name = normalize_name(name)
+    contact, _ = get_or_create_contact_by_phone(db, professional_id, phone, name)
     return contact
 
 
@@ -94,7 +80,34 @@ def ingest_normalized_message(db: Session, normalized: WhatsAppMessageEvent) -> 
         )
         return None
 
-    contact = get_or_create_contact(db, professional.id, contact_phone, normalized.contact_name)
+    try:
+        contact, contact_created = get_or_create_contact_by_phone(
+            db,
+            professional.id,
+            contact_phone,
+            normalized.contact_name,
+        )
+    except PhoneNumberValidationError as exc:
+        raise WhatsAppPermanentError("Invalid customer phone number") from exc
+
+    if contact_created:
+        record_event(
+            db,
+            professional_id=professional.id,
+            event_type="contact.created",
+            occurred_at=normalized.sent_at,
+            actor_type="system",
+            actor_id=None,
+            source_channel="whatsapp",
+            entity_type="contact",
+            entity_id=contact.id,
+            correlation_id=uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"whatsapp-contact:{normalized.provider_key}:{normalized.provider_message_id}",
+            ),
+            payload={"source": "whatsapp"},
+            after_state={"phone_last4": contact.phone[-4:]},
+        )
     conversation = get_or_create_conversation(db, professional.id, contact.id)
 
     message = Message(
@@ -108,21 +121,29 @@ def ingest_normalized_message(db: Session, normalized: WhatsAppMessageEvent) -> 
         sent_at=normalized.sent_at,
         raw_payload=normalized.raw_payload,
     )
+    conversation_id = conversation.id
     db.add(message)
     conversation.last_message_at = normalized.sent_at
 
+    # One transaction: the message and its debounce registration commit
+    # together, so a crash can never leave a persisted message with no
+    # scheduled extraction. A burst still collapses to one window because
+    # schedule_processing upserts process_after. schedule_processing()'s
+    # execute() autoflushes the pending message INSERT, so a duplicate
+    # provider_message_id raises here rather than at commit — both are
+    # inside the try.
     try:
+        schedule_processing(db, conversation_id)
         db.commit()
     except IntegrityError:
         # Duplicate provider_message_id — webhook retry, already persisted.
+        # Still make sure downstream extraction is scheduled in case the
+        # original attempt lost its debounce row after a partial failure;
+        # ensure_processing_scheduled never moves an existing window.
         db.rollback()
+        ensure_processing_scheduled(db, conversation_id)
+        db.commit()
         return None
-
-    # Debounce: reset the processing timer now that a genuinely new message
-    # landed (brief Section 12.2). Not done inside the block above so a
-    # retried/duplicate webhook doesn't reset the window.
-    schedule_processing(db, conversation.id)
-    db.commit()
 
     return message
 

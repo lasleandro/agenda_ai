@@ -135,7 +135,7 @@ export function GroupDetailsDialog({
           setResult({
             groupId,
             detail: null,
-            error: error instanceof Error ? error.message : "Falha ao carregar grupo",
+            error: error instanceof Error ? error.message : "Não foi possível carregar o grupo. Tente novamente.",
           });
         }
       });
@@ -174,7 +174,7 @@ export function GroupDetailsDialog({
             setFinancialError(
               caught instanceof Error
                 ? caught.message
-                : "Falha ao carregar dados financeiros"
+                : "Não foi possível carregar os dados financeiros. Tente novamente."
             );
           }
         });
@@ -267,7 +267,7 @@ export function GroupDetailsDialog({
     } catch (caught) {
       setFinancialResult({ groupId, detail: previous });
       setFinancialError(
-        caught instanceof Error ? caught.message : "Falha ao salvar comercial"
+        caught instanceof Error ? caught.message : "Não foi possível salvar os dados comerciais. Tente novamente."
       );
       throw caught;
     }
@@ -302,7 +302,7 @@ export function GroupDetailsDialog({
       window.dispatchEvent(new Event(AGENDA_REFRESH_EVENT));
     } catch (caught) {
       setOccurrenceError(
-        caught instanceof Error ? caught.message : "Falha ao adicionar participante"
+        caught instanceof Error ? caught.message : "Não foi possível adicionar o participante. Tente novamente."
       );
     } finally {
       setOccurrenceSaving(false);
@@ -349,7 +349,7 @@ export function GroupDetailsDialog({
       window.dispatchEvent(new Event(AGENDA_REFRESH_EVENT));
     } catch (caught) {
       setOccurrenceError(
-        caught instanceof Error ? caught.message : "Falha ao preencher vaga da fila"
+        caught instanceof Error ? caught.message : "Não foi possível preencher a vaga da fila. Tente novamente."
       );
     } finally {
       setOccurrenceSaving(false);
@@ -380,7 +380,7 @@ export function GroupDetailsDialog({
       window.dispatchEvent(new Event(AGENDA_REFRESH_EVENT));
     } catch (caught) {
       setOccurrenceError(
-        caught instanceof Error ? caught.message : "Falha ao remover participante"
+        caught instanceof Error ? caught.message : "Não foi possível remover o participante. Tente novamente."
       );
     } finally {
       setOccurrenceSaving(false);
@@ -403,7 +403,7 @@ export function GroupDetailsDialog({
       window.dispatchEvent(new Event(AGENDA_REFRESH_EVENT));
     } catch (caught) {
       setOccurrenceError(
-        caught instanceof Error ? caught.message : "Falha ao transformar esta aula"
+        caught instanceof Error ? caught.message : "Não foi possível transformar esta aula. Tente novamente."
       );
     } finally {
       setFormatSaving(false);
@@ -429,7 +429,7 @@ export function GroupDetailsDialog({
       window.dispatchEvent(new Event(AGENDA_REFRESH_EVENT));
     } catch (caught) {
       setOccurrenceError(
-        caught instanceof Error ? caught.message : "Falha ao alterar capacidade"
+        caught instanceof Error ? caught.message : "Não foi possível alterar a capacidade. Tente novamente."
       );
     } finally {
       setFormatSaving(false);

@@ -111,3 +111,52 @@ redefinição de senha para contas locais existentes.
 - várias melhorias implementadas na área de financeiro e simulador
 - roadmap de sistema de recomendação de otimização de agenda criado: docs/ROADMAPS/agenda_revenue_recommendations_roadmap_v0.1_2026-08-21.md
 - Criado um roadmap para a dinamica de conversão de slots em aula em grupo: docs/ROADMAPS/group_capacity_and_slot_promotion_roadmap_v0.1_2026-08-21.md 
+
+
+
+
+
+2026-09-02
+Alguns roadmaps implementados
+- docs/ROADMAPS/manual_customer_registration_phone_deduplication_roadmap_v0.1_2026-09-02.md
+- docs/gcp_p0_implementation_notes.md
+
+Ainda a implementar: 
+- docs/ROADMAPS/ycloud_tenant_whatsapp_connection_roadmap_v0.1_2026-09-02.md
+
+
+
+
+
+admin mudou para: 
+las.leandro@gmail.com
+mesma senha de antes
+
+
+
+
+2026-09-03
+Roadmaps implementados:
+- docs/ROADMAPS/admin_tenant_workspace_roadmap_v0.1_2026-09-03.md
+- docs/ROADMAPS/account_request_approval_onboarding_roadmap_v0.1_2026-09-03.md
+  - form "Solicitar uma conta" compartilhado (login + landing + /solicitar-conta),
+    substitui o mailto: antigo
+  - tabela account_access_requests (migration c8f1a2b3d4e5), rate limit por
+    email/IP, resposta 202 genérica
+  - inbox platform-admin em /admin/account-requests (filtros, paginação, badge)
+  - aprovação atômica reaproveita create_tenant_with_owner; rejeição auditável;
+    reenvio de ativação
+  - doc: docs/pages/solicitar_conta.md ; teste browser: frontend/e2e/
+  - purga de PII de rejeitadas: scripts/purge_account_requests.py
+
+
+2026-09-04
+- Botão "Reenviar ativação" agora aparece sempre na aba Aprovada (desabilitado
+  enquanto a entrega está na fila), não só quando falha.
+- WhatsApp da operação agora é obrigatório na criação de tenant (admin "Novo
+  tenant") e na tela "Solicitar uma conta":
+  - normalizado para E.164 (normalize_mobile_phone, padrão BR)
+  - coluna account_access_requests.whatsapp (migration d4e5f6a7b8c9)
+  - gravado em Professional.assistant_phone via create_tenant_with_owner
+  - componente compartilhado frontend/src/components/ui/whatsapp-field.tsx
+  - editável no diálogo de aprovação (pré-preenchido com o número solicitado)

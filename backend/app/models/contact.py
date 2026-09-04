@@ -7,7 +7,7 @@ Represents a student / customer.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Integer, String, func
+from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -29,6 +29,11 @@ class Contact(Base):
             "hourly_rate_cents IS NULL OR hourly_rate_cents BETWEEN 0 AND 100000000",
             name="ck_contacts_hourly_rate_cents",
         ),
+        CheckConstraint(
+            r"phone ~ '^\+[1-9][0-9]{7,14}$'",
+            name="ck_contacts_phone_e164",
+        ),
+        UniqueConstraint("professional_id", "phone", name="uq_contacts_professional_phone"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -38,7 +43,7 @@ class Contact(Base):
         UUID(as_uuid=True), ForeignKey("professionals.id"), nullable=False
     )
     provider_contact_id: Mapped[str | None] = mapped_column(String(255))
-    phone: Mapped[str | None] = mapped_column(String(50))
+    phone: Mapped[str] = mapped_column(String(16), nullable=False)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     normalized_name: Mapped[str] = mapped_column(String(255), nullable=False)
     level: Mapped[str | None] = mapped_column(String(50))

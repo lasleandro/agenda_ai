@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -9,7 +9,10 @@ import {
   Building2,
   Calendar,
   CalendarClock,
+  ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
+  Plus,
   RotateCcw,
   Settings2,
   ShieldOff,
@@ -20,6 +23,7 @@ import {
 import { AuthRequestError, fetchSession, impersonate } from "@/lib/auth";
 import {
   archiveTenant,
+  createTenant,
   fetchTenants,
   reactivateTenant,
   restoreTenant,
@@ -27,11 +31,26 @@ import {
   updateAssistantSettings,
   updateCommercialFinancials,
 } from "@/lib/api";
-import type { TenantSummary } from "@/lib/types";
+import type { TenantCreateInput, TenantListResponse, TenantSummary } from "@/lib/types";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { WhatsappField } from "@/components/ui/whatsapp-field";
 import { cn } from "@/lib/utils";
+import { PlatformAdminHeader } from "@/components/admin/platform-admin-header";
+import { TENANT_TIMEZONES } from "@/lib/tenant-timezones";
 
 type LifecycleAction = "suspend" | "reactivate" | "archive" | "restore";
 type SettingsTab = "assistant" | "financial" | "tasks" | "lifecycle";
+const TENANTS_PER_PAGE = 12;
 
 export default function SelectTenantPage() {
   const router = useRouter();
@@ -43,14 +62,41 @@ export default function SelectTenantPage() {
   const [settingsTenant, setSettingsTenant] = useState<TenantSummary | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("assistant");
   const [showArchived, setShowArchived] = useState(false);
+  const [pagination, setPagination] = useState<Omit<TenantListResponse, "tenants"> | null>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [adminEmail, setAdminEmail] = useState<string | null>(null);
+  const latestTenantRequest = useRef(0);
 
-  const loadTenants = useCallback(async (includeArchived: boolean) => {
+  const loadTenants = useCallback(async (includeArchived: boolean, page: number) => {
+    const requestId = ++latestTenantRequest.current;
     try {
-      const res = await fetchTenants({ includeArchived });
+      let res = await fetchTenants({
+        includeArchived,
+        page,
+        pageSize: TENANTS_PER_PAGE,
+      });
+      if (requestId !== latestTenantRequest.current) return;
+      if (res.total_pages > 0 && page > res.total_pages) {
+        res = await fetchTenants({
+          includeArchived,
+          page: res.total_pages,
+          pageSize: TENANTS_PER_PAGE,
+        });
+        if (requestId !== latestTenantRequest.current) return;
+      }
       setTenants(res.tenants);
+      setPagination({
+        page: res.page,
+        page_size: res.page_size,
+        total: res.total,
+        total_pages: res.total_pages,
+      });
     } catch {
-      setError("Falha ao carregar tenants");
+      if (requestId === latestTenantRequest.current) {
+        setError("Não foi possível carregar os tenants. Tente novamente.");
+      }
     }
   }, []);
 
@@ -66,7 +112,8 @@ export default function SelectTenantPage() {
         router.replace("/agenda");
         return;
       }
-      await loadTenants(false);
+      setAdminEmail(user.email);
+      await loadTenants(false, 1);
     });
     return () => {
       active = false;
@@ -76,7 +123,18 @@ export default function SelectTenantPage() {
   function handleToggleArchived() {
     const next = !showArchived;
     setShowArchived(next);
-    void loadTenants(next);
+    void loadTenants(next, 1);
+  }
+
+  function handlePageChange(page: number) {
+    if (!pagination || page < 1 || page > pagination.total_pages) return;
+    void loadTenants(showArchived, page);
+  }
+
+  async function handleTenantCreated() {
+    setShowArchived(false);
+    await loadTenants(false, 1);
+    setSuccess("Tenant criado. O proprietário recebeu um email de ativação.");
   }
 
   async function handleSelect(tenant: TenantSummary) {
@@ -98,13 +156,13 @@ export default function SelectTenantPage() {
             router.replace("/agenda");
             return;
           } catch {
-            setError("Falha ao acessar o tenant");
+            setError("Não foi possível acessar o tenant. Tente novamente.");
           }
         }
         setPendingId(null);
         return;
       }
-      setError("Falha ao acessar o tenant");
+      setError("Não foi possível acessar o tenant. Tente novamente.");
       setPendingId(null);
     }
   }
@@ -163,6 +221,7 @@ export default function SelectTenantPage() {
           setSettingsTenant((current) =>
             current?.id === tenant.id ? null : current
           );
+          void loadTenants(showArchived, pagination?.page ?? 1);
           return;
         }
         applyLocal({
@@ -170,6 +229,7 @@ export default function SelectTenantPage() {
           status_changed_at: state.status_changed_at,
           status_reason: state.status_reason,
         });
+        void loadTenants(showArchived, pagination?.page ?? 1);
       })
       .catch(() => {
         applyLocal(previous);
@@ -320,19 +380,29 @@ export default function SelectTenantPage() {
   return (
     <div className="min-h-dvh w-full bg-[var(--bg-page)] px-4 py-8 sm:px-6 sm:py-12">
       <div className="mx-auto max-w-5xl">
-        <div className="mb-8 flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500 text-sm font-bold text-white">
-            T
-          </div>
+        <PlatformAdminHeader active="tenants" adminEmail={adminEmail} />
+        <div className="mb-8 flex flex-wrap items-start gap-3">
           <div>
-            <h1 className="text-lg font-semibold tracking-tight text-foreground">
-              Painel Admin
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">
+              Tenants
             </h1>
             <p className="text-sm text-muted-foreground">
               Selecione um tenant para acessar sua agenda.
             </p>
           </div>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setSuccess(null);
+                setCreateDialogOpen(true);
+              }}
+              className="flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+            >
+              <Plus className="h-4 w-4" />
+              Novo tenant
+            </button>
             <button
               type="button"
               onClick={handleToggleArchived}
@@ -345,17 +415,16 @@ export default function SelectTenantPage() {
             >
               {showArchived ? "Ocultar arquivados" : "Mostrar arquivados"}
             </button>
-            <Link
-              href="/admin/scheduled-tasks"
-              className="rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
-            >
-              Tarefas agendadas
-            </Link>
           </div>
         </div>
 
+        {success && (
+          <p className="mb-4 rounded-md bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700" role="status">
+            {success}
+          </p>
+        )}
         {error && (
-          <p className="mb-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <p className="mb-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
             {error}
           </p>
         )}
@@ -366,7 +435,9 @@ export default function SelectTenantPage() {
 
         {tenants !== null && tenants.length === 0 && (
           <p className="text-sm text-muted-foreground">
-            Nenhum tenant cadastrado ainda. Onboarding manual via scripts/create_user.py.
+            {showArchived
+              ? "Nenhum tenant arquivado encontrado."
+              : "Nenhum tenant cadastrado ainda. Crie o primeiro tenant para enviar o email de ativação."}
           </p>
         )}
 
@@ -438,6 +509,21 @@ export default function SelectTenantPage() {
             </article>
           ))}
         </div>
+        {pagination && pagination.total > 0 && (
+          <TenantPager
+            page={pagination.page}
+            pageSize={pagination.page_size}
+            total={pagination.total}
+            totalPages={pagination.total_pages}
+            onChange={handlePageChange}
+          />
+        )}
+        <TenantCreationDialog
+          open={createDialogOpen}
+          onOpenChange={setCreateDialogOpen}
+          onCreated={handleTenantCreated}
+          onError={setError}
+        />
         {settingsTenant && (
           <TenantSettingsDialog
             tenant={settingsTenant}
@@ -462,6 +548,184 @@ export default function SelectTenantPage() {
         )}
       </div>
     </div>
+  );
+}
+
+function TenantPager({
+  page,
+  pageSize,
+  total,
+  totalPages,
+  onChange,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  onChange: (page: number) => void;
+}) {
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, total);
+
+  return (
+    <nav
+      aria-label="Paginação de tenants"
+      className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4 text-sm text-muted-foreground"
+    >
+      <span>{start}–{end} de {total} tenants</span>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          aria-label="Página anterior"
+          disabled={page <= 1}
+          onClick={() => onChange(page - 1)}
+          className="rounded-md border border-border bg-card p-1.5 text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <span>Página {page} de {totalPages}</span>
+        <button
+          type="button"
+          aria-label="Próxima página"
+          disabled={page >= totalPages}
+          onClick={() => onChange(page + 1)}
+          className="rounded-md border border-border bg-card p-1.5 text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+    </nav>
+  );
+}
+
+function TenantCreationDialog({
+  open,
+  onOpenChange,
+  onCreated,
+  onError,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: () => Promise<void>;
+  onError: (message: string | null) => void;
+}) {
+  const [values, setValues] = useState<TenantCreateInput>({
+    name: "",
+    owner_email: "",
+    whatsapp: "",
+    timezone: "America/Sao_Paulo",
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  function updateValue<K extends keyof TenantCreateInput>(key: K, value: TenantCreateInput[K]) {
+    setValues((current) => ({ ...current, [key]: value }));
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError(null);
+    onError(null);
+    if (!values.whatsapp) {
+      setFormError("Informe o número de WhatsApp da operação.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await createTenant(values);
+      setValues({
+        name: "",
+        owner_email: "",
+        whatsapp: "",
+        timezone: "America/Sao_Paulo",
+      });
+      onOpenChange(false);
+      await onCreated();
+    } catch (requestError) {
+      setFormError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Não foi possível criar o tenant."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md" showCloseButton={!submitting}>
+        <form onSubmit={submit}>
+          <DialogHeader>
+            <DialogTitle>Novo tenant</DialogTitle>
+            <DialogDescription>
+              Crie o tenant e envie ao proprietário o email para ativar a conta e definir a senha.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="tenant-name">Nome do tenant</Label>
+              <Input
+                id="tenant-name"
+                value={values.name}
+                onChange={(event) => updateValue("name", event.target.value)}
+                minLength={2}
+                maxLength={255}
+                required
+                disabled={submitting}
+                autoFocus
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="tenant-owner-email">Email do proprietário</Label>
+              <Input
+                id="tenant-owner-email"
+                type="email"
+                value={values.owner_email}
+                onChange={(event) => updateValue("owner_email", event.target.value)}
+                maxLength={255}
+                required
+                disabled={submitting}
+              />
+            </div>
+            <WhatsappField
+              id="tenant-whatsapp"
+              value={values.whatsapp}
+              onChange={(value) => updateValue("whatsapp", value)}
+            />
+            <div className="space-y-2">
+              <Label htmlFor="tenant-timezone">Fuso horário</Label>
+              <select
+                id="tenant-timezone"
+                value={values.timezone}
+                onChange={(event) => updateValue("timezone", event.target.value)}
+                required
+                disabled={submitting}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {TENANT_TIMEZONES.map((timezone) => (
+                  <option key={timezone} value={timezone}>{timezone}</option>
+                ))}
+              </select>
+            </div>
+            {formError && <p className="text-sm text-destructive" role="alert">{formError}</p>}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={submitting}
+            >
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? "Criando..." : "Criar e enviar ativação"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

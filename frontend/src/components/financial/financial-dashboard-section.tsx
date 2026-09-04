@@ -53,25 +53,25 @@ const BREAKDOWNS: {
     key: "place",
     label: "Por local",
     title: "Distribuição por local",
-    emptyMessage: "Nenhuma capacidade configurada por local neste recorte.",
+    emptyMessage: "Nenhuma capacidade configurada por local neste período.",
   },
   {
     key: "part_of_day",
     label: "Por período",
     title: "Distribuição por período do dia",
-    emptyMessage: "Nenhuma capacidade configurada por período neste recorte.",
+    emptyMessage: "Nenhuma capacidade configurada por período neste período.",
   },
   {
     key: "weekday",
     label: "Por semana",
     title: "Distribuição por dia da semana",
-    emptyMessage: "Nenhuma capacidade configurada por dia neste recorte.",
+    emptyMessage: "Nenhuma capacidade configurada por dia neste período.",
   },
   {
     key: "time_category",
     label: "Regular × nobre",
     title: "Distribuição por categoria de horário",
-    emptyMessage: "Nenhuma capacidade configurada por categoria neste recorte.",
+    emptyMessage: "Nenhuma capacidade configurada por categoria neste período.",
   },
 ];
 
@@ -229,7 +229,7 @@ export function FinancialDashboardSection({
           setTrendError(
             caught instanceof Error
               ? caught.message
-              : "Falha ao carregar tendência mensal"
+              : "Não foi possível carregar a tendência mensal. Tente novamente."
           );
         }
       });
@@ -525,7 +525,7 @@ export function FinancialDashboardSection({
             Distribuição da agenda
           </h2>
           <p className="text-sm text-muted-foreground">
-            Veja como a capacidade e a receita agendada se distribuem neste recorte.
+            Veja como a capacidade e a receita agendada se distribuem neste período.
           </p>
         </div>
         <Card>

@@ -247,7 +247,7 @@ export function MonthlyRevenueBarChart({
 
 export function CapacityBars({
   rows,
-  emptyMessage = "Nenhuma capacidade configurada neste recorte.",
+  emptyMessage = "Nenhuma capacidade configurada neste período.",
 }: {
   rows: FinancialMetricBreakdown[];
   emptyMessage?: string;

@@ -15,7 +15,8 @@ A passive WhatsApp Business copilot that converts conversations between independ
 - [AI agent modes](docs/ai_agent_modes.md) — distinction between the active instructor agent (direct chat → propose → confirm → execute) and the passive observer (detects scheduling intent in instructor-customer WhatsApp conversations without being addressed).
 - [Agent navigability map](docs/agent_navigability.md) — code-first map of active and passive agent entry points, tool/action boundaries, ontology records, candidate lifecycles, and runtime workers.
 - [Business rules](docs/business_rules.md) — catalog of all encoded business rules: scheduling constraints, makeup credit lifecycle, revenue rules, multi-tenancy, agent guardrails, data integrity, and WhatsApp pipeline rules.
-- [Google Cloud Run & Cloud SQL deployment assessment](docs/google_cloud_run_cloud_sql_deployment_assessment.md) — current production-readiness assessment, target architecture, Cloud SQL design, security controls, and staged delivery plan.
+- [Azure App Service & PostgreSQL deployment assessment](docs/azure_app_service_postgresql_deployment_assessment.md) — background assessment of the Azure-first production architecture, Flexible Server design, security controls, and cost bands.
+- [Azure deployment roadmap](docs/azure_deployment_roadmap.md) — **the plan of record for going live**: the lean/cheap target architecture, verified findings against the current code, the ordered P0 task list, and the cutover runbook.
 
 ### Page Documentation
 
@@ -24,14 +25,20 @@ A passive WhatsApp Business copilot that converts conversations between independ
 - [Financeiro (Financial)](docs/pages/financeiro.md) — operational financial workspace with projections, capacity, and recognized-revenue history.
 - [Simulador financeiro](docs/pages/simulador_financeiro.md) — dedicated what-if workspace for capacity, mix, and temporary price scenarios.
 - [Configurações (Tenant Definitions)](docs/pages/minhas_regras.md) — operational rules for every tenant plus financial definitions when the commercial_financials module is enabled.
+- [WhatsApp](docs/pages/whatsapp.md) — an authenticated, informational introduction to the planned WhatsApp Business connection; no provider connection is active yet.
 - [Chat / AI Assistant](docs/pages/chat.md) — floating chat panel accessible from every page, with tool call transparency and action confirmation.
 - [Admin — Tenant lifecycle](docs/pages/admin_tenant_lifecycle.md) — platform-admin suspend / reactivate / archive / restore for a tenant, from the Configurações modal, with full-lockout enforcement and audit.
+- [Solicitar uma conta (account request & approval)](docs/pages/solicitar_conta.md) — persisted public access-request form (login + landing + `/solicitar-conta`), the platform-admin request inbox, and atomic approval that provisions the tenant, pending owner, and activation email.
 
 ### Roadmaps & Guides
 
 - [Project brief](docs/whatsapp_schedule_copilot_poc_project_brief_v0.1.md) — product thesis, architecture, domain model, and design principles. Source of truth for *why* decisions were made.
 - [Implementation roadmap](docs/ROADMAPS/whatsapp_schedule_copilot_poc_roadmap_v0.1.md) — phased, actionable plan for *what to build next*. Start here.
 - [Multi-tenancy roadmap](docs/ROADMAPS/multi_tenancy_roadmap_v0.1_2026-08-04.md) — assessment and phased plan for onboarding a second instructor (tenant isolation, auth, admin impersonation).
+- [Admin tenant workspace roadmap](docs/ROADMAPS/admin_tenant_workspace_roadmap_v0.1_2026-09-03.md) — implemented platform-admin logout/navigation, atomic tenant and initial-owner creation, and bounded tenant-tile pagination.
+- [Account request, approval, and onboarding roadmap](docs/ROADMAPS/account_request_approval_onboarding_roadmap_v0.1_2026-09-03.md) — implemented persisted “Solicitar uma conta” flow, platform-admin request inbox, atomic tenant approval, and activation-email handoff. See [the page doc](docs/pages/solicitar_conta.md).
+- [YCloud tenant WhatsApp connection roadmap](docs/ROADMAPS/ycloud_tenant_whatsapp_connection_roadmap_v0.1_2026-09-02.md) — proposed production-shaped mock and phased Tech Partner Embedded Signup path, with two small provider-neutral adapters, one global provider selector, frontend states, cutover/rollback, partnership gates, and rollout criteria.
+- [Manual customer registration & WhatsApp deduplication roadmap](docs/ROADMAPS/manual_customer_registration_phone_deduplication_roadmap_v0.1_2026-09-02.md) — proposed tenant-scoped customer creation with international mobile normalization (Brazil default), database-enforced deduplication, and race-safe WhatsApp identity resolution.
 - [Tenant suspend & archive roadmap](docs/ROADMAPS/tenant_suspend_and_archive_roadmap_v0.1_2026-09-01.md) — implemented: reversible platform-admin suspend/archive for a tenant with full-lockout enforcement (login, impersonation, ingestion, tasks), audit, and force-logout; no hard delete.
 - [Authentication, email verification, and password reset roadmap](docs/ROADMAPS/auth_email_verification_password_reset_roadmap_v0.1_2026-09-01.md) — Agenda/HoraH assessment and production path for verified manual onboarding, provider-neutral GoDaddy SMTP, password strength feedback, secure recovery, and session hardening.
 - [Authentication email configuration](docs/auth_email_configuration.md) — environment contract, GoDaddy SMTP profiles, worker operation, and production release checks.

@@ -293,9 +293,45 @@ class TenantSummary(BaseModel):
 
 
 class TenantListResponse(BaseModel):
-    """Response for GET /api/admin/tenants."""
+    """Paginated response for GET /api/admin/tenants."""
 
     tenants: list[TenantSummary]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+class TenantCreateRequest(BaseModel):
+    """Platform-admin request to create a tenant and its initial owner."""
+
+    name: str = Field(min_length=2, max_length=255)
+    owner_email: str = Field(min_length=3, max_length=255)
+    whatsapp: str = Field(min_length=3, max_length=30)
+    timezone: str = Field(default="America/Sao_Paulo", min_length=1, max_length=100)
+
+    @field_validator("name")
+    @classmethod
+    def validate_tenant_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if len(cleaned) < 2:
+            raise ValueError("Tenant name must contain at least two characters")
+        return cleaned
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Timezone is required")
+        return cleaned
+
+
+class TenantCreateResponse(BaseModel):
+    """Created tenant and the address that will receive activation."""
+
+    tenant: TenantSummary
+    owner_email: str
 
 
 class TenantStatusChangeRequest(BaseModel):
@@ -323,6 +359,12 @@ class TenantFeatureState(BaseModel):
 
     feature_key: str
     enabled: bool
+
+
+class WhatsappConnectionRequestState(BaseModel):
+    """Whether the tenant has already asked the admin to connect WhatsApp."""
+
+    requested: bool
 
 
 class AssistantSettingsUpdate(BaseModel):

@@ -41,7 +41,7 @@ export function GlobalRatesSection({
     } catch (caught) {
       setDefaultStatus(settings.default_commercial_status);
       setNotice({
-        text: caught instanceof Error ? caught.message : "Falha ao salvar configuração",
+        text: caught instanceof Error ? caught.message : "Não foi possível salvar a configuração. Tente novamente.",
         error: true,
       });
     } finally {
@@ -52,11 +52,11 @@ export function GlobalRatesSection({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Configuração comercial</CardTitle>
+        <CardTitle>Status comercial padrão</CardTitle>
         <CardDescription>
-          Status comercial padrão aplicado a clientes e grupos sem substituição
-          própria. Os valores por participante ficam na aba &quot;Valores por
-          local&quot;.
+          Vale para todos os clientes e grupos que não tenham um status próprio
+          definido. Na ficha de cada cliente ou grupo, ele aparece como
+          &quot;Padrão da conta&quot;.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">

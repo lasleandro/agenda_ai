@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Calendar, Lock, Mail, User } from "lucide-react";
+import { ArrowLeft, Calendar, Eye, EyeOff, Lock, Mail } from "lucide-react";
+import { AccountRequestForm } from "@/components/auth/account-request-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +12,7 @@ import { login, requestPasswordReset } from "@/lib/auth";
 
 type AuthView = "login" | "signup" | "forgot";
 
-const SUPPORT_EMAIL = "contato@tennisos.com.br";
+const RESEND_COOLDOWN_SECONDS = 60;
 
 export default function LoginPage() {
   const router = useRouter();
@@ -19,14 +20,25 @@ export default function LoginPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const [reqName, setReqName] = useState("");
-  const [reqEmail, setReqEmail] = useState("");
-  const [reqMessage, setReqMessage] = useState("");
   const [resetEmail, setResetEmail] = useState("");
   const [resetSubmitted, setResetSubmitted] = useState(false);
+  const [resendSecondsRemaining, setResendSecondsRemaining] = useState(0);
+
+  useEffect(() => {
+    if (resendSecondsRemaining === 0) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setResendSecondsRemaining((seconds) => Math.max(seconds - 1, 0));
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [resendSecondsRemaining]);
 
   async function handleLogin(e: FormEvent) {
     e.preventDefault();
@@ -49,6 +61,7 @@ export default function LoginPage() {
     try {
       await requestPasswordReset(resetEmail);
       setResetSubmitted(true);
+      setResendSecondsRemaining(RESEND_COOLDOWN_SECONDS);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -59,12 +72,6 @@ export default function LoginPage() {
       setSubmitting(false);
     }
   }
-
-  const requestAccessHref = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
-    "Solicitação de acesso ao Tennis OS"
-  )}&body=${encodeURIComponent(
-    `Nome: ${reqName}\nE-mail: ${reqEmail}\n\n${reqMessage}`
-  )}`;
 
   return (
     <div className="flex min-h-dvh w-full">
@@ -147,7 +154,7 @@ export default function LoginPage() {
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  Criar conta
+                  Solicitar uma conta
                 </button>
               </div>
             )}
@@ -184,13 +191,25 @@ export default function LoginPage() {
                       <Lock className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                       <Input
                         id="password"
-                        type="password"
+                        type={passwordVisible ? "text" : "password"}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         autoComplete="current-password"
                         required
-                        className="h-10 pl-9"
+                        className="h-10 pr-10 pl-9"
                       />
+                      <button
+                        type="button"
+                        aria-label={passwordVisible ? "Ocultar senha" : "Mostrar senha"}
+                        onClick={() => setPasswordVisible((visible) => !visible)}
+                        className="absolute top-1/2 right-2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {passwordVisible ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </button>
                     </div>
                   </div>
 
@@ -211,7 +230,13 @@ export default function LoginPage() {
 
                 <button
                   type="button"
-                  onClick={() => setView("forgot")}
+                  onClick={() => {
+                    setResetEmail(email.trim());
+                    setResetSubmitted(false);
+                    setResendSecondsRemaining(0);
+                    setError(null);
+                    setView("forgot");
+                  }}
                   className="mt-4 w-full text-center text-xs text-muted-foreground hover:text-foreground"
                 >
                   Esqueci minha senha
@@ -223,68 +248,14 @@ export default function LoginPage() {
               <>
                 <div className="mb-6 space-y-1">
                   <h2 className="text-xl font-semibold text-foreground">
-                    Solicitar acesso
+                    Solicitar uma conta
                   </h2>
                   <p className="text-sm text-muted-foreground">
-                    As contas do Tennis OS são criadas manualmente pela nossa equipe.
-                    Envie seus dados e entraremos em contato para configurar o seu
-                    acesso.
+                    Envie seus dados para análise. Se a solicitação for aprovada,
+                    você receberá por email o link para configurar sua senha.
                   </p>
                 </div>
-
-                <div className="space-y-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="req-name">Nome</Label>
-                    <div className="relative">
-                      <User className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        id="req-name"
-                        value={reqName}
-                        onChange={(e) => setReqName(e.target.value)}
-                        className="h-10 pl-9"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="req-email">Email</Label>
-                    <div className="relative">
-                      <Mail className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        id="req-email"
-                        type="email"
-                        value={reqEmail}
-                        onChange={(e) => setReqEmail(e.target.value)}
-                        className="h-10 pl-9"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="req-message">Mensagem (opcional)</Label>
-                    <textarea
-                      id="req-message"
-                      value={reqMessage}
-                      onChange={(e) => setReqMessage(e.target.value)}
-                      rows={3}
-                      className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    />
-                  </div>
-
-                  <Button
-                    className="h-10 w-full text-[15px]"
-                    render={<a href={requestAccessHref} />}
-                  >
-                    Enviar solicitação
-                  </Button>
-                  <p className="text-center text-xs text-muted-foreground">
-                    Ou escreva para{" "}
-                    <a
-                      className="underline hover:text-foreground"
-                      href={`mailto:${SUPPORT_EMAIL}`}
-                    >
-                      {SUPPORT_EMAIL}
-                    </a>
-                  </p>
-                </div>
+                <AccountRequestForm idPrefix="login-request" autoFocus />
               </>
             )}
 
@@ -311,6 +282,7 @@ export default function LoginPage() {
                         value={resetEmail}
                         onChange={(e) => setResetEmail(e.target.value)}
                         autoComplete="email"
+                        autoFocus
                         required
                         className="h-10 pl-9"
                       />
@@ -328,8 +300,18 @@ export default function LoginPage() {
                       {error}
                     </p>
                   )}
-                  <Button className="h-10 w-full text-[15px]" type="submit" disabled={submitting}>
-                    {submitting ? "Enviando..." : "Enviar instruções"}
+                  <Button
+                    className="h-10 w-full text-[15px]"
+                    type="submit"
+                    disabled={submitting || resendSecondsRemaining > 0}
+                  >
+                    {submitting
+                      ? "Enviando..."
+                      : resendSecondsRemaining > 0
+                        ? `Reenviar em ${resendSecondsRemaining}s`
+                        : resetSubmitted
+                          ? "Reenviar instruções"
+                          : "Enviar instruções"}
                   </Button>
                 </form>
 
@@ -339,6 +321,7 @@ export default function LoginPage() {
                     setView("login");
                     setError(null);
                     setResetSubmitted(false);
+                    setResendSecondsRemaining(0);
                   }}
                   className="mt-4 flex w-full items-center justify-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
                 >

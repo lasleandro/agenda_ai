@@ -196,7 +196,7 @@ export function FinancialSimulator({
       setResult(await evaluateFinancialScenario(buildInput()));
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "Falha ao simular cenário"
+        caught instanceof Error ? caught.message : "Não foi possível simular o cenário. Tente novamente."
       );
     } finally {
       setEvaluating(false);
@@ -233,7 +233,7 @@ export function FinancialSimulator({
         );
       }
       setError(
-        caught instanceof Error ? caught.message : "Falha ao salvar cenário"
+        caught instanceof Error ? caught.message : "Não foi possível salvar o cenário. Tente novamente."
       );
     } finally {
       setSaving(false);
@@ -305,7 +305,7 @@ export function FinancialSimulator({
             Premissas da simulação
           </CardTitle>
           <CardDescription>
-            Ajuste as hipóteses abaixo sem alterar preços ou compromissos reais.
+            Ajuste as premissas abaixo sem alterar preços ou compromissos reais.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -427,7 +427,7 @@ export function FinancialSimulator({
               </Tooltip>
                   </h3>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Valores configurados para o recorte. Altere somente para testar outra regra.
+                    Valores configurados para o período. Altere somente para testar outra regra.
                   </p>
                 </div>
                 {editingRates ? (
@@ -534,8 +534,8 @@ export function FinancialSimulator({
         <CardHeader>
           <CardTitle>Cenários salvos</CardTitle>
           <CardDescription>
-            Cada item preserva uma fotografia imutável das entradas e do
-            resultado.
+            Cada cenário guarda os valores usados e o resultado daquele momento —
+            alterar as premissas depois não muda o que já foi salvo.
           </CardDescription>
         </CardHeader>
         <CardContent>

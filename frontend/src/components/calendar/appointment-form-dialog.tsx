@@ -148,7 +148,7 @@ export function AppointmentFormDialog({
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "Falha ao criar agendamento"
+          : "Não foi possível criar o agendamento. Tente novamente."
       );
     } finally {
       setSaving(false);
@@ -170,7 +170,7 @@ export function AppointmentFormDialog({
       onOpenChange(false);
     } catch (requestError) {
       setError(
-        requestError instanceof Error ? requestError.message : "Falha ao criar evento"
+        requestError instanceof Error ? requestError.message : "Não foi possível criar o evento. Tente novamente."
       );
     } finally {
       setSaving(false);

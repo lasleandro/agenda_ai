@@ -47,8 +47,12 @@ from app.chat.pipeline import process_conversation
 
 router = APIRouter(prefix="/api/dev", tags=["dev"])
 
-MOCK_CUSTOMER_PHONE_PREFIX = "+550000000"
-MOCK_CUSTOMER_PHONE = f"{MOCK_CUSTOMER_PHONE_PREFIX}001"
+MOCK_CUSTOMER_PHONE_PREFIX = "+551199900"
+# Prefix (9 digits) + a 4-digit suffix = 13 national digits, matching the
+# BR mobile shape (DDD + 9 + 8-digit subscriber) that normalize_mobile_phone
+# validates against — a 5-digit suffix produces an unparseable 14-digit
+# number and 500s for any tenant hitting this for the first time.
+MOCK_CUSTOMER_PHONE = f"{MOCK_CUSTOMER_PHONE_PREFIX}0001"
 MOCK_CUSTOMER_NAME = "Cliente Teste (mock)"
 MOCK_CUSTOMER_NAMES = (
     "Ana Martins",
@@ -131,7 +135,7 @@ def _next_mock_customer_name(db: Session, professional_id: uuid.UUID) -> str:
 def _create_mock_customer(db: Session, professional_id: uuid.UUID) -> tuple[str, str, str]:
     """Create one tenant-scoped customer and its empty mock conversation."""
     while True:
-        phone = f"{MOCK_CUSTOMER_PHONE_PREFIX}{uuid.uuid4().int % 1_000_000:06d}"
+        phone = f"{MOCK_CUSTOMER_PHONE_PREFIX}{uuid.uuid4().int % 10_000:04d}"
         if not db.query(Contact.id).filter(Contact.phone == phone).first():
             break
 

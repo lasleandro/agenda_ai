@@ -33,7 +33,7 @@ from app.services.scheduling import TIMEZONE
 
 
 def _random_phone() -> str:
-    return f"+55119{uuid.uuid4().hex[:8]}"
+    return f"+55119{uuid.uuid4().int % 100_000_000:08d}"
 
 
 def _random_email() -> str:

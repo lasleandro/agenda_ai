@@ -56,7 +56,7 @@ def _minutes_between(start: str, end: str) -> int:
 def _create_tenant(db, *, enabled: bool):
     professional = Professional(
         name="Tenant Financeiro",
-        assistant_phone=f"+55119{uuid.uuid4().hex[:8]}",
+        assistant_phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}",
     )
     db.add(professional)
     db.commit()
@@ -154,7 +154,7 @@ def test_capacity_uses_stays_not_recurring_classes() -> None:
         )
         contact = Contact(
             professional_id=professional.id,
-            phone=f"+55119{uuid.uuid4().hex[:8]}",
+            phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}",
             display_name="Aluno",
             normalized_name="aluno",
         )
@@ -223,13 +223,13 @@ def test_financial_inheritance_zero_and_multi_group_context() -> None:
         place = Place(professional_id=professional.id, name="Clube", normalized_name="clube")
         first = Contact(
             professional_id=professional.id,
-            phone=f"+55119{uuid.uuid4().hex[:8]}",
+            phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}",
             display_name="Cliente um",
             normalized_name="cliente um",
         )
         second = Contact(
             professional_id=professional.id,
-            phone=f"+55119{uuid.uuid4().hex[:8]}",
+            phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}",
             display_name="Cliente dois",
             normalized_name="cliente dois",
         )
@@ -413,7 +413,7 @@ def test_financial_endpoints_require_feature_and_tenant_scope() -> None:
 
         hidden_contact = Contact(
             professional_id=disabled_professional.id,
-            phone=f"+55119{uuid.uuid4().hex[:8]}",
+            phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}",
             display_name="Cliente oculto",
             normalized_name="cliente oculto",
         )
@@ -733,13 +733,13 @@ def test_financial_dashboard_capacity_scenarios_and_tenant_scope() -> None:
         )
         first = Contact(
             professional_id=professional.id,
-            phone=f"+55119{uuid.uuid4().hex[:8]}",
+            phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}",
             display_name="Cliente A",
             normalized_name="cliente a",
         )
         second = Contact(
             professional_id=professional.id,
-            phone=f"+55119{uuid.uuid4().hex[:8]}",
+            phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}",
             display_name="Cliente B",
             normalized_name="cliente b",
         )
@@ -1046,7 +1046,7 @@ def test_financial_dashboard_top_line_uses_work_journey_not_recurring_slots() ->
         )
         contact = Contact(
             professional_id=professional.id,
-            phone=f"+55119{uuid.uuid4().hex[:8]}",
+            phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}",
             display_name="Cliente Solo",
             normalized_name="cliente solo",
         )
@@ -1416,7 +1416,7 @@ def test_financial_operational_analytics_classifies_outcomes_and_rankings() -> N
         )
         contact = Contact(
             professional_id=professional.id,
-            phone=f"+55119{uuid.uuid4().hex[:8]}",
+            phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}",
             display_name="Cliente de métricas",
             normalized_name="cliente de metricas",
         )

@@ -119,6 +119,12 @@ erDiagram
 "Marizinha," "quadra 2," "sabado de manha" to the correct entity via
 normalized alias matching.
 
+`Contact.phone` is a required E.164 mobile/WhatsApp identity and is unique
+within `professional_id`. Manual registration and WhatsApp ingestion use the
+same normalization and lookup, so a later conversation reuses a manually
+registered customer instead of creating a second contact. Brazilian input may
+be national format; other countries must include their calling code.
+
 ---
 
 ## 4. Conversations & Messages
@@ -170,7 +176,8 @@ erDiagram
   }
 ```
 
-Messages arrive via WhatsApp webhook, are deduplicated by
+Messages arrive via WhatsApp webhook, resolve their customer by the
+tenant-scoped canonical `Contact.phone`, are deduplicated by
 `provider_message_id`, and flow through the chat pipeline.
 
 `AgentChannelMessage` is a separate, lighter-weight log — it's the

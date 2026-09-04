@@ -81,7 +81,7 @@ export function PrimeTimeSection({
     } catch (caught) {
       setDrafts(toDrafts(windows));
       setNotice({
-        text: caught instanceof Error ? caught.message : "Falha ao salvar horários",
+        text: caught instanceof Error ? caught.message : "Não foi possível salvar os horários. Tente novamente.",
         error: true,
       });
     } finally {
@@ -94,8 +94,8 @@ export function PrimeTimeSection({
       <CardHeader>
         <CardTitle>Horários nobres</CardTitle>
         <CardDescription>
-          Os padrões iniciais são 05:00–08:00 e 18:00–21:00. Faixas não podem
-          sobrepor no mesmo dia.
+          Os padrões iniciais são 05:00–08:00 e 18:00–21:00. As faixas não podem
+          se sobrepor no mesmo dia.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

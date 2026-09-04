@@ -308,6 +308,11 @@ These rules are enforced through the system prompt in `orchestrator.py`:
   can't be added twice to the same appointment.
 - `(recurring_slot_id, contact_id)` on `recurring_slot_participants` -- a
   contact can't be enrolled twice in the same group.
+- `(professional_id, phone)` on `contacts` -- a tenant has at most one
+  customer for a canonical E.164 WhatsApp mobile number. Brazilian
+  national-format input is normalized with `BR` as the default; other
+  countries must include their calling code. The same number remains valid in
+  different tenants.
 - `provider_message_id` on `messages` -- WhatsApp deduplication guard.
 - `(appointment_candidate_id, message_id)` on `appointment_evidence` --
   each message links to a candidate at most once per role.

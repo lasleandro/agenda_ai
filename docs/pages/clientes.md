@@ -27,6 +27,7 @@ a detail page for editing individual contact profiles.
 | `AddToGroupDialog` | `components/ontology/add-to-group-dialog.tsx` | Per-contact dialog to add to existing group |
 | `AddToWaitlistDialog` | `components/ontology/add-to-waitlist-dialog.tsx` | Per-contact dialog to add to the Fila de Espera (waitlist roadmap v0.1) |
 | `DetectedCandidatesTab` | `components/ontology/detected-candidates-tab.tsx` | Review surface for passive-observer-detected scheduling events |
+| `ContactFormDialog` | `components/ontology/contact-form-dialog.tsx` | Manual customer registration with an international phone input (Brazil selected by default) |
 
 ### Three-Tab Layout
 
@@ -41,6 +42,7 @@ a detail page for editing individual contact profiles.
 | Data | Endpoint |
 |---|---|
 | Contacts | `GET /api/contacts` |
+| Create contact | `POST /api/contacts` |
 | Places | `GET /api/places` |
 | Recurring slots | `GET /api/recurring-slots` |
 | Waitlist entries (open + matched) | `GET /api/waitlist-entries` |
@@ -50,6 +52,7 @@ a detail page for editing individual contact profiles.
 
 | Action | How |
 |---|---|
+| Register customer | Click **Novo cliente**, enter a name and mobile/WhatsApp number; Brazil is preselected and foreign numbers require their calling code |
 | Search contacts | Type in search field (client-side filter by name, phone, place) |
 | Select for group | Check checkboxes (max 4), click "Criar grupo" |
 | Add to group | Per-row `UserPlus` button → select group in dialog |
@@ -66,6 +69,9 @@ a detail page for editing individual contact profiles.
   clock icon) when the contact has an open/matched waitlist entry
 - Client-side pagination, 10 per page
 - Search filters in real-time as user types
+- Registration inserts an optimistic row immediately; a server rejection removes
+  it and restores the entered values. A duplicate WhatsApp number shows the
+  API conflict without adding another customer.
 
 ---
 

@@ -169,7 +169,9 @@ def test_platform_admin_tenant_list_includes_new_tenant_and_forbids_non_admin() 
         admin_login = client.post(
             "/api/auth/login", json={"email": admin.email, "password": "correct-password"}
         )
-        tenants_res = client.get("/api/admin/tenants", cookies=admin_login.cookies)
+        tenants_res = client.get(
+            "/api/admin/tenants?page_size=48", cookies=admin_login.cookies
+        )
         assert tenants_res.status_code == 200
         tenant_ids = {t["id"] for t in tenants_res.json()["tenants"]}
         assert str(professional.id) in tenant_ids
@@ -202,7 +204,9 @@ def test_platform_admin_can_toggle_commercial_financials_with_audit() -> None:
             "/api/auth/login",
             json={"email": admin.email, "password": "correct-password"},
         )
-        initial_list = client.get("/api/admin/tenants", cookies=admin_login.cookies)
+        initial_list = client.get(
+            "/api/admin/tenants?page_size=48", cookies=admin_login.cookies
+        )
         tenant = next(
             item
             for item in initial_list.json()["tenants"]
@@ -316,7 +320,9 @@ def test_platform_admin_can_tune_assistant_settings_with_audit() -> None:
             "/api/auth/login",
             json={"email": admin.email, "password": "correct-password"},
         )
-        initial_list = client.get("/api/admin/tenants", cookies=admin_login.cookies)
+        initial_list = client.get(
+            "/api/admin/tenants?page_size=48", cookies=admin_login.cookies
+        )
         tenant = next(
             item
             for item in initial_list.json()["tenants"]

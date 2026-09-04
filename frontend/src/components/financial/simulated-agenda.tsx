@@ -159,7 +159,7 @@ export function SimulatedAgenda({
       })
       .catch((caught) => {
         if (active) {
-          setRealError(caught instanceof Error ? caught.message : "Falha ao carregar agenda real");
+          setRealError(caught instanceof Error ? caught.message : "Não foi possível carregar a agenda real. Tente novamente.");
         }
       })
       .finally(() => {
@@ -180,7 +180,7 @@ export function SimulatedAgenda({
         <CardDescription>
           {agendaView === "simulated"
             ? estimated
-              ? "A estimativa não inventa horários ou locais para a agenda simulada."
+              ? "A estimativa usa apenas os horários e locais que você já configurou."
               : "Alocação ilustrativa da capacidade do cenário. Não altera a agenda real."
             : "Agenda atual do período selecionado, em modo somente leitura."}
         </CardDescription>

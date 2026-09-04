@@ -15,6 +15,7 @@ from app.models import (
     Contact,
     Conversation,
     Message,
+    OperationalEvent,
     PendingProcessing,
     Professional,
 )
@@ -69,10 +70,13 @@ def test_event_fingerprint_changes_for_a_different_time() -> None:
 
 
 def _random_phone() -> str:
-    return f"+55119{uuid.uuid4().hex[:8]}"
+    return f"+55119{uuid.uuid4().int % 100_000_000:08d}"
 
 
 def _cleanup(db, professional_id: uuid.UUID) -> None:
+    db.query(OperationalEvent).filter(
+        OperationalEvent.professional_id == professional_id
+    ).delete(synchronize_session=False)
     conversation_ids = [
         row[0]
         for row in db.query(Conversation.id)

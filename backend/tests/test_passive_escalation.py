@@ -18,7 +18,7 @@ def _setup(status: str = "unclear"):
     professional = Professional(name="Escalation", assistant_phone=f"+55119{uuid.uuid4().hex[:8]}", agent_phone=f"+55118{uuid.uuid4().hex[:8]}")
     db.add(professional)
     db.flush()
-    contact = Contact(professional_id=professional.id, phone=f"+55117{uuid.uuid4().hex[:8]}", display_name="Aluno", normalized_name="aluno")
+    contact = Contact(professional_id=professional.id, phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}", display_name="Aluno", normalized_name="aluno")
     place = Place(professional_id=professional.id, name="Clube", normalized_name="clube")
     user = User(professional_id=professional.id, email=f"{uuid.uuid4().hex}@example.test", hashed_password="x", role="professional")
     db.add_all([contact, place, user])

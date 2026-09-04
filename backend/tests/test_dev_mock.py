@@ -15,7 +15,7 @@ from app.models import Contact, Conversation, Professional
 
 
 def _random_phone() -> str:
-    return f"+55119{uuid.uuid4().hex[:8]}"
+    return f"+55119{uuid.uuid4().int % 100_000_000:08d}"
 
 
 def test_create_mock_customer_creates_selectable_tenant_conversation_with_unique_name() -> None:

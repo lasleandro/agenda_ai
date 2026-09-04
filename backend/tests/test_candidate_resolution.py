@@ -15,7 +15,7 @@ from app.services.scheduling import TIMEZONE
 
 
 def _phone() -> str:
-    return f"+55119{uuid.uuid4().hex[:8]}"
+    return f"+55119{uuid.uuid4().int % 100_000_000:08d}"
 
 
 def _setup_candidate(operation: str = "create"):

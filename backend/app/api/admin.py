@@ -10,22 +10,23 @@ PUT   /api/admin/tenants/{id}/assistant-settings
 """
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_platform_admin
+from app.core import error_codes
+from app.core.error_responses import error_response
+from app.core.settings import get_int
 from app.database import SessionLocal
 from app.models import (
-    Appointment,
     AssistantSettings,
-    Contact,
     Professional,
     ScheduledTask,
     ScheduledTaskRun,
-    TenantFeature,
 )
 from app.schemas.api import (
     AssistantSettingsState,
@@ -41,11 +42,11 @@ from app.schemas.api import (
     ScheduledTaskUpdate,
     TenantFeatureState,
     TenantFeatureUpdate,
+    TenantCreateRequest,
+    TenantCreateResponse,
     TenantListResponse,
-    TenantScheduledTaskSummary,
     TenantStatusChangeRequest,
     TenantStatusState,
-    TenantSummary,
 )
 from app.models.professional import (
     TENANT_STATUS_ACTIVE,
@@ -53,6 +54,9 @@ from app.models.professional import (
     TENANT_STATUS_SUSPENDED,
 )
 from app.services import assistant_settings as assistant_settings_service
+from app.services.admin_tenants import TenantCreationError, create_tenant_with_owner
+from app.services.admin_tenant_summaries import build_tenant_summaries
+from app.services.auth_security import rate_limit_exceeded, record_auth_event
 from app.services import daily_agenda
 from app.services.operational_events import record_event
 from app.services import scheduled_tasks as scheduled_tasks_service
@@ -103,123 +107,93 @@ def _task_summary(
     )
 
 
-def _tenant_task_summary(
-    task: ScheduledTask | None,
-    professional: Professional,
-    latest_run: ScheduledTaskRun | None,
-    now: datetime,
-) -> TenantScheduledTaskSummary:
-    if task is None:
-        return TenantScheduledTaskSummary(
-            configured=False,
-            enabled=False,
-            local_time=None,
-            consent_confirmed=False,
-            readiness_issues=scheduled_tasks_service.task_readiness(professional),
-            next_run_at=None,
-            latest_run_status=None,
-            latest_run_at=None,
-        )
-    return TenantScheduledTaskSummary(
-        configured=True,
-        enabled=task.enabled,
-        local_time=task.local_time,
-        consent_confirmed=task.consent_confirmed_at is not None,
-        readiness_issues=scheduled_tasks_service.task_readiness(professional),
-        next_run_at=scheduled_tasks_service.next_run_at(task, professional, now),
-        latest_run_status=latest_run.status if latest_run is not None else None,
-        latest_run_at=latest_run.created_at if latest_run is not None else None,
-    )
-
-
 @router.get("/tenants", response_model=TenantListResponse)
 def list_tenants(
     include_archived: bool = Query(default=False),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=12, ge=6, le=48),
     db: Session = Depends(get_db),
     _admin: dict = Depends(require_platform_admin),
 ):
-    contact_counts = dict(
-        db.query(Contact.professional_id, func.count(Contact.id))
-        .group_by(Contact.professional_id)
-        .all()
-    )
-    appointment_counts = dict(
-        db.query(Appointment.professional_id, func.count(Appointment.id))
-        .group_by(Appointment.professional_id)
-        .all()
-    )
-    commercial_financial_tenants = {
-        professional_id
-        for (professional_id,) in (
-            db.query(TenantFeature.professional_id)
-            .filter(
-                TenantFeature.feature_key == COMMERCIAL_FINANCIALS,
-                TenantFeature.enabled.is_(True),
-            )
-            .all()
-        )
-    }
-
-    assistant_settings_by_tenant = {
-        row.professional_id: row for row in db.query(AssistantSettings).all()
-    }
-
-    professionals_query = db.query(Professional).order_by(Professional.name)
+    professionals_query = db.query(Professional)
     if not include_archived:
         professionals_query = professionals_query.filter(
             Professional.status != TENANT_STATUS_ARCHIVED
         )
-    professionals = professionals_query.all()
-    tasks_by_professional = {
-        task.professional_id: task
-        for task in db.query(ScheduledTask)
-        .filter(ScheduledTask.task_type == "daily_agenda_summary")
+    total = professionals_query.count()
+    total_pages = (total + page_size - 1) // page_size if total else 0
+    professionals = (
+        professionals_query.order_by(func.lower(Professional.name), Professional.id)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
         .all()
-    }
-    task_ids = [task.id for task in tasks_by_professional.values()]
-    latest_runs: dict[uuid.UUID, ScheduledTaskRun] = {}
-    if task_ids:
-        for run in (
-            db.query(ScheduledTaskRun)
-            .filter(ScheduledTaskRun.scheduled_task_id.in_(task_ids))
-            .order_by(ScheduledTaskRun.created_at.desc())
-            .all()
-        ):
-            latest_runs.setdefault(run.scheduled_task_id, run)
-    now = datetime.now(timezone.utc)
-    tenants = [
-        TenantSummary(
-            id=p.id,
-            name=p.name,
-            status=p.status,
-            assistant_phone=p.assistant_phone,
-            contact_count=contact_counts.get(p.id, 0),
-            appointment_count=appointment_counts.get(p.id, 0),
-            commercial_financials_enabled=p.id in commercial_financial_tenants,
-            assistant_temperature=(
-                assistant_settings_by_tenant[p.id].temperature
-                if p.id in assistant_settings_by_tenant
-                else assistant_settings_service.DEFAULT_TEMPERATURE
-            ),
-            assistant_memory_window_messages=(
-                assistant_settings_by_tenant[p.id].memory_window_messages
-                if p.id in assistant_settings_by_tenant
-                else assistant_settings_service.DEFAULT_MEMORY_WINDOW_MESSAGES
-            ),
-            status_changed_at=p.status_changed_at,
-            status_reason=p.status_reason,
-            scheduled_task=_tenant_task_summary(
-                tasks_by_professional.get(p.id),
-                p,
-                latest_runs.get(tasks_by_professional[p.id].id)
-                if p.id in tasks_by_professional
-                else None,
-                now,
-            ),
+    )
+    return TenantListResponse(
+        tenants=build_tenant_summaries(db, professionals),
+        page=page,
+        page_size=page_size,
+        total=total,
+        total_pages=total_pages,
+    )
+
+
+@router.post("/tenants", status_code=201, response_model=TenantCreateResponse)
+def create_tenant(
+    body: TenantCreateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_platform_admin),
+):
+    """Create one tenant and its first pending-activation professional user."""
+    source_ip = request.client.host if request.client else None
+    if rate_limit_exceeded(
+        db,
+        event_type="tenant_created",
+        email=admin["email"],
+        source_ip=source_ip,
+        limit=get_int("ADMIN_TENANT_CREATE_MAX_PER_HOUR", 10),
+        window=timedelta(hours=1),
+    ):
+        return error_response(429, error_codes.RATE_LIMITED, "Tente novamente mais tarde.")
+
+    try:
+        created = create_tenant_with_owner(
+            db,
+            name=body.name,
+            owner_email=body.owner_email,
+            whatsapp=body.whatsapp,
+            tenant_timezone=body.timezone,
+            admin_user_id=uuid.UUID(admin["user_id"]),
+            source_ip=source_ip,
+            user_agent=request.headers.get("user-agent"),
         )
-        for p in professionals
-    ]
-    return TenantListResponse(tenants=tenants)
+        record_auth_event(
+            db,
+            event_type="tenant_created",
+            user_id=uuid.UUID(admin["user_id"]),
+            email=admin["email"],
+            source_ip=source_ip,
+            metadata={"professional_id": str(created.professional.id)},
+        )
+        db.commit()
+    except TenantCreationError as exc:
+        db.rollback()
+        return error_response(409 if exc.code == error_codes.EMAIL_ALREADY_IN_USE else 422, exc.code, exc.message)
+    except IntegrityError:
+        db.rollback()
+        return error_response(
+            409,
+            error_codes.EMAIL_ALREADY_IN_USE,
+            "Este email já possui uma conta cadastrada.",
+        )
+    except Exception:
+        db.rollback()
+        raise
+
+    return TenantCreateResponse(
+        tenant=build_tenant_summaries(db, [created.professional])[0],
+        owner_email=created.owner.email,
+    )
 
 
 def _apply_tenant_status(

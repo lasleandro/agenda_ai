@@ -30,6 +30,25 @@ policy. Keep `EMAIL_SMTP_PASSWORD` only in the environment/secret manager.
 `EMAIL_PROCESSING_TIMEOUT_SECONDS` control bounded retries and recovery after a
 worker interruption. Keep the processing timeout longer than the SMTP timeout.
 
+## Activation email sources
+
+An `account_activation` delivery is queued (never sent inline in the HTTP
+request) by:
+
+- **Novo tenant** on `/admin/select-tenant`;
+- approving a request on `/admin/account-requests` — same
+  `create_tenant_with_owner` path; and
+- **Reenviar ativação** on an approved request whose owner is still
+  `pending_activation`. Resend returns an already-active delivery instead of
+  adding a second one, and is bounded by
+  `ACCOUNT_ACTIVATION_RESEND_COOLDOWN_SECONDS` (default 60) plus
+  `AUTH_EMAIL_MAX_SENDS_PER_HOUR` per owner-email and per admin.
+
+If an approved owner is still `pending_activation` after 24h, or any activation
+delivery reaches terminal `failed` / `suppressed`, treat it as an onboarding
+incident: inspect `email_deliveries` for that user, correct the cause, then use
+**Reenviar ativação**. See `docs/pages/solicitar_conta.md`.
+
 ## Operating and release checks
 
 Run `python start_server.py --worker` so the authentication-email worker claims

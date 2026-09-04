@@ -97,7 +97,7 @@ export function AppointmentPanel({
         setResult({
           requestKey,
           detail: null,
-          error: error instanceof Error ? error.message : "Falha ao carregar",
+          error: error instanceof Error ? error.message : "Não foi possível carregar. Tente novamente.",
         })
       );
     return () => {
@@ -132,7 +132,7 @@ export function AppointmentPanel({
       setResult({
         requestKey,
         detail: previous,
-        error: caught instanceof Error ? caught.message : "Falha ao transformar em grupo",
+        error: caught instanceof Error ? caught.message : "Não foi possível transformar em grupo. Tente novamente.",
       });
     } finally {
       setFormatSaving(false);

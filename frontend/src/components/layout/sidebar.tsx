@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Calendar, CircleDollarSign, Users, Settings, LogOut, MapPin, MessageSquare, Repeat, FlaskConical } from "lucide-react";
+import { Calendar, CircleDollarSign, Users, Settings, LogOut, MessageSquare, Repeat, FlaskConical } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -17,7 +18,6 @@ import {
 const navItems = [
   { label: "Agenda", icon: Calendar, href: "/agenda", exact: true },
   { label: "Clientes", icon: Users, href: "/clientes" },
-  { label: "Meus Locais", icon: MapPin, href: "/places" },
   {
     label: "Financeiro",
     icon: CircleDollarSign,
@@ -31,7 +31,19 @@ const navItems = [
     href: "/financeiro/simulador",
     feature: "commercial_financials",
   },
-  { label: "Configurações", icon: Settings, href: "/minhas-regras" },
+  {
+    label: "WhatsApp",
+    icon: MessageSquare,
+    imageSrc: "/landing/whatsapp.png",
+    href: "/configuracoes/whatsapp",
+  },
+  {
+    label: "Minha Operação",
+    icon: Settings,
+    href: "/minhas-regras",
+    // Locais live inside this area as a tab, but keep their own detail route.
+    activePrefixes: ["/places"],
+  },
   { label: "Mock Chat", icon: MessageSquare, href: "/dev/mock-chat" },
 ];
 
@@ -87,12 +99,12 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       {user?.impersonating && (
         <Link
           href="/admin/select-tenant"
-          title="Trocar de tenant"
+          title="Trocar de conta"
           className="mx-3 mb-2 flex items-center gap-2 rounded-md bg-indigo-500/20 px-3 py-2 text-xs font-medium text-indigo-200 hover:bg-indigo-500/30"
           onClick={onNavigate}
         >
           <Repeat className="h-3.5 w-3.5" />
-          Trocar tenant
+          Trocar de conta
         </Link>
       )}
 
@@ -106,9 +118,13 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           .map((item) => {
           const active =
             item.href != null &&
-            (item.href === "/" || item.exact
+            ((item.href === "/" || item.exact
               ? pathname === item.href
-              : pathname.startsWith(item.href));
+              : pathname.startsWith(item.href)) ||
+              ("activePrefixes" in item &&
+                (item.activePrefixes as string[]).some((prefix) =>
+                  pathname.startsWith(prefix)
+                )));
           const className = cn(
             "w-full flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
             active ? "text-white" : "text-[var(--sidebar-text)] hover:text-white",
@@ -134,7 +150,11 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                 onClick={onNavigate}
                 {...hoverProps}
               >
-                <item.icon className="h-4 w-4" />
+                {item.imageSrc ? (
+                  <Image src={item.imageSrc} alt="" width={16} height={16} />
+                ) : (
+                  <item.icon className="h-4 w-4" />
+                )}
                 {item.label}
               </Link>
             );
@@ -142,7 +162,11 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
           return (
             <button key={item.label} className={className} style={style} disabled {...hoverProps}>
-              <item.icon className="h-4 w-4" />
+              {item.imageSrc ? (
+                <Image src={item.imageSrc} alt="" width={16} height={16} />
+              ) : (
+                <item.icon className="h-4 w-4" />
+              )}
               {item.label}
             </button>
           );

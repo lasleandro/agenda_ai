@@ -20,6 +20,7 @@ instructor==1.10.0
 
 # ── Date parsing ───────────────────────────────────────────────────────────
 dateparser==1.2.1
+phonenumbers==9.0.38
 
 # ── LLM provider ──────────────────────────────────────────────────────────
 # Azure OpenAI — client comes from the openai package (deps of instructor)

@@ -12,6 +12,7 @@ from app.models.appointment_evidence import AppointmentEvidence  # noqa: F401
 from app.models.appointment_transition import AppointmentTransition  # noqa: F401
 from app.models.pending_processing import PendingProcessing  # noqa: F401
 from app.models.user import User  # noqa: F401
+from app.models.account_access_request import AccountAccessRequest  # noqa: F401
 from app.models.auth_action_token import AuthActionToken  # noqa: F401
 from app.models.auth_security_event import AuthSecurityEvent  # noqa: F401
 from app.models.email_delivery import EmailDelivery  # noqa: F401
@@ -46,3 +47,4 @@ from app.models.waitlist_entry import WaitlistEntry  # noqa: F401
 from app.models.instructor_event import InstructorEvent  # noqa: F401
 from app.models.scheduled_task import ScheduledTask  # noqa: F401
 from app.models.scheduled_task_run import ScheduledTaskRun  # noqa: F401
+from app.models.webhook_receipt import WebhookReceipt  # noqa: F401

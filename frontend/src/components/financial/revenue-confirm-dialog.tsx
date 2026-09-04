@@ -115,7 +115,7 @@ export function RevenueConfirmDialog({
       setError(
         caught instanceof Error
           ? caught.message
-          : "Falha ao confirmar a receita"
+          : "Não foi possível confirmar a receita. Tente novamente."
       );
     } finally {
       setSaving(false);

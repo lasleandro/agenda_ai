@@ -84,7 +84,7 @@ export default function FinancialSimulatorPage() {
           setError(
             caught instanceof Error
               ? caught.message
-              : "Falha ao carregar o simulador financeiro"
+              : "Não foi possível carregar o simulador financeiro. Tente novamente."
           );
         }
       }
@@ -114,7 +114,7 @@ export default function FinancialSimulatorPage() {
       setError(
         caught instanceof Error
           ? caught.message
-          : "Falha ao atualizar o contexto do simulador"
+          : "Não foi possível atualizar o simulador. Tente novamente."
       );
     } finally {
       setRefreshing(false);

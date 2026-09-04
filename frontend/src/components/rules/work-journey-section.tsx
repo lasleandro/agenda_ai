@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Copy, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,6 +12,11 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { replaceWorkJourney } from "@/lib/api";
 import { DAY_LABELS } from "@/lib/ontology-utils";
 import type {
@@ -76,6 +81,8 @@ export function WorkJourneySection({
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(
     null
   );
+  const [copyFromDay, setCopyFromDay] = useState<number | null>(null);
+  const [copyTargets, setCopyTargets] = useState<Set<number>>(new Set());
 
   function updateDay(day: number, update: Partial<DayDraft>) {
     setDays((current) => ({
@@ -102,6 +109,37 @@ export function WorkJourneySection({
     updateDay(day, {
       breaks: days[day].breaks.filter((_, breakIndex) => breakIndex !== index),
     });
+  }
+
+  function toggleCopyTarget(day: number) {
+    setCopyTargets((current) => {
+      const next = new Set(current);
+      if (next.has(day)) {
+        next.delete(day);
+      } else {
+        next.add(day);
+      }
+      return next;
+    });
+  }
+
+  function applyCopy() {
+    if (copyFromDay === null) return;
+    const source = days[copyFromDay];
+    setDays((current) => {
+      const next = { ...current };
+      for (const target of copyTargets) {
+        next[target] = {
+          enabled: true,
+          start: source.start,
+          end: source.end,
+          breaks: source.breaks.map((breakDraft) => ({ ...breakDraft })),
+        };
+      }
+      return next;
+    });
+    setCopyFromDay(null);
+    setCopyTargets(new Set());
   }
 
   async function handleSave() {
@@ -164,7 +202,7 @@ export function WorkJourneySection({
     } catch (caught) {
       setDays(initialDays(intervals));
       setNotice({
-        text: caught instanceof Error ? caught.message : "Falha ao salvar jornada",
+        text: caught instanceof Error ? caught.message : "Não foi possível salvar a jornada. Tente novamente.",
         error: true,
       });
     } finally {
@@ -219,13 +257,65 @@ export function WorkJourneySection({
                   disabled={!draft.enabled}
                   className="w-32"
                 />
+                <Popover
+                  open={copyFromDay === day}
+                  onOpenChange={(open) => {
+                    setCopyFromDay(open ? day : null);
+                    setCopyTargets(new Set());
+                  }}
+                >
+                  <PopoverTrigger
+                    render={
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={!draft.enabled}
+                        className="ml-auto"
+                      >
+                        <Copy />
+                        Copiar para
+                      </Button>
+                    }
+                  />
+                  <PopoverContent>
+                    <p className="text-sm font-medium">
+                      Copiar horário de {dayLabel} para:
+                    </p>
+                    <div className="flex flex-col gap-1.5">
+                      {DAY_LABELS.map((targetLabel, targetDay) =>
+                        targetDay === day ? null : (
+                          <label
+                            key={targetLabel}
+                            className="flex items-center gap-2 text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={copyTargets.has(targetDay)}
+                              onChange={() => toggleCopyTarget(targetDay)}
+                              className="h-4 w-4 accent-primary"
+                            />
+                            {targetLabel}
+                          </label>
+                        )
+                      )}
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={applyCopy}
+                      disabled={copyTargets.size === 0}
+                    >
+                      Aplicar
+                    </Button>
+                  </PopoverContent>
+                </Popover>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   onClick={() => addBreak(day)}
                   disabled={!draft.enabled}
-                  className="ml-auto"
                 >
                   <Plus />
                   Adicionar pausa

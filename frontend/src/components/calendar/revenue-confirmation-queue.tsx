@@ -52,7 +52,7 @@ export function RevenueConfirmationQueue({
           setError(
             caught instanceof Error
               ? caught.message
-              : "Falha ao carregar confirmações"
+              : "Não foi possível carregar as confirmações. Tente novamente."
           );
         }
       });
@@ -110,7 +110,7 @@ export function RevenueConfirmationQueue({
           )}
           {pending.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
-              Nenhuma ocorrência pendente neste período.
+              Nenhuma aula aguardando confirmação neste período.
             </p>
           ) : (
             <div className="divide-y">

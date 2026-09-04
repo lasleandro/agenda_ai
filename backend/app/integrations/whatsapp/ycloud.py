@@ -24,6 +24,16 @@ from app.integrations.whatsapp.contracts import (
 YCLOUD_API_BASE = "https://api.ycloud.com/v2"
 YCLOUD_PROVIDER_KEY = "ycloud"
 
+# A captured, correctly-signed callback stays valid forever unless the signed
+# timestamp is also checked for freshness. YCloud retries within minutes, so a
+# few minutes of tolerance covers legitimate retries and clock skew.
+_DEFAULT_SIGNATURE_TOLERANCE_SECONDS = 300
+
+
+def _signature_tolerance_seconds() -> int:
+    raw = os.getenv("YCLOUD_WEBHOOK_TOLERANCE_SECONDS", "").strip()
+    return int(raw) if raw else _DEFAULT_SIGNATURE_TOLERANCE_SECONDS
+
 
 def _parse_timestamp(value: str | None) -> datetime:
     if not value:
@@ -78,7 +88,25 @@ class YCloudWhatsAppProvider:
         expected = hmac.new(
             self._signing_secret.encode("utf-8"), signed_payload, hashlib.sha256
         ).hexdigest()
-        return hmac.compare_digest(expected, signature)
+        if not hmac.compare_digest(expected, signature):
+            return False
+
+        return self._timestamp_is_fresh(timestamp)
+
+    def _timestamp_is_fresh(self, timestamp: str) -> bool:
+        """Reject a correctly-signed callback whose signed timestamp is stale.
+
+        Bypassed under DEBUG so recorded fixtures and manual replays still
+        work in local development.
+        """
+        if os.getenv("DEBUG", "").casefold() == "true":
+            return True
+        try:
+            signed_at = int(timestamp)
+        except ValueError:
+            return False
+        age = abs(int(datetime.now(timezone.utc).timestamp()) - signed_at)
+        return age <= _signature_tolerance_seconds()
 
     def parse_webhook(self, raw_body: bytes) -> list[WhatsAppEvent]:
         """Normalize known YCloud webhook events; ignore unsupported events."""

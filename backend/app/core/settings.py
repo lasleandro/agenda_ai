@@ -22,9 +22,20 @@ def get_int(name: str, default: int, *, minimum: int = 1) -> int:
     return parsed
 
 
+def environment_name() -> str:
+    """Return the deployment environment name.
+
+    ``APP_ENV`` is canonical; ``ENVIRONMENT`` is accepted as an alias so the
+    same value can be shared with tooling that expects that name.
+    """
+    return (
+        os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "development"
+    ).strip().lower()
+
+
 def is_production() -> bool:
     """Return whether the configured environment is production."""
-    return os.getenv("APP_ENV", "development").strip().lower() == "production"
+    return environment_name() == "production"
 
 
 def allowed_origins() -> list[str]:
@@ -48,15 +59,34 @@ def frontend_base_url() -> str:
     return "http://localhost:3010"
 
 
+def _require_env(*names: str) -> None:
+    """Raise if any named environment variable is missing or blank."""
+    missing = [name for name in names if not os.getenv(name, "").strip()]
+    if missing:
+        raise RuntimeError(
+            "Missing required production configuration: " + ", ".join(missing)
+        )
+
+
 def validate_startup_settings() -> None:
-    """Fail closed for required production authentication configuration."""
+    """Fail closed for required production configuration.
+
+    Runs on API startup. A misconfigured production process must not accept
+    traffic with a fallback secret, an unverifiable webhook, or a missing
+    database/LLM credential.
+    """
     if not is_production():
         return
-    if not os.getenv("JWT_SECRET_KEY", "").strip():
-        raise RuntimeError("JWT_SECRET_KEY must be set in production")
+    _require_env("JWT_SECRET_KEY")
     allowed_origins()
     frontend_base_url()
     if not get_bool("AUTH_COOKIE_SECURE", True):
         raise RuntimeError("AUTH_COOKIE_SECURE must be true in production")
     if not get_bool("EMAIL_ENABLED", False):
         raise RuntimeError("EMAIL_ENABLED must be true in production")
+    # Deployment-neutral database connection (no PG_LOCAL_* fallback in prod).
+    _require_env("DATABASE_URL")
+    # The WhatsApp webhook cannot verify signatures without this.
+    _require_env("YCLOUD_WEBHOOK_SIGNING_SECRET")
+    # LLM provider (extraction pipeline + instructor agent).
+    _require_env("AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT")

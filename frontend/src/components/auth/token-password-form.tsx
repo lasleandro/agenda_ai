@@ -21,11 +21,21 @@ export function TokenPasswordForm({ mode }: TokenPasswordFormProps) {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const parsedToken = params.get("token") || "";
-    window.history.replaceState({}, "", window.location.pathname);
+    const tokenStateKey = `tennisOs${mode}Token`;
+    const historyState = (window.history.state ?? {}) as Record<string, unknown>;
+    const tokenFromHistory = historyState[tokenStateKey];
+    const tokenFromUrl = params.get("token");
+    const parsedToken = tokenFromUrl || (typeof tokenFromHistory === "string" ? tokenFromHistory : "");
+    if (tokenFromUrl) {
+      window.history.replaceState(
+        { ...historyState, [tokenStateKey]: tokenFromUrl },
+        "",
+        window.location.pathname
+      );
+    }
     const timer = window.setTimeout(() => setToken(parsedToken), 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [mode]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -45,6 +55,10 @@ export function TokenPasswordForm({ mode }: TokenPasswordFormProps) {
       } else {
         await resetPassword(token, password, confirmation);
       }
+      const tokenStateKey = `tennisOs${mode}Token`;
+      const historyState = { ...(window.history.state ?? {}) } as Record<string, unknown>;
+      delete historyState[tokenStateKey];
+      window.history.replaceState(historyState, "", window.location.pathname);
       setCompleted(true);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Não foi possível atualizar a senha.");
@@ -69,7 +83,7 @@ export function TokenPasswordForm({ mode }: TokenPasswordFormProps) {
             <p className="rounded-md bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">
               {mode === "activate" ? "Conta ativada com sucesso." : "Senha redefinida com sucesso."}
             </p>
-            <Button className="w-full" render={<Link href="/login" />}>Entrar</Button>
+            <Button className="w-full" nativeButton={false} render={<Link href="/login" />}>Entrar</Button>
           </div>
         ) : token === null ? (
           <p className="mt-6 text-sm text-muted-foreground">Validando link…</p>
@@ -84,7 +98,7 @@ export function TokenPasswordForm({ mode }: TokenPasswordFormProps) {
               </a>
               {" "}se ele expirou.
             </p>
-            <Button className="w-full" variant="outline" render={<Link href="/login" />}>Voltar para entrar</Button>
+            <Button className="w-full" variant="outline" nativeButton={false} render={<Link href="/login" />}>Voltar para entrar</Button>
           </div>
         ) : (
           <form className="mt-6 space-y-5" onSubmit={handleSubmit}>

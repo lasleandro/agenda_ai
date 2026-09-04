@@ -49,7 +49,7 @@ export function AddToGroupDialog({
       })
       .catch((caught) => {
         if (active) {
-          setError(caught instanceof Error ? caught.message : "Falha ao carregar os grupos");
+          setError(caught instanceof Error ? caught.message : "Não foi possível carregar os grupos. Tente novamente.");
         }
       });
     return () => {

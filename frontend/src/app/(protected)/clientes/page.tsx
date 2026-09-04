@@ -18,12 +18,15 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AddToGroupDialog } from "@/components/ontology/add-to-group-dialog";
 import { AddToWaitlistDialog } from "@/components/ontology/add-to-waitlist-dialog";
+import { ContactFormDialog } from "@/components/ontology/contact-form-dialog";
 import { DetectedCandidatesTab } from "@/components/ontology/detected-candidates-tab";
 import { RecurringGroupDialog } from "@/components/ontology/recurring-group-dialog";
 import { GroupsTab } from "@/components/ontology/groups-tab";
 import {
   addSlotParticipant,
+  ApiError,
   cancelWaitlistEntry,
+  createContact,
   createWaitlistEntry,
   fetchContacts,
   fetchPlaces,
@@ -31,7 +34,13 @@ import {
   fetchWaitlistEntries,
 } from "@/lib/api";
 import { CONTACT_LEVEL_LABELS } from "@/lib/ontology-utils";
-import type { ContactSummary, Place, RecurringSlot, WaitlistEntry } from "@/lib/types";
+import type {
+  ContactCreateInput,
+  ContactSummary,
+  Place,
+  RecurringSlot,
+  WaitlistEntry,
+} from "@/lib/types";
 
 const PAGE_SIZE = 10;
 
@@ -50,6 +59,8 @@ export default function ClientesPage() {
   const [addToWaitlistContact, setAddToWaitlistContact] = useState<ContactSummary | null>(null);
   const [waitlistFilter, setWaitlistFilter] = useState(false);
   const [notice, setNotice] = useState<{ message: string; error: boolean } | null>(null);
+  const [contactDialogOpen, setContactDialogOpen] = useState(false);
+  const [contactDialogValues, setContactDialogValues] = useState<ContactCreateInput | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -180,13 +191,75 @@ export default function ClientesPage() {
     });
   }
 
+  function createCustomer(input: ContactCreateInput) {
+    const temporaryId = `temporary-${Date.now()}-${Math.random()}`;
+    const optimisticContact: ContactSummary = {
+      id: temporaryId,
+      display_name: input.display_name,
+      phone: input.phone,
+      level: null,
+      home_place_id: null,
+      home_place_name: null,
+      makeup_credits_available: 0,
+    };
+
+    setContactDialogOpen(false);
+    setContactDialogValues(null);
+    setQuery("");
+    setPage(1);
+    setContacts((current) =>
+      [...(current ?? []), optimisticContact].sort((left, right) =>
+        left.display_name.localeCompare(right.display_name, "pt-BR")
+      )
+    );
+
+    void createContact(input)
+      .then((created) => {
+        setContacts((current) =>
+          (current ?? []).map((contact) =>
+            contact.id === temporaryId ? created : contact
+          )
+        );
+        setNotice({ message: `${created.display_name} foi cadastrado(a).`, error: false });
+      })
+      .catch((caught) => {
+        setContacts((current) =>
+          (current ?? []).filter((contact) => contact.id !== temporaryId)
+        );
+        setContactDialogValues(input);
+        setContactDialogOpen(true);
+        if (caught instanceof ApiError && caught.code === "CONTACT_PHONE_ALREADY_EXISTS") {
+          void fetchContacts().then((result) => setContacts(result.contacts));
+        }
+        setNotice({
+          message:
+            caught instanceof Error
+              ? caught.message
+              : "Não foi possível cadastrar o cliente.",
+          error: true,
+        });
+      });
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 md:p-6">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Clientes</h1>
-        <p className="text-sm text-muted-foreground">
-          Alunos e clientes — nível, local e horário fixo.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Clientes</h1>
+          <p className="text-sm text-muted-foreground">
+            Alunos e clientes — nível, local e horário fixo.
+          </p>
+        </div>
+        <Button
+          type="button"
+          onClick={() => {
+            setContactDialogValues(null);
+            setContactDialogOpen(true);
+          }}
+        >
+          <UserPlus />
+          Novo cliente
+        </Button>
       </div>
 
       <div
@@ -510,6 +583,14 @@ export default function ClientesPage() {
               error: false,
             });
           }}
+        />
+      )}
+      {contactDialogOpen && (
+        <ContactFormDialog
+          open
+          onOpenChange={setContactDialogOpen}
+          initialValues={contactDialogValues}
+          onCreate={createCustomer}
         />
       )}
       {addToGroupContact && (

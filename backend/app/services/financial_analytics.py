@@ -113,7 +113,7 @@ def _assumptions(
         timezone="America/Sao_Paulo",
         revenue_basis=(
             "Agendamentos e grupos ativos valorizados pelas regras atuais; "
-            "não representa receita reconhecida."
+            "não representa receita confirmada."
         ),
         capacity_basis=capacity_basis,
         excluded_constraints=[

@@ -204,6 +204,11 @@ Before changing the provider's production URL, staging must prove:
 
 These are implementation gates for a public MVP. They are roadmap items, not changes made by this assessment.
 
+> **Status:** the application-code portions of P0 (items 1–5, 7–9 below) were
+> implemented on 2026-09-02. See
+> [gcp_p0_implementation_notes.md](gcp_p0_implementation_notes.md). Item 6 and
+> everything in Sections 8–10 remain infrastructure/deploy-time work.
+
 ### P0 — required before public traffic
 
 1. **Reproducible containers:** add a tested multi-stage platform Dockerfile that builds both runtimes into one final image, plus `.dockerignore`, pinned lock files, and a non-root runtime user. A backend-only image may serve webhook/worker/job workloads. `start_server.py`, `uvicorn --reload`, and the Cloudflare development tunnel must remain local-only.

@@ -1,3 +1,5 @@
+import { csrfHeaders } from "./csrf";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 export class AuthRequestError extends Error {
@@ -95,10 +97,14 @@ export function resetPassword(
 }
 
 export async function logout(): Promise<void> {
-  await fetch(`${API_BASE}/api/auth/logout`, {
+  const res = await fetch(`${API_BASE}/api/auth/logout`, {
     method: "POST",
     credentials: "include",
+    headers: csrfHeaders("POST"),
   });
+  if (!res.ok) {
+    throw await getAuthError(res, "Não foi possível encerrar a sessão.");
+  }
 }
 
 export async function fetchSession(): Promise<SessionUser | null> {
@@ -118,7 +124,7 @@ export async function impersonate(
 ): Promise<{ professional_id: string; professional_name: string }> {
   const res = await fetch(`${API_BASE}/api/auth/impersonate`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...csrfHeaders("POST") },
     credentials: "include",
     body: JSON.stringify({ professional_id: professionalId, confirm }),
   });
@@ -132,6 +138,7 @@ export async function stopImpersonating(): Promise<void> {
   const res = await fetch(`${API_BASE}/api/auth/stop-impersonating`, {
     method: "POST",
     credentials: "include",
+    headers: csrfHeaders("POST"),
   });
   if (!res.ok) {
     throw new Error("Failed to stop impersonating");

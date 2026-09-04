@@ -83,7 +83,7 @@ export default function PlaceDetailPage() {
         setFinancialError(
           caught instanceof Error
             ? caught.message
-            : "Falha ao carregar os valores financeiros"
+            : "Não foi possível carregar os valores financeiros. Tente novamente."
         );
       }
     });
@@ -98,10 +98,10 @@ export default function PlaceDetailPage() {
     setDeleteError(null);
     try {
       await deletePlace(placeId);
-      router.push("/places");
+      router.push("/minhas-regras?tab=places");
     } catch (caught) {
       setDeleteError(
-        caught instanceof Error ? caught.message : "Falha ao remover o local"
+        caught instanceof Error ? caught.message : "Não foi possível remover o local. Tente novamente."
       );
     }
   }
@@ -109,7 +109,7 @@ export default function PlaceDetailPage() {
   return (
     <div className="flex-1 flex flex-col min-h-0 p-4 md:p-6 gap-4 overflow-auto">
       <button
-        onClick={() => router.push("/places")}
+        onClick={() => router.push("/minhas-regras?tab=places")}
         className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground w-fit"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
@@ -150,7 +150,7 @@ export default function PlaceDetailPage() {
             </CardTitle>
             <CardDescription>
               Defina valores por participante para horários regulares e nobres.
-              Campos vazios herdam a configuração global do Financeiro.
+              Campos vazios herdam os valores padrão definidos em Minha Operação.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

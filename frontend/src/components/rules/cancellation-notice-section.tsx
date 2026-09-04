@@ -36,7 +36,7 @@ export function CancellationNoticeSection({
     } catch (caught) {
       setHours(detail.cancellation_notice_hours);
       setNotice({
-        text: caught instanceof Error ? caught.message : "Falha ao salvar configuração",
+        text: caught instanceof Error ? caught.message : "Não foi possível salvar a configuração. Tente novamente.",
         error: true,
       });
     } finally {

@@ -2,24 +2,29 @@
 Contacts API ("Clientes") — customer ontology roadmap Phase 3/4.
 
 GET   /api/contacts       — list the tenant's contacts.
+POST  /api/contacts       — register a tenant customer.
 GET   /api/contacts/{id}  — contact detail, including fixed recurring slots.
 PATCH /api/contacts/{id}  — update level, address, home place.
 """
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func as sqla_func
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import require_professional_id
+from app.api.dependencies import require_authenticated, require_professional_id
+from app.core.error_codes import CONTACT_PHONE_ALREADY_EXISTS
+from app.core.error_responses import error_response
 from app.database import SessionLocal
 from app.models import Contact, MakeupClassCredit, Place, RecurringSlot, RecurringSlotParticipant
 from app.models.appointment import Appointment
-from app.schemas.ontology import ContactDetail, ContactListResponse, ContactSummary, ContactUpdate
+from app.schemas.ontology import ContactCreate, ContactDetail, ContactListResponse, ContactSummary, ContactUpdate
 from app.schemas.ontology import CourtesyAppointmentSummary, RecurringSlotDetail
-from app.services.contacts import apply_contact_updates
+from app.services.contacts import ContactPhoneAlreadyExistsError, apply_contact_updates, create_contact
 from app.services.makeup_credits import get_available_credits_count
+from app.services.operational_events import record_event
 from app.services.participants import count_participants as _participant_count
 
 router = APIRouter(prefix="/api/contacts", tags=["contacts"])
@@ -91,6 +96,40 @@ def list_contacts(
             for contact, name in rows
         ]
     )
+
+
+@router.post("", response_model=ContactSummary, status_code=201)
+def create_contact_route(
+    body: ContactCreate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_authenticated),
+    professional_id: uuid.UUID = Depends(require_professional_id),
+):
+    try:
+        contact = create_contact(db, professional_id, body.display_name, body.phone)
+    except ContactPhoneAlreadyExistsError:
+        return error_response(
+            409,
+            CONTACT_PHONE_ALREADY_EXISTS,
+            "A customer with this WhatsApp number is already registered.",
+        )
+
+    record_event(
+        db,
+        professional_id=professional_id,
+        event_type="contact.created",
+        occurred_at=datetime.now(timezone.utc),
+        actor_type="user",
+        actor_id=uuid.UUID(user["user_id"]),
+        source_channel="web",
+        entity_type="contact",
+        entity_id=contact.id,
+        correlation_id=uuid.uuid4(),
+        payload={"source": "web"},
+        after_state={"phone_last4": contact.phone[-4:]},
+    )
+    db.commit()
+    return _to_summary(contact, None)
 
 
 @router.get("/{contact_id}", response_model=ContactDetail)

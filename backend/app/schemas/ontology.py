@@ -8,7 +8,9 @@ import uuid
 from datetime import date, datetime, time
 from typing import Literal, Self
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.services.phone_numbers import normalize_mobile_phone
 
 GroupLevel = Literal["beginner", "intermediate", "advanced"]
 SlotKind = Literal["availability", "class"]
@@ -295,6 +297,24 @@ class RecurringGroupCreate(BaseModel):
 # ---------------------------------------------------------------------------
 # Contact ("Clientes")
 # ---------------------------------------------------------------------------
+
+class ContactCreate(BaseModel):
+    display_name: str = Field(min_length=1, max_length=255)
+    phone: str = Field(min_length=1, max_length=64)
+
+    @field_validator("display_name")
+    @classmethod
+    def normalize_display_name(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Display name is required")
+        return normalized
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, value: str) -> str:
+        return normalize_mobile_phone(value)
+
 
 class ContactUpdate(BaseModel):
     display_name: str | None = None

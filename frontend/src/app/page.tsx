@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import { Manrope, DM_Mono } from "next/font/google";
 import { LandingEnterCta } from "@/components/landing/landing-enter-cta";
+import { LandingRequestCta } from "@/components/landing/landing-request-cta";
 import "./landing.css";
 
 const manrope = Manrope({
@@ -40,6 +41,11 @@ const steps = [
     title: "Volte pro jogo",
     text: "Tenha uma visão clara da sua agenda e da sua semana, sem alimentar manualmente mais um sistema.",
   },
+  {
+    n: "04",
+    title: "Converse com o Lob",
+    text: "“Tenho horário livre amanhã à tarde?” ou “Encontre uma reposição para a Marina.” Para alterações, o Lob mostra uma prévia antes da confirmação.",
+  },
 ];
 
 const benefits = [
@@ -47,6 +53,14 @@ const benefits = [
   { n: "02", title: "Controle", text: "Uma visão organizada do que foi combinado com cada aluno." },
   { n: "03", title: "Tranquilidade", text: "Menos coisas para guardar na cabeça durante o dia." },
   { n: "04", title: "Previsibilidade", text: "Agenda e operação mais claras para planejar a semana." },
+];
+
+const activationSteps = [
+  { n: "01", title: "Solicite seu acesso", text: "Conte um pouco sobre sua operação para iniciar seu cadastro." },
+  { n: "02", title: "Cadastre o essencial", text: "Adicione alunos, locais, horários e regras básicas." },
+  { n: "03", title: "Conecte o WhatsApp Business", text: "Autorize o número que você já usa para falar com seus alunos." },
+  { n: "04", title: "Salve o contato do Lob", text: "Adicione o número privado do seu assistente ao WhatsApp." },
+  { n: "05", title: "Siga conversando normalmente", text: "O Lob acompanha a operação e fica disponível quando você precisar." },
 ];
 
 const modules = [
@@ -73,7 +87,10 @@ export default function LandingPage() {
             <Image className="brand-logo" src="/landing/logo.png" alt="" width={90} height={90} priority />
             <span>Tennis OS</span>
           </a>
-          <LandingEnterCta className="nav-cta" />
+          <div className="nav-actions">
+            <LandingEnterCta className="nav-cta" />
+            <LandingRequestCta className="nav-cta nav-request-cta" />
+          </div>
         </nav>
       </header>
 
@@ -96,7 +113,10 @@ export default function LandingPage() {
                 <strong className="brand-highlight">Tennis OS</strong>, ajuda a transformar
                 mensagens, horários e pendências em uma operação organizada.
               </p>
-              <LandingEnterCta className="button button-primary" withArrow />
+              <div className="cta-group hero-actions">
+                <LandingRequestCta className="button button-primary" withArrow />
+                <LandingEnterCta className="button button-secondary" />
+              </div>
             </div>
 
             <div
@@ -210,6 +230,34 @@ export default function LandingPage() {
           </div>
         </section>
 
+        <section className="activation section">
+          <div className="container">
+            <div className="activation-heading">
+              <div>
+                <p className="section-kicker">Comece sem mudar sua rotina</p>
+                <h2>
+                  Em poucos passos,
+                  <br />
+                  <em>o Lob entra no jogo.</em>
+                </h2>
+              </div>
+              <p>
+                Configure o essencial, conecte seu WhatsApp Business e continue falando com seus
+                alunos como sempre.
+              </p>
+            </div>
+            <ol className="activation-grid">
+              {activationSteps.map((step) => (
+                <li key={step.n}>
+                  <span>{step.n}</span>
+                  <h3>{step.title}</h3>
+                  <p>{step.text}</p>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+
         <section className="benefits section">
           <div className="container">
             <div className="benefits-heading">
@@ -276,7 +324,10 @@ export default function LandingPage() {
               Estamos construindo uma forma mais leve de organizar a rotina de quem vive em
               quadra.
             </p>
-            <LandingEnterCta className="button button-light" withArrow />
+            <div className="cta-group final-actions">
+              <LandingRequestCta className="button button-light" withArrow />
+              <LandingEnterCta className="button button-light-outline" />
+            </div>
           </div>
         </section>
       </main>

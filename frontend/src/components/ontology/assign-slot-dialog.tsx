@@ -54,7 +54,7 @@ export function AssignSlotDialog({
         setSelectedPlaceId(contact.home_place_id);
       }
     } catch (caught) {
-          setError(caught instanceof Error ? caught.message : "Falha ao carregar aulas");
+          setError(caught instanceof Error ? caught.message : "Não foi possível carregar as aulas. Tente novamente.");
     } finally {
       setLoading(false);
     }
@@ -95,7 +95,7 @@ export function AssignSlotDialog({
       onAssigned(slot);
       onOpenChange(false);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Falha ao atribuir horário");
+      setError(caught instanceof Error ? caught.message : "Não foi possível atribuir o horário. Tente novamente.");
     } finally {
       setAssigningId(null);
     }

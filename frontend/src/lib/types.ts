@@ -283,11 +283,96 @@ export interface TenantScheduledTaskSummary {
 
 export interface TenantListResponse {
   tenants: TenantSummary[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+}
+
+export interface TenantCreateInput {
+  name: string;
+  owner_email: string;
+  whatsapp: string;
+  timezone: string;
+}
+
+export interface TenantCreateResponse {
+  tenant: TenantSummary;
+  owner_email: string;
+}
+
+export type AccountRequestStatus = "pending" | "approved" | "rejected";
+
+export type AccountActivationState =
+  | "not_queued"
+  | "queued"
+  | "processing"
+  | "retry_wait"
+  | "sent"
+  | "failed"
+  | "suppressed"
+  | "account_activated";
+
+export interface AccountRequestSubmitInput {
+  proposed_tenant_name: string;
+  email: string;
+  whatsapp: string;
+  message?: string | null;
+}
+
+export interface AccountRequestAdminItem {
+  id: string;
+  proposed_tenant_name: string;
+  email: string;
+  whatsapp: string | null;
+  message: string | null;
+  status: AccountRequestStatus;
+  submitted_at: string;
+  reviewed_at: string | null;
+  reviewer_email: string | null;
+  decision_reason: string | null;
+  professional_id: string | null;
+  owner_user_id: string | null;
+  activation_state: AccountActivationState | null;
+}
+
+export interface AccountRequestStatusCounts {
+  pending: number;
+  approved: number;
+  rejected: number;
+}
+
+export interface AccountRequestAdminListResponse {
+  requests: AccountRequestAdminItem[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+  status_counts: AccountRequestStatusCounts;
+}
+
+export interface AccountRequestDecisionResponse {
+  request: AccountRequestAdminItem;
+  tenant: TenantSummary | null;
+}
+
+export interface AccountRequestSummaryResponse {
+  pending: number;
+}
+
+export interface AccountActivationResendResponse {
+  request_id: string;
+  activation_state: AccountActivationState;
 }
 
 export interface TenantFeatureState {
   feature_key: "commercial_financials";
   enabled: boolean;
+}
+
+/** Mirror of the FastAPI WhatsappConnectionRequestState schema. */
+export interface WhatsappConnectionRequestState {
+  requested: boolean;
 }
 
 /** Mirror of the FastAPI AssistantSettingsState schema. */
@@ -987,6 +1072,11 @@ export interface ContactSummary {
 
 export interface ContactListResponse {
   contacts: ContactSummary[];
+}
+
+export interface ContactCreateInput {
+  display_name: string;
+  phone: string;
 }
 
 /** Mirror of the FastAPI ContactDetail schema. */

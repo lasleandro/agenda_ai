@@ -1,0 +1,36 @@
+.git
+.gitignore
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+.mypy_cache
+.pytest_cache
+backend/tests/
+
+# Node / Next (rebuilt inside the image)
+node_modules/
+frontend/node_modules/
+frontend/.next/
+.next/
+
+# Local env and dev-only tooling
+.env
+.env.*
+!.env.example
+start_server.py
+godaddy_landing_page/
+infra/
+
+# Docs, notebooks, logs
+docs/
+*.md
+**/*.ipynb
+**/*.log

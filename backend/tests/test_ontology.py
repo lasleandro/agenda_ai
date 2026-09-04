@@ -38,7 +38,7 @@ def _random_email() -> str:
 
 
 def _random_phone() -> str:
-    return f"+55119{uuid.uuid4().hex[:8]}"
+    return f"+55119{uuid.uuid4().int % 100_000_000:08d}"
 
 
 def _login_new_tenant(db):
@@ -1173,6 +1173,62 @@ def test_contact_update_and_tenant_isolation() -> None:
         assert any(c["id"] == str(contact.id) for c in list_res.json()["contacts"])
     finally:
         _cleanup(db, professionals=[pro_a, pro_b], users=[user_a, user_b])
+        db.close()
+
+
+def test_contact_create_normalizes_phone_deduplicates_and_audits() -> None:
+    db = SessionLocal()
+    professional, user, cookies = _login_new_tenant(db)
+    other_professional, other_user, other_cookies = _login_new_tenant(db)
+    try:
+        created = client.post(
+            "/api/contacts",
+            json={"display_name": "  Ana   Martins ", "phone": "(11) 99999-0001"},
+            cookies=cookies,
+        )
+        assert created.status_code == 201
+        assert created.json()["display_name"] == "Ana Martins"
+        assert created.json()["phone"] == "+5511999990001"
+
+        duplicate = client.post(
+            "/api/contacts",
+            json={"display_name": "Outra Ana", "phone": "+55 11 99999-0001"},
+            cookies=cookies,
+        )
+        assert duplicate.status_code == 409
+        assert duplicate.json()["error"]["code"] == "CONTACT_PHONE_ALREADY_EXISTS"
+
+        cross_tenant = client.post(
+            "/api/contacts",
+            json={"display_name": "Ana Visitante", "phone": "+5511999990001"},
+            cookies=other_cookies,
+        )
+        assert cross_tenant.status_code == 201
+
+        invalid = client.post(
+            "/api/contacts",
+            json={"display_name": "Telefone fixo", "phone": "+55 11 3333-0001"},
+            cookies=cookies,
+        )
+        assert invalid.status_code == 422
+
+        events = (
+            db.query(OperationalEvent)
+            .filter(
+                OperationalEvent.professional_id == professional.id,
+                OperationalEvent.event_type == "contact.created",
+            )
+            .all()
+        )
+        assert len(events) == 1
+        assert events[0].actor_id == user.id
+        assert events[0].source_channel == "web"
+    finally:
+        _cleanup(
+            db,
+            professionals=[professional, other_professional],
+            users=[user, other_user],
+        )
         db.close()
 
 

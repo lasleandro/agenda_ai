@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_authenticated, require_platform_admin
 from app.core import error_codes
+from app.core.csrf import CSRF_COOKIE_NAME, clear_csrf_cookie, issue_csrf_cookie
 from app.core.error_responses import error_response
 from app.core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -106,6 +107,8 @@ def _issue_session_cookie(
         domain=cookie_domain(),
         samesite=cookie_samesite(),
     )
+    # Pair every session with a fresh double-submit CSRF token.
+    issue_csrf_cookie(response)
     response.headers["Cache-Control"] = "no-store"
 
 
@@ -285,19 +288,33 @@ def reset_password(
 @router.post("/logout")
 def logout(response: Response):
     """Clear the current browser session cookie."""
-    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/", domain=cookie_domain())
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        path="/",
+        domain=cookie_domain(),
+        samesite=cookie_samesite(),
+        secure=cookie_secure(),
+        httponly=True,
+    )
+    clear_csrf_cookie(response)
     response.headers["Cache-Control"] = "no-store"
     return {"message": "Successfully logged out"}
 
 
 @router.get("/me")
 def me(
+    request: Request,
     response: Response,
     user: dict = Depends(require_authenticated),
     db: Session = Depends(get_db),
 ):
     """Return the authoritative current identity and selected tenant context."""
     response.headers["Cache-Control"] = "no-store"
+    # Backfill a CSRF token for sessions that predate double-submit protection.
+    # Only when absent — never rotate mid-session, or an in-flight write's
+    # header would stop matching the cookie.
+    if CSRF_COOKIE_NAME not in request.cookies:
+        issue_csrf_cookie(response)
     professional_name = None
     features: list[str] = []
     if user["professional_id"] is not None:

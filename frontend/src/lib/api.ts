@@ -1,5 +1,11 @@
 import type {
   ActionCandidateResultResponse,
+  AccountActivationResendResponse,
+  AccountRequestAdminListResponse,
+  AccountRequestDecisionResponse,
+  AccountRequestStatus,
+  AccountRequestSubmitInput,
+  AccountRequestSummaryResponse,
   AppointmentDetail,
   AppointmentFormatInput,
   OccurrenceClassFormatDetail,
@@ -11,6 +17,7 @@ import type {
   CancellationNoticeHoursDetail,
   CandidateDetail,
   ContactDetailData,
+  ContactCreateInput,
   CommercialOverrideInput,
   CustomerFinancialDetail,
   FinancialConfigurationDetail,
@@ -23,6 +30,7 @@ import type {
   FinancialScenarioResult,
   FinancialSettingsDetail,
   ContactListResponse,
+  ContactSummary,
   ContactUpdateInput,
   ConversationDetail,
   ConversationListResponse,
@@ -63,14 +71,18 @@ import type {
   InstructorEventInput,
   InstructorEventListResponse,
   TenantListResponse,
+  TenantCreateInput,
+  TenantCreateResponse,
   TenantFeatureState,
   TenantStatusState,
   WaitlistEntry,
   WaitlistEntryInput,
   WaitlistEntryListResponse,
+  WhatsappConnectionRequestState,
   WorkJourneyIntervalDetail,
   WorkJourneyIntervalInput,
 } from "./types";
+import { csrfHeaders } from "./csrf";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -142,6 +154,14 @@ export const updateOccurrenceClassFormat = (
     { method: "PATCH", body }
   );
 
+export const fetchWhatsappConnectionRequestState = () =>
+  apiRequest<WhatsappConnectionRequestState>("/api/whatsapp/connection-request");
+
+export const submitWhatsappConnectionRequest = () =>
+  apiRequest<WhatsappConnectionRequestState>("/api/whatsapp/connection-request", {
+    method: "POST",
+  });
+
 // ---------------------------------------------------------------------------
 // Dev-only mock WhatsApp chat (DEBUG=true backend only, see app/api/dev_mock.py)
 // ---------------------------------------------------------------------------
@@ -173,6 +193,7 @@ export async function createMockCustomer(): Promise<MockCustomer> {
   const res = await fetch(`${API_BASE}/api/dev/mock-customers`, {
     method: "POST",
     credentials: "include",
+    headers: csrfHeaders("POST"),
   });
   if (!res.ok) {
     throw new Error(`Failed to create mock customer: ${res.statusText}`);
@@ -207,7 +228,7 @@ export async function sendMockMessage(
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/dev/mock-messages`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...csrfHeaders("POST") },
     credentials: "include",
     body: JSON.stringify({ sender, text, customer_phone: customerPhone }),
   });
@@ -219,7 +240,7 @@ export async function sendMockMessage(
 export async function resetMockConversation(customerPhone: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/dev/mock-conversation/reset`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...csrfHeaders("POST") },
     credentials: "include",
     body: JSON.stringify({ customer_phone: customerPhone }),
   });
@@ -233,7 +254,7 @@ export async function processConversationNow(
 ): Promise<CandidateDetail[]> {
   const res = await fetch(
     `${API_BASE}/api/dev/conversations/${conversationId}/process-now`,
-    { method: "POST", credentials: "include" }
+    { method: "POST", credentials: "include", headers: csrfHeaders("POST") }
   );
   if (!res.ok) {
     throw new Error(`Failed to process conversation: ${res.statusText}`);
@@ -246,10 +267,18 @@ export async function processConversationNow(
 // ---------------------------------------------------------------------------
 
 export async function fetchTenants(
-  { includeArchived = false }: { includeArchived?: boolean } = {}
+  {
+    includeArchived = false,
+    page = 1,
+    pageSize = 12,
+  }: { includeArchived?: boolean; page?: number; pageSize?: number } = {}
 ): Promise<TenantListResponse> {
-  const query = includeArchived ? "?include_archived=true" : "";
-  const res = await fetch(`${API_BASE}/api/admin/tenants${query}`, {
+  const query = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  if (includeArchived) query.set("include_archived", "true");
+  const res = await fetch(`${API_BASE}/api/admin/tenants?${query}`, {
     credentials: "include",
   });
   if (!res.ok) {
@@ -257,6 +286,55 @@ export async function fetchTenants(
   }
   return res.json();
 }
+
+export const createTenant = (body: TenantCreateInput) =>
+  apiRequest<TenantCreateResponse>("/api/admin/tenants", { method: "POST", body });
+
+export const submitAccountRequest = (body: AccountRequestSubmitInput) =>
+  apiRequest<{ message: string }>("/api/account-requests", { method: "POST", body });
+
+export const fetchAccountRequests = ({
+  status = "pending",
+  page = 1,
+  pageSize = 20,
+}: {
+  status?: AccountRequestStatus;
+  page?: number;
+  pageSize?: number;
+} = {}) => {
+  const query = new URLSearchParams({
+    status,
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  return apiRequest<AccountRequestAdminListResponse>(
+    `/api/admin/account-requests?${query}`
+  );
+};
+
+export const fetchAccountRequestSummary = () =>
+  apiRequest<AccountRequestSummaryResponse>("/api/admin/account-requests/summary");
+
+export const approveAccountRequest = (
+  requestId: string,
+  body: { tenant_name: string; whatsapp: string; timezone: string }
+) =>
+  apiRequest<AccountRequestDecisionResponse>(
+    `/api/admin/account-requests/${requestId}/approve`,
+    { method: "POST", body }
+  );
+
+export const rejectAccountRequest = (requestId: string, reason?: string) =>
+  apiRequest<AccountRequestDecisionResponse>(
+    `/api/admin/account-requests/${requestId}/reject`,
+    { method: "POST", body: { reason: reason || null } }
+  );
+
+export const resendAccountActivation = (requestId: string) =>
+  apiRequest<AccountActivationResendResponse>(
+    `/api/admin/account-requests/${requestId}/resend-activation`,
+    { method: "POST" }
+  );
 
 const tenantLifecycleAction = (tenantId: string, action: string, reason?: string) =>
   apiRequest<TenantStatusState>(`/api/admin/tenants/${tenantId}/${action}`, {
@@ -365,18 +443,35 @@ async function apiRequest<T>(
   path: string,
   options: { method?: string; body?: unknown } = {}
 ): Promise<T> {
+  const method = options.method ?? "GET";
   const res = await fetch(`${API_BASE}${path}`, {
-    method: options.method ?? "GET",
+    method,
     credentials: "include",
-    headers: options.body ? { "Content-Type": "application/json" } : undefined,
+    headers: {
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...csrfHeaders(method),
+    },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => null);
-    throw new Error(detail?.detail ?? `Request failed: ${res.statusText}`);
+    throw new ApiError(
+      detail?.error?.message ?? detail?.detail ?? `Request failed: ${res.statusText}`,
+      detail?.error?.code
+    );
   }
   if (res.status === 204) return undefined as T;
   return res.json();
+}
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly code?: string
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
 }
 
 export const fetchPlaces = () => apiRequest<PlaceListResponse>("/api/places");
@@ -505,6 +600,8 @@ export const cancelInstructorEvent = (id: string) =>
   apiRequest<InstructorEvent>(`/api/instructor-events/${id}/cancel`, { method: "POST" });
 
 export const fetchContacts = () => apiRequest<ContactListResponse>("/api/contacts");
+export const createContact = (body: ContactCreateInput) =>
+  apiRequest<ContactSummary>("/api/contacts", { method: "POST", body });
 export const fetchContact = (id: string) => apiRequest<ContactDetailData>(`/api/contacts/${id}`);
 export const updateContact = (id: string, body: ContactUpdateInput) =>
   apiRequest<ContactDetailData>(`/api/contacts/${id}`, { method: "PATCH", body });

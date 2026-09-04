@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models import TenantFeature, TenantFeatureAuditLog
 
 COMMERCIAL_FINANCIALS = "commercial_financials"
+WHATSAPP_CONNECTION_REQUESTED = "whatsapp_connection_requested"
 
 
 def is_tenant_feature_enabled(
