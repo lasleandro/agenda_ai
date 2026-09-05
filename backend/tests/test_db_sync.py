@@ -23,10 +23,16 @@ def test_order_tables_cyclic_foreign_keys_refuses_sync() -> None:
 def test_cycle_columns_defers_only_nullable_cycle_links() -> None:
     metadata = {
         "professionals": TableMetadata(
-            ("id", "status_changed_by"), ("id",), frozenset({"status_changed_by"})
+            ("id", "status_changed_by"),
+            ("id",),
+            frozenset({"status_changed_by"}),
+            {"id": "uuid", "status_changed_by": "uuid"},
         ),
         "users": TableMetadata(
-            ("id", "professional_id"), ("id",), frozenset({"professional_id"})
+            ("id", "professional_id"),
+            ("id",),
+            frozenset({"professional_id"}),
+            {"id": "uuid", "professional_id": "uuid"},
         ),
     }
 

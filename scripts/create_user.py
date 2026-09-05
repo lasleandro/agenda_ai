@@ -66,5 +66,5 @@ if __name__ == "__main__":
     parser.add_argument("--role", required=True, choices=["platform_admin", "professional"])
     parser.add_argument("--professional-id", type=uuid.UUID, default=None)
     args = parser.parse_args()
-    user = create_user(args.email, args.role, args.professional_id)
-    print(f"Created pending activation user: {user.email} (role={user.role})")
+    create_user(args.email, args.role, args.professional_id)
+    print(f"Created pending activation user: {args.email} (role={args.role})")

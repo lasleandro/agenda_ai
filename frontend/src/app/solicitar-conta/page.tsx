@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowLeft, Calendar } from "lucide-react";
 
 import { AccountRequestForm } from "@/components/auth/account-request-form";
+import { BrandLogo } from "@/components/layout/brand-logo";
 
 export const metadata: Metadata = {
   title: "Solicitar uma conta — Tennis OS",
@@ -18,9 +19,7 @@ export default function RequestAccountPage() {
           className="mb-6 flex items-center justify-center gap-2.5"
           aria-label="Tennis OS, início"
         >
-          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500 text-base font-bold text-white">
-            T
-          </span>
+          <BrandLogo size={40} priority />
           <span className="text-lg font-semibold tracking-tight text-foreground">
             Tennis OS
           </span>
@@ -53,4 +52,3 @@ export default function RequestAccountPage() {
     </main>
   );
 }
-

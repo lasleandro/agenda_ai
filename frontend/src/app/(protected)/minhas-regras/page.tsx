@@ -154,7 +154,7 @@ export default function MinhasRegrasPage() {
   ];
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto p-4 md:p-6">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-5 overflow-auto p-4 md:p-6">
       <div>
         <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
           <Settings className="h-5 w-5 text-primary" />
@@ -174,27 +174,29 @@ export default function MinhasRegrasPage() {
         )}
 
         <div
-          className="flex w-fit gap-1 rounded-lg border bg-muted/30 p-1"
+          className="min-w-0 overflow-x-auto"
           role="tablist"
           aria-label="Áreas de Minha Operação"
         >
-          {tabs.map(({ key, label, icon: Icon }) => (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={activeTab === key}
-              onClick={() => setActiveTab(key)}
-              className={`flex h-8 items-center gap-1.5 rounded-md px-3 text-sm transition-colors ${
-                activeTab === key
-                  ? "bg-background font-medium shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Icon className="size-4" />
-              {label}
-            </button>
-          ))}
+          <div className="flex w-max gap-1 rounded-lg border bg-muted/30 p-1">
+            {tabs.map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === key}
+                onClick={() => setActiveTab(key)}
+                className={`flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm transition-colors ${
+                  activeTab === key
+                    ? "bg-background font-medium shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Icon className="size-4" />
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {activeTab === "journey" && (

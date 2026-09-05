@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { NextConfig } from "next";
 
 // Server-only. `rewrites()` runs on the server, so the FastAPI address is
@@ -11,10 +13,18 @@ const API_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   "http://localhost:8005";
 
+const PLATFORM_VERSION = readFileSync(
+  join(process.cwd(), "..", "VERSION"),
+  "utf8"
+).trim();
+
 const nextConfig: NextConfig = {
   // Self-contained production server (`.next/standalone/server.js`) for the
   // container image. No effect on `next dev`.
   output: "standalone",
+  env: {
+    NEXT_PUBLIC_PLATFORM_VERSION: PLATFORM_VERSION,
+  },
   async rewrites() {
     return [
       {

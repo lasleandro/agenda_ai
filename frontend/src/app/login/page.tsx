@@ -8,6 +8,7 @@ import { AccountRequestForm } from "@/components/auth/account-request-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { BrandLogo } from "@/components/layout/brand-logo";
 import { login, requestPasswordReset } from "@/lib/auth";
 
 type AuthView = "login" | "signup" | "forgot";
@@ -90,9 +91,7 @@ export default function LoginPage() {
         />
 
         <Link href="/" className="relative flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500 text-sm font-bold text-white">
-            T
-          </div>
+          <BrandLogo size={36} priority />
           <span className="text-[15px] font-semibold tracking-tight text-white">
             Tennis OS
           </span>
@@ -109,7 +108,7 @@ export default function LoginPage() {
         </div>
 
         <p className="relative text-xs text-[var(--sidebar-text)]">
-          WhatsApp Schedule Copilot
+          Versão {process.env.NEXT_PUBLIC_PLATFORM_VERSION}
         </p>
       </div>
 
@@ -117,9 +116,7 @@ export default function LoginPage() {
       <div className="flex w-full flex-col items-center justify-center bg-[var(--bg-page)] px-6 lg:w-1/2">
         <div className="w-full max-w-sm">
           <div className="mb-8 flex flex-col items-center gap-3 lg:hidden">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500 text-base font-bold text-white">
-              T
-            </div>
+            <BrandLogo size={40} priority />
             <span className="text-lg font-semibold tracking-tight text-foreground">
               Tennis OS
             </span>

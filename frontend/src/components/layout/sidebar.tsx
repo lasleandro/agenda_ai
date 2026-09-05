@@ -6,6 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { BrandLogo } from "./brand-logo";
 import {
   fetchSession,
   logout,
@@ -88,9 +89,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <>
       <div className="h-16 flex items-center gap-2 px-5">
-        <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white font-bold text-sm">
-          T
-        </div>
+        <BrandLogo size={32} priority />
         <span className="text-white font-semibold text-[15px] tracking-tight">
           Tennis OS
         </span>

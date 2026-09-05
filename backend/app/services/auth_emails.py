@@ -1,5 +1,6 @@
 """Durable auth-email queueing and provider-neutral delivery processing."""
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -19,6 +20,8 @@ from app.services.auth_security import record_auth_event
 from app.services.auth_tokens import issue_action_token
 
 PENDING_DELIVERY_STATUSES = ("queued", "processing", "retry_wait")
+
+logger = logging.getLogger(__name__)
 
 
 def enqueue_auth_email(db: Session, *, user: User, purpose: str) -> EmailDelivery:
@@ -104,10 +107,18 @@ def _deliver_one(
         return
     user = db.get(User, delivery.user_id)
     if user is None:
+        logger.warning(
+            "email delivery %s (purpose=%s): user not found", delivery.id, delivery.purpose
+        )
         _mark_failed(delivery, "user_not_found", now)
         db.commit()
         return
     if not sender.enabled:
+        logger.warning(
+            "email delivery %s (purpose=%s): suppressed, EMAIL_ENABLED is false",
+            delivery.id,
+            delivery.purpose,
+        )
         delivery.status = "suppressed"
         delivery.last_error_code = "email_disabled"
         delivery.last_error_detail = None
@@ -118,12 +129,29 @@ def _deliver_one(
         message = _render_message(db, delivery, user)
         sender.send(message)
     except EmailPermanentError as exc:
+        logger.error(
+            "email delivery %s (purpose=%s): permanent failure (%s)",
+            delivery.id,
+            delivery.purpose,
+            type(exc).__name__,
+        )
         _mark_failed(delivery, "smtp_permanent", now, type(exc).__name__)
     except EmailRetryableError as exc:
+        logger.warning(
+            "email delivery %s (purpose=%s): retryable failure on attempt %s (%s)",
+            delivery.id,
+            delivery.purpose,
+            delivery.attempt_count,
+            type(exc).__name__,
+        )
         _mark_retry_or_failed(delivery, "smtp_retryable", now, type(exc).__name__)
     except Exception as exc:
+        logger.exception(
+            "email delivery %s (purpose=%s): unexpected error", delivery.id, delivery.purpose
+        )
         _mark_retry_or_failed(delivery, "unexpected", now, type(exc).__name__)
     else:
+        logger.info("email delivery %s (purpose=%s): sent", delivery.id, delivery.purpose)
         delivery.status = "sent"
         delivery.sent_at = now
         delivery.last_error_code = None

@@ -32,10 +32,13 @@ class SmtpEmailSender:
         self.from_name = os.getenv("EMAIL_FROM_NAME", "Tennis OS").strip()
         self.reply_to = os.getenv("EMAIL_REPLY_TO", "").strip()
         self.timeout_seconds = get_int("EMAIL_SMTP_TIMEOUT_SECONDS", 20)
-        if self.enabled:
-            self._validate()
+        self._validate()
 
     def _validate(self) -> None:
+        if is_production() and not self.enabled:
+            raise EmailConfigurationError("EMAIL_ENABLED must be true in production")
+        if not self.enabled:
+            return
         if self.security not in {"ssl", "starttls"}:
             raise EmailConfigurationError("EMAIL_SMTP_SECURITY must be ssl or starttls")
         missing = [
@@ -50,8 +53,6 @@ class SmtpEmailSender:
         ]
         if missing:
             raise EmailConfigurationError(f"Missing SMTP settings: {', '.join(missing)}")
-        if is_production() and not self.enabled:
-            raise EmailConfigurationError("EMAIL_ENABLED must be true in production")
 
     def send(self, message: OutboundEmail) -> None:
         """Deliver a multipart email or classify the safe retry behavior."""

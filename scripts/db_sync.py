@@ -30,6 +30,7 @@ class TableMetadata:
     columns: tuple[str, ...]
     primary_key: tuple[str, ...]
     nullable_columns: frozenset[str]
+    column_types: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -89,7 +90,7 @@ def _table_metadata(connection) -> dict[str, TableMetadata]:
     with connection.cursor() as cursor:
         cursor.execute(
             """
-            SELECT columns.table_name, columns.column_name, columns.is_nullable
+            SELECT columns.table_name, columns.column_name, columns.is_nullable, columns.udt_name
             FROM information_schema.columns AS columns
             JOIN information_schema.tables AS tables
               ON tables.table_schema = columns.table_schema
@@ -102,10 +103,12 @@ def _table_metadata(connection) -> dict[str, TableMetadata]:
         )
         columns: dict[str, list[str]] = defaultdict(list)
         nullable_columns: dict[str, set[str]] = defaultdict(set)
-        for table_name, column_name, is_nullable in cursor.fetchall():
+        column_types: dict[str, dict[str, str]] = defaultdict(dict)
+        for table_name, column_name, is_nullable, udt_name in cursor.fetchall():
             columns[table_name].append(column_name)
             if is_nullable == "YES":
                 nullable_columns[table_name].add(column_name)
+            column_types[table_name][column_name] = udt_name
 
         cursor.execute(
             """
@@ -134,6 +137,7 @@ def _table_metadata(connection) -> dict[str, TableMetadata]:
             tuple(table_columns),
             tuple(primary_keys[table]),
             frozenset(nullable_columns[table]),
+            dict(column_types[table]),
         )
         for table, table_columns in columns.items()
     }
@@ -301,7 +305,13 @@ def _fill_deferred_columns(
     select_query = sql.SQL("SELECT {} FROM public.{} ORDER BY {}").format(
         columns, sql.Identifier(table), primary_key
     )
-    incoming = sql.SQL(", ").join(sql.Identifier(column) for column in source_columns)
+    raw_incoming = sql.SQL(", ").join(sql.Identifier(column) for column in source_columns)
+    typed_incoming = sql.SQL(", ").join(
+        sql.SQL("{}::{} AS {}").format(
+            sql.Identifier(column), sql.Identifier(metadata.column_types[column]), sql.Identifier(column)
+        )
+        for column in source_columns
+    )
     assignments = sql.SQL(", ").join(
         sql.SQL("{} = incoming.{}").format(sql.Identifier(column), sql.Identifier(column))
         for column in sorted(deferred_columns)
@@ -311,8 +321,9 @@ def _fill_deferred_columns(
         for column in metadata.primary_key
     )
     update_query = sql.SQL(
-        "UPDATE public.{} AS target SET {} FROM (VALUES %s) AS incoming ({}) WHERE {}"
-    ).format(sql.Identifier(table), assignments, incoming, joins)
+        "UPDATE public.{} AS target SET {} "
+        "FROM (SELECT {} FROM (VALUES %s) AS raw ({})) AS incoming WHERE {}"
+    ).format(sql.Identifier(table), assignments, typed_incoming, raw_incoming, joins)
     inserted_key_set = set(inserted_primary_keys)
 
     with source.cursor(name=f"deferred_{table}") as source_cursor, target.cursor() as target_cursor:

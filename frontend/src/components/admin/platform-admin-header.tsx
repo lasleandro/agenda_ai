@@ -8,6 +8,7 @@ import { Building2, CalendarClock, ClipboardList, LogOut } from "lucide-react";
 import { fetchAccountRequestSummary } from "@/lib/api";
 import { logout } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { BrandLogo } from "@/components/layout/brand-logo";
 
 type AdminSection = "tenants" | "requests" | "tasks";
 
@@ -73,9 +74,7 @@ export function PlatformAdminHeader({
     <header className="mb-8 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
       <div className="flex flex-wrap items-center gap-3">
         <Link href="/admin/select-tenant" className="flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500 text-sm font-bold text-white">
-            T
-          </span>
+          <BrandLogo size={36} priority />
           <span>
             <span className="block text-sm font-semibold tracking-tight text-foreground">
               Painel Admin
@@ -131,4 +130,3 @@ export function PlatformAdminHeader({
     </header>
   );
 }
-

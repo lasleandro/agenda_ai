@@ -11,18 +11,13 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: "#4f46e5",
     icons: [
       {
-        src: "/tennis.png",
-        sizes: "192x192",
+        src: "/landing/logo.png",
+        sizes: "1254x1254",
         type: "image/png",
       },
       {
-        src: "/tennis.png",
-        sizes: "512x512",
-        type: "image/png",
-      },
-      {
-        src: "/tennis.png",
-        sizes: "512x512",
+        src: "/landing/logo.png",
+        sizes: "1254x1254",
         type: "image/png",
         purpose: "maskable",
       },

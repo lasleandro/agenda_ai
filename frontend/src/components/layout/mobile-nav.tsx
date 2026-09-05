@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BrandLogo } from "./brand-logo";
 import { SidebarContent } from "./sidebar";
 
 export function MobileNav() {
@@ -21,6 +22,7 @@ export function MobileNav() {
         >
           <Menu className="h-5 w-5" />
         </DialogPrimitive.Trigger>
+        <BrandLogo size={28} priority />
         <span className="font-semibold text-[15px] tracking-tight">
           Tennis OS
         </span>

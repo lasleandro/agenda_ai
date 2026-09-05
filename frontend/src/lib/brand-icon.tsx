@@ -1,35 +1,22 @@
-// Placeholder app icon — reuses the sidebar's gradient "T" mark
-// (see components/layout/sidebar.tsx) until real branding assets exist.
-export function brandIconElement({
-  size,
-  maskable = false,
-}: {
-  size: number;
-  maskable?: boolean;
-}) {
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+// ImageResponse renders a PNG itself, so next/image optimization is not applicable here.
+/* eslint-disable @next/next/no-img-element */
+export async function brandIconElement() {
+  const logo = await readFile(
+    join(process.cwd(), "public", "landing", "logo.png")
+  );
+
   return (
-    <div
+    <img
+      alt=""
+      src={`data:image/png;base64,${logo.toString("base64")}`}
       style={{
         width: "100%",
         height: "100%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "linear-gradient(135deg, #818cf8 0%, #a78bfa 100%)",
-        borderRadius: maskable ? 0 : Math.round(size * 0.22),
+        objectFit: "cover",
       }}
-    >
-      <div
-        style={{
-          display: "flex",
-          fontSize: Math.round(size * (maskable ? 0.38 : 0.56)),
-          fontWeight: 700,
-          color: "#ffffff",
-          fontFamily: "sans-serif",
-        }}
-      >
-        T
-      </div>
-    </div>
+    />
   );
 }
