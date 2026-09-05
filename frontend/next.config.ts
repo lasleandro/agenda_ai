@@ -21,6 +21,39 @@ const nextConfig: NextConfig = {
         source: "/api/:path*",
         destination: `${API_URL}/api/:path*`,
       },
+      {
+        source: "/webhooks/:path*",
+        destination: `${API_URL}/webhooks/:path*`,
+      },
+      {
+        source: "/healthz",
+        destination: `${API_URL}/health`,
+      },
+    ];
+  },
+  async headers() {
+    if (process.env.NODE_ENV !== "production") {
+      return [];
+    }
+
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value:
+              "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: blob:; font-src 'self' data: https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-inline'; connect-src 'self' https://photon.komoot.io; worker-src 'self' blob:",
+          },
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=31536000; includeSubDomains",
+          },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        ],
+      },
     ];
   },
 };

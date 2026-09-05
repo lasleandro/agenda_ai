@@ -65,7 +65,17 @@ class BookingOccurrence:
     start_minute: int
     end_minute: int
     participant_count: int
+    class_type: str | None = None
+    max_participants: int = 1
     is_redeemed_makeup: bool = False
+
+    @property
+    def has_open_group_seat(self) -> bool:
+        """Return whether a recurring group occurrence can take another student."""
+        return (
+            self.class_type == "group"
+            and self.participant_count < self.max_participants
+        )
 
 
 @dataclass(frozen=True)
@@ -476,6 +486,8 @@ def load_booking_occurrences(
                 start_minute=start_minute,
                 end_minute=start_minute + duration_minutes,
                 participant_count=min(len(occurrence.participants), 4),
+                class_type=occurrence.class_type,
+                max_participants=occurrence.max_participants,
                 is_redeemed_makeup=(
                     occurrence.source_type == "appointment"
                     and occurrence.source_id in redeemed_appointment_ids

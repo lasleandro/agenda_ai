@@ -77,6 +77,8 @@ def validate_startup_settings() -> None:
     """
     if not is_production():
         return
+    if get_bool("DEBUG", False):
+        raise RuntimeError("DEBUG must be false in production")
     _require_env("JWT_SECRET_KEY")
     allowed_origins()
     frontend_base_url()

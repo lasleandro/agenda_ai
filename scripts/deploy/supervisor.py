@@ -40,9 +40,26 @@ API_CMD = [
     INTERNAL_API_PORT,
     "--workers",
     os.environ.get("API_WORKERS", "1"),
+    "--proxy-headers",
+    "--forwarded-allow-ips=127.0.0.1",
 ]
 
+WORKER_MODULES = (
+    "app.chat.webhook_processor_worker",
+    "app.chat.candidate_worker",
+    "app.chat.passive_escalation_worker",
+    "app.chat.scheduled_task_worker",
+    "app.chat.email_delivery_worker",
+)
+
 _children: list[subprocess.Popen] = []
+
+
+def worker_commands() -> list[list[str]]:
+    """Return worker commands only when the combined platform enables them."""
+    if os.environ.get("RUN_WORKERS", "").strip().lower() != "true":
+        return []
+    return [[sys.executable, "-m", module] for module in WORKER_MODULES]
 
 
 def _terminate_all(signum=None, _frame=None) -> None:
@@ -66,6 +83,8 @@ def main() -> int:
     _children.append(api)
     web = subprocess.Popen(NEXT_CMD, cwd="/app", env=NEXT_ENV)
     _children.append(web)
+    for command in worker_commands():
+        _children.append(subprocess.Popen(command, cwd="/app/backend"))
 
     while True:
         for child in _children:

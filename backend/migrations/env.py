@@ -24,8 +24,10 @@ import app.models  # noqa: E402,F401
 # ---------------------------------------------------------------------------
 config = context.config
 
-# Override sqlalchemy.url with the value from our database module.
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+# Override sqlalchemy.url with the value from our database module. Alembic's
+# ConfigParser treats percent signs as interpolation tokens, while encoded
+# credentials may legitimately contain them.
+config.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:

@@ -23,6 +23,8 @@ router = APIRouter(prefix="/webhooks", tags=["whatsapp"])
 
 logger = logging.getLogger(__name__)
 
+MAX_WEBHOOK_BODY_BYTES = 1024 * 1024
+
 
 def get_db() -> Session:
     db = SessionLocal()
@@ -36,6 +38,27 @@ def _debug_mode() -> bool:
     return os.getenv("DEBUG", "").casefold() == "true"
 
 
+async def _read_webhook_body(request: Request) -> bytes | None:
+    """Read a bounded raw webhook body without parsing or reserializing it."""
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            declared_size = int(content_length)
+        except ValueError:
+            declared_size = 0
+        if declared_size > MAX_WEBHOOK_BODY_BYTES:
+            logger.warning("Rejected oversized WhatsApp webhook body")
+            return None
+
+    chunks = bytearray()
+    async for chunk in request.stream():
+        chunks.extend(chunk)
+        if len(chunks) > MAX_WEBHOOK_BODY_BYTES:
+            logger.warning("Rejected oversized WhatsApp webhook body")
+            return None
+    return bytes(chunks)
+
+
 async def _handle_webhook(
     provider_key: str, request: Request, db: Session
 ) -> Response:
@@ -44,7 +67,9 @@ async def _handle_webhook(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="WhatsApp provider not found") from exc
 
-    raw_body = await request.body()
+    raw_body = await _read_webhook_body(request)
+    if raw_body is None:
+        return Response(status_code=413)
     if not provider.verify_webhook(raw_body, request.headers):
         if not _debug_mode():
             logger.warning("Rejected WhatsApp webhook signature (provider=%s)", provider.key)

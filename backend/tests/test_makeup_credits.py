@@ -44,7 +44,9 @@ from app.services.scheduling import TIMEZONE, list_schedule_occurrences
 
 client = TestClient(app)
 
-MONDAY = date(2026, 8, 3)
+TODAY = datetime.now(TIMEZONE).date()
+FUTURE_MONDAY = TODAY + timedelta(days=(7 - TODAY.weekday()) % 7)
+PAST_MONDAY = TODAY - timedelta(days=TODAY.weekday() + 7)
 
 
 def _random_phone() -> str:
@@ -98,7 +100,9 @@ def _make_contact(db, professional_id, display_name: str) -> Contact:
     return contact
 
 
-def _make_group_slot(db, professional_id, place_id, *, day_of_week=MONDAY.weekday()) -> RecurringSlot:
+def _make_group_slot(
+    db, professional_id, place_id, *, day_of_week=FUTURE_MONDAY.weekday()
+) -> RecurringSlot:
     slot = RecurringSlot(
         professional_id=professional_id,
         place_id=place_id,
@@ -109,7 +113,9 @@ def _make_group_slot(db, professional_id, place_id, *, day_of_week=MONDAY.weekda
         slot_kind="class",
         max_participants=4,
         recurrence_type="weekly",
-        created_at=datetime.combine(MONDAY - timedelta(days=30), time(8), tzinfo=TIMEZONE),
+        created_at=datetime.combine(
+            FUTURE_MONDAY - timedelta(days=30), time(8), tzinfo=TIMEZONE
+        ),
     )
     db.add(slot)
     db.commit()
@@ -239,7 +245,7 @@ def test_cancel_whole_group_occurrence_grants_credit_to_every_participant() -> N
         for student in students:
             _enroll(db, slot.id, student.id)
 
-        target_date = MONDAY + timedelta(days=14)
+        target_date = FUTURE_MONDAY + timedelta(days=14)
         result = mutations.propose_cancel_schedule(
             db, professional.id, user.id, uuid.uuid4(),
             target_type="recurring_slot", target_id=str(slot.id),
@@ -281,7 +287,7 @@ def test_note_participant_absence_only_credits_that_participant() -> None:
         _enroll(db, slot.id, ana.id)
         _enroll(db, slot.id, beto.id)
 
-        target_date = MONDAY + timedelta(days=14)
+        target_date = FUTURE_MONDAY + timedelta(days=14)
         result = mutations.propose_note_participant_absence(
             db, professional.id, user.id, uuid.uuid4(),
             contact_id=str(ana.id), recurring_slot_id=str(slot.id),
@@ -376,7 +382,7 @@ def test_list_and_redeem_makeup_credit_end_to_end() -> None:
         ana = _make_contact(db, professional.id, "Ana")
         _enroll(db, slot.id, ana.id)
 
-        target_date = MONDAY + timedelta(days=14)
+        target_date = FUTURE_MONDAY + timedelta(days=14)
         absence = mutations.propose_note_participant_absence(
             db, professional.id, user.id, uuid.uuid4(),
             contact_id=str(ana.id), recurring_slot_id=str(slot.id),
@@ -426,7 +432,7 @@ def test_redeem_makeup_credit_rejects_already_redeemed() -> None:
         ana = _make_contact(db, professional.id, "Ana")
         _enroll(db, slot.id, ana.id)
 
-        target_date = MONDAY + timedelta(days=14)
+        target_date = FUTURE_MONDAY + timedelta(days=14)
         absence = mutations.propose_note_participant_absence(
             db, professional.id, user.id, uuid.uuid4(),
             contact_id=str(ana.id), recurring_slot_id=str(slot.id),
@@ -464,7 +470,7 @@ def test_makeup_credit_tools_are_tenant_scoped() -> None:
         ana = _make_contact(db, professional_a.id, "Ana")
         _enroll(db, slot.id, ana.id)
 
-        target_date = MONDAY + timedelta(days=14)
+        target_date = FUTURE_MONDAY + timedelta(days=14)
         absence = mutations.propose_note_participant_absence(
             db, professional_a.id, user_a.id, uuid.uuid4(),
             contact_id=str(ana.id), recurring_slot_id=str(slot.id),
@@ -603,7 +609,7 @@ def test_recommend_makeup_slots_bonuses_level_matching_candidates() -> None:
         db.commit()
 
         recommendations = makeup_recommender.recommend_makeup_slots(
-            db, professional.id, ana.id
+            db, professional.id, ana.id, max_recommendations=100
         )
         assert recommendations, "expected at least one recommended slot"
 
@@ -656,7 +662,9 @@ def test_courtesy_appointment_revenue_confirmation_is_overridable() -> None:
         )
         db.commit()
 
-        start_at = datetime.combine(MONDAY - timedelta(days=1), time(10, 0), tzinfo=TIMEZONE)
+        start_at = datetime.combine(
+            PAST_MONDAY - timedelta(days=1), time(10, 0), tzinfo=TIMEZONE
+        )
         appointment = Appointment(
             professional_id=professional.id,
             contact_id=contact.id,
@@ -713,7 +721,9 @@ def test_courtesy_appointment_non_billable_gets_reason_tagged() -> None:
         place = _make_place(db, professional.id)
         contact = _make_contact(db, professional.id, "Nova Aluna")
 
-        start_at = datetime.combine(MONDAY - timedelta(days=1), time(10, 0), tzinfo=TIMEZONE)
+        start_at = datetime.combine(
+            PAST_MONDAY - timedelta(days=1), time(10, 0), tzinfo=TIMEZONE
+        )
         appointment = Appointment(
             professional_id=professional.id,
             contact_id=contact.id,

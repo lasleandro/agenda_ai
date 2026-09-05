@@ -24,6 +24,8 @@ frontend/.next/
 # Local env and dev-only tooling
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
 start_server.py
 godaddy_landing_page/

@@ -16,7 +16,9 @@ A passive WhatsApp Business copilot that converts conversations between independ
 - [Agent navigability map](docs/agent_navigability.md) — code-first map of active and passive agent entry points, tool/action boundaries, ontology records, candidate lifecycles, and runtime workers.
 - [Business rules](docs/business_rules.md) — catalog of all encoded business rules: scheduling constraints, makeup credit lifecycle, revenue rules, multi-tenancy, agent guardrails, data integrity, and WhatsApp pipeline rules.
 - [Azure App Service & PostgreSQL deployment assessment](docs/azure_app_service_postgresql_deployment_assessment.md) — background assessment of the Azure-first production architecture, Flexible Server design, security controls, and cost bands.
-- [Azure deployment roadmap](docs/azure_deployment_roadmap.md) — **the plan of record for going live**: the lean/cheap target architecture, verified findings against the current code, the ordered P0 task list, and the cutover runbook.
+- [Azure deployment roadmap](docs/azure_deployment_roadmap_2026-09-04.md) — **the plan of record for going live**: the lean/cheap target architecture, verified findings against the current code, the ordered P0 task list, and the cutover runbook.
+- [Azure App Service settings JSON](docs/azure_app_service_settings.md) — generate the private application-settings import file from local secrets without committing it.
+- [Database synchronization](docs/database_sync.md) — safe, additive commands for copying new records between local PostgreSQL and Azure PostgreSQL.
 
 ### Page Documentation
 
@@ -67,6 +69,23 @@ A passive WhatsApp Business copilot that converts conversations between independ
 - [Local dev webhook tunnel](docs/local_dev_webhook_tunnel.md) — current YCloud webhook tunnel URL and how to restart it during Phase 1 development.
 
 ## Running the platform
+
+### Local PostgreSQL 18
+
+Start the project-local database from the repository root:
+
+```bash
+docker compose up -d
+```
+
+It runs as `agenda_ai_local_pg` on `127.0.0.1:55432`, with its own
+`agenda-ai_agenda_postgres_data` volume, so it does not conflict with the
+shared local PostgreSQL container on port 5433. The first setup needs the
+schema migration; later `docker compose up -d` is sufficient:
+
+```bash
+conda run -n agenda bash -lc 'cd backend && python -m alembic -c alembic.ini upgrade head'
+```
 
 ```bash
 conda activate agenda

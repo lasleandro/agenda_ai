@@ -169,3 +169,9 @@ def test_worker_drains_receipt_when_inline_processing_disabled(client, monkeypat
 def test_unknown_provider_returns_404(client) -> None:
     res = client.post("/webhooks/whatsapp/not-a-provider", content=b"{}")
     assert res.status_code == 404
+
+
+def test_webhook_rejects_oversized_body_before_signature_verification(client) -> None:
+    response = client.post("/webhooks/ycloud", content=b"x" * (1024 * 1024 + 1))
+
+    assert response.status_code == 413

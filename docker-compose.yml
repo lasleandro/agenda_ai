@@ -1,0 +1,23 @@
+name: agenda-ai
+
+services:
+  postgres:
+    image: postgres:18.6
+    container_name: agenda_ai_local_pg
+    environment:
+      POSTGRES_DB: ${AGENDA_LOCAL_DATABASE:-agenda_db}
+      POSTGRES_USER: ${PG_LOCAL_USER:-agenda}
+      POSTGRES_PASSWORD: ${PG_LOCAL_PASSWORD:-agenda_local_dev}
+    ports:
+      - "127.0.0.1:${PG_LOCAL_PORT:-55432}:5432"
+    volumes:
+      - agenda_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  agenda_postgres_data:

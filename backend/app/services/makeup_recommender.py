@@ -265,9 +265,11 @@ def recommend_makeup_slots(
     )
 
     # Build set of booked intervals keyed by (date, place_id)
-    booked: dict[tuple[date, uuid.UUID], list[tuple[int, int]]] = defaultdict(list)
+    booked: dict[
+        tuple[date, uuid.UUID], list[financial_capacity.BookingOccurrence]
+    ] = defaultdict(list)
     for b in bookings:
-        booked[(b.local_date, b.place_id)].append((b.start_minute, b.end_minute))
+        booked[(b.local_date, b.place_id)].append(b)
 
     # 1. Pre-sort places so preferred places come first (not an exclusion)
     sorted_places = sorted(
@@ -285,12 +287,14 @@ def recommend_makeup_slots(
                 continue
 
             # Subtract booked intervals from this segment for this date
-            place_booked = booked.get(
-                (segment.local_date, place.id), []
-            )
+            place_booked = [
+                booking
+                for booking in booked.get((segment.local_date, place.id), [])
+                if not booking.has_open_group_seat
+            ]
             free_ranges = scheduling.subtract_ranges(
                 [(segment.start_minute, segment.end_minute)],
-                sorted(place_booked),
+                sorted((booking.start_minute, booking.end_minute) for booking in place_booked),
             )
 
             for range_start, range_end in free_ranges:

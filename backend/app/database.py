@@ -55,12 +55,17 @@ def _int_env(name: str, default: int) -> int:
     return int(raw) if raw else default
 
 
+def _production_pool_default(local_default: int, production_default: int) -> int:
+    environment = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "").strip().lower()
+    return production_default if environment == "production" else local_default
+
+
 DATABASE_URL: str = _resolve_database_url()
 
 engine = create_engine(
     DATABASE_URL,
-    pool_size=_int_env("DB_POOL_SIZE", 5),
-    max_overflow=_int_env("DB_MAX_OVERFLOW", 10),
+    pool_size=_int_env("DB_POOL_SIZE", _production_pool_default(5, 2)),
+    max_overflow=_int_env("DB_MAX_OVERFLOW", _production_pool_default(10, 1)),
     pool_timeout=_int_env("DB_POOL_TIMEOUT", 30),
     pool_recycle=_int_env("DB_POOL_RECYCLE", 1800),
     # Cheap SELECT 1 before handing out a pooled connection — avoids
