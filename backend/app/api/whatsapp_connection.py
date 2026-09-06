@@ -2,8 +2,11 @@
 Tenant-facing WhatsApp connection request — the manual, admin-assisted path
 while automatic self-service connection is still on the roadmap.
 
-GET  /api/whatsapp/connection-request  — whether this tenant already asked.
-POST /api/whatsapp/connection-request  — notify the admin by email; idempotent.
+GET    /api/whatsapp/connection-request     — whether this tenant already asked.
+POST   /api/whatsapp/connection-request     — notify the admin by email; idempotent.
+GET    /api/whatsapp/agent-binding          — is the shared agent channel bound.
+POST   /api/whatsapp/agent-binding/challenge — issue a fresh binding code.
+DELETE /api/whatsapp/agent-binding          — revoke the binding.
 """
 
 import logging
@@ -13,13 +16,21 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_authenticated, require_professional_id
-from app.core.error_codes import WHATSAPP_CONNECTION_REQUEST_FAILED
+from app.core.error_codes import (
+    AGENT_BINDING_UNAVAILABLE,
+    WHATSAPP_CONNECTION_REQUEST_FAILED,
+)
 from app.core.error_responses import error_response
 from app.database import SessionLocal
 from app.integrations.email.contracts import EmailDeliveryError, OutboundEmail
 from app.integrations.email.smtp import SmtpEmailSender
 from app.models import Professional
-from app.schemas.api import WhatsappConnectionRequestState
+from app.schemas.api import (
+    AgentBindingChallengeResponse,
+    AgentBindingState,
+    WhatsappConnectionRequestState,
+)
+from app.services import agent_binding
 from app.services.tenant_features import (
     WHATSAPP_CONNECTION_REQUESTED,
     is_tenant_feature_enabled,
@@ -107,3 +118,57 @@ def create_connection_request(
     )
     db.commit()
     return WhatsappConnectionRequestState(requested=True)
+
+
+@router.get("/agent-binding", response_model=AgentBindingState)
+def get_agent_binding_state(
+    db: Session = Depends(get_db),
+    professional_id: uuid.UUID = Depends(require_professional_id),
+):
+    state = agent_binding.binding_state(db, professional_id)
+    return AgentBindingState(
+        bound=state.bound,
+        confirmed_at=state.confirmed_at,
+        platform_number=state.platform_number,
+    )
+
+
+@router.post("/agent-binding/challenge", response_model=AgentBindingChallengeResponse)
+def create_agent_binding_challenge(
+    db: Session = Depends(get_db),
+    professional_id: uuid.UUID = Depends(require_professional_id),
+):
+    try:
+        issued = agent_binding.issue_challenge(db, professional_id)
+    except agent_binding.AgentBindingUnavailableError:
+        return error_response(
+            503,
+            AGENT_BINDING_UNAVAILABLE,
+            "O número do assistente ainda não está configurado. Fale com o suporte.",
+        )
+    return AgentBindingChallengeResponse(
+        code=issued.code,
+        platform_number=issued.platform_number,
+        expires_at=issued.expires_at,
+    )
+
+
+@router.delete("/agent-binding", response_model=AgentBindingState)
+def revoke_agent_binding(
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_authenticated),
+    professional_id: uuid.UUID = Depends(require_professional_id),
+):
+    agent_binding.revoke(
+        db,
+        professional_id,
+        actor_user_id=uuid.UUID(user["user_id"]),
+        actor_type="user",
+        source_channel="web",
+    )
+    state = agent_binding.binding_state(db, professional_id)
+    return AgentBindingState(
+        bound=state.bound,
+        confirmed_at=state.confirmed_at,
+        platform_number=state.platform_number,
+    )

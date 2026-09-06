@@ -7,7 +7,8 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.agent import mutations
-from app.integrations.whatsapp.contracts import WhatsAppTextRequest
+from app.integrations.whatsapp.contracts import WhatsAppPermanentError, WhatsAppTextRequest
+from app.integrations.whatsapp.platform_number import platform_agent_number
 from app.integrations.whatsapp.provider import WhatsAppProvider
 from app.integrations.whatsapp.registry import get_whatsapp_provider
 from app.models import AppointmentCandidate, OperatorActionCandidate, PassiveEscalation, Professional, User
@@ -32,7 +33,12 @@ def queue_if_eligible(db: Session, candidate: AppointmentCandidate) -> PassiveEs
         return None
     professional = db.get(Professional, candidate.professional_id)
     actor = db.query(User).filter(User.professional_id == candidate.professional_id, User.role == "professional").first()
-    if professional is None or not professional.agent_phone or actor is None:
+    if (
+        professional is None
+        or platform_agent_number() is None
+        or not professional.assistant_phone
+        or actor is None
+    ):
         return None
     existing = db.query(PassiveEscalation).filter_by(appointment_candidate_id=candidate.id).first()
     if existing is not None:
@@ -114,7 +120,13 @@ def deliver(
         return False
     professional = db.get(Professional, escalation.professional_id)
     actor = db.query(User).filter(User.professional_id == escalation.professional_id, User.role == "professional").first()
-    if professional is None or not professional.agent_phone or not professional.assistant_phone or actor is None:
+    platform_number = platform_agent_number()
+    if (
+        professional is None
+        or platform_number is None
+        or not professional.assistant_phone
+        or actor is None
+    ):
         escalation.status = "expired"
         return False
     key = f"passive-escalation:{candidate.id}"
@@ -145,19 +157,28 @@ def deliver(
         )
         if provider is None:
             send_text_message_or_raise(
-                from_phone=professional.agent_phone,
+                from_phone=platform_number,
                 to_phone=professional.assistant_phone,
                 body=body,
             )
         else:
             provider.send_text(
                 WhatsAppTextRequest(
-                    from_phone=professional.agent_phone,
+                    from_phone=platform_number,
                     to_phone=professional.assistant_phone,
                     body=body,
                 )
             )
-    except Exception as exc:  # delivery is retried from durable state
+    except WhatsAppPermanentError as exc:
+        # The provider rejected the send and a retry will not help — most
+        # commonly a free-form message outside WhatsApp's 24h customer-service
+        # window (the platform does not use a template for escalations). Stop
+        # retrying and surface the reason instead of churning every poll.
+        escalation.attempt_count += 1
+        escalation.status = "expired"
+        escalation.last_error = f"permanent: {exc}"[:500]
+        return False
+    except Exception as exc:  # retryable / unknown — retried from durable state
         escalation.attempt_count += 1
         escalation.last_error = str(exc)[:500]
         escalation.next_attempt_at = now + timedelta(seconds=RETRY_SECONDS)

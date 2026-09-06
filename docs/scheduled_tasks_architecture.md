@@ -62,7 +62,7 @@ choose a tenant from arbitrary request data:
   configuration later changes.
 - Agenda reads take `professional_id` explicitly and scope every schedule/event
   query to it.
-- A run sends only from that professional's `agent_phone` to that
+- A run sends from the shared `PLATFORM_AGENT_WHATSAPP_NUMBER` to that
   professional's `assistant_phone`.
 - Incoming provider messages are namespaced by `provider_key` and
   `provider_message_id`; delivery updates match the same provider identity

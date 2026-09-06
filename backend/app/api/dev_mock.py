@@ -11,8 +11,9 @@ Scoped to the caller's own tenant (multi-tenancy roadmap Phase C): the mock
 "instructor" side of the conversation uses the authenticated professional's
 own assistant_phone, so two tenants never share mock conversation data.
 
-Only registered when DEBUG=true (see app/main.py) — never exposed in a
-would-be production deployment.
+Registered when DEBUG=true or ENABLE_MOCK_CHAT=true (see app/main.py). Every
+handler additionally requires a platform_admin with a selected tenant, so the
+router is safe to enable in a deployed environment when explicitly opted in.
 """
 
 import uuid
@@ -24,7 +25,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.conversations import candidate_with_evidence
-from app.api.dependencies import require_professional_id
+from app.api.dependencies import require_platform_admin_professional_id
 from app.database import SessionLocal
 from app.models import (
     AppointmentCandidate,
@@ -192,7 +193,7 @@ def _build_message(
 def get_mock_conversation(
     customer_phone: str | None = None,
     db: Session = Depends(get_db),
-    professional_id: uuid.UUID = Depends(require_professional_id),
+    professional_id: uuid.UUID = Depends(require_platform_admin_professional_id),
 ):
     """Get-or-create the single mock conversation, so the frontend has a
     conversation_id to poll even before any message has been sent."""
@@ -211,7 +212,7 @@ def get_mock_conversation(
 @router.get("/mock-customers")
 def list_mock_customers(
     db: Session = Depends(get_db),
-    professional_id: uuid.UUID = Depends(require_professional_id),
+    professional_id: uuid.UUID = Depends(require_platform_admin_professional_id),
 ):
     """List this tenant's generated mock customers and their conversations."""
     professional = _get_professional(db, professional_id)
@@ -244,7 +245,7 @@ def list_mock_customers(
 @router.post("/mock-customers")
 def create_mock_customer(
     db: Session = Depends(get_db),
-    professional_id: uuid.UUID = Depends(require_professional_id),
+    professional_id: uuid.UUID = Depends(require_platform_admin_professional_id),
 ):
     """Generate a new mock customer with an independent conversation."""
     professional = _get_professional(db, professional_id)
@@ -260,7 +261,7 @@ def create_mock_customer(
 def send_mock_message(
     body: MockMessageRequest,
     db: Session = Depends(get_db),
-    professional_id: uuid.UUID = Depends(require_professional_id),
+    professional_id: uuid.UUID = Depends(require_platform_admin_professional_id),
 ):
     professional = _get_professional(db, professional_id)
     customer_phone, customer_name = _get_mock_customer(
@@ -285,7 +286,7 @@ def send_mock_message(
 def reset_mock_conversation(
     body: MockCustomerRequest | None = None,
     db: Session = Depends(get_db),
-    professional_id: uuid.UUID = Depends(require_professional_id),
+    professional_id: uuid.UUID = Depends(require_platform_admin_professional_id),
 ):
     """Clear the dev mock conversation so a new scenario can be tested."""
     professional = _get_professional(db, professional_id)
@@ -326,7 +327,7 @@ def reset_mock_conversation(
 def process_now(
     conversation_id: str,
     db: Session = Depends(get_db),
-    professional_id: uuid.UUID = Depends(require_professional_id),
+    professional_id: uuid.UUID = Depends(require_platform_admin_professional_id),
 ):
     """Bypass the debounce window and run extraction immediately, for fast
     iteration while testing. Goes through the same process_conversation used

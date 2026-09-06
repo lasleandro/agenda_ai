@@ -7,6 +7,8 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import pytest
+
 from app.database import SessionLocal
 from app.integrations.whatsapp.contracts import (
     WhatsAppDeliveryUpdated,
@@ -21,6 +23,13 @@ from app.services.scheduled_tasks import (
     process_due_scheduled_tasks,
     update_daily_agenda_task,
 )
+
+PLATFORM_NUMBER = "+5511970000000"
+
+
+@pytest.fixture(autouse=True)
+def _platform_agent_number(monkeypatch):
+    monkeypatch.setenv("PLATFORM_AGENT_WHATSAPP_NUMBER", PLATFORM_NUMBER)
 
 
 class _FakeWhatsAppProvider:
@@ -44,7 +53,6 @@ def _professional(name: str) -> Professional:
     return Professional(
         name=name,
         timezone="America/Sao_Paulo",
-        agent_phone=f"+55119888{token}",
         assistant_phone=f"+55119777{token}",
     )
 
@@ -134,7 +142,7 @@ def test_daily_agenda_task_sends_once_for_its_own_tenant() -> None:
         assert process_due_scheduled_tasks(db, provider, now) == 1
         assert process_due_scheduled_tasks(db, provider, now) == 0
         assert len(provider.requests) == 1
-        assert provider.requests[0].from_phone == target.agent_phone
+        assert provider.requests[0].from_phone == PLATFORM_NUMBER
         assert provider.requests[0].to_phone == target.assistant_phone
         assert provider.requests[0].template_key == "daily_agenda"
 

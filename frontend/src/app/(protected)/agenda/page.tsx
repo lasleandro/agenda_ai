@@ -1,5 +1,5 @@
-import { WeekCalendar } from "@/components/calendar/week-calendar";
+import { AgendaView } from "./agenda-view";
 
 export default function Home() {
-  return <WeekCalendar />;
+  return <AgendaView />;
 }

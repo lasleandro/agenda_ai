@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { AssistantPanel } from "./assistant-panel";
 
@@ -26,6 +26,21 @@ export function FloatingChat() {
   const offset = useRef({ x: 0, y: 0 });
   const start = useRef({ x: 0, y: 0 });
   const size = useRef({ width: 56, height: 56 });
+  const minimize = useCallback(() => {
+    setOpen(false);
+    buttonRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function minimizeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") minimize();
+    }
+
+    window.addEventListener("keydown", minimizeOnEscape);
+    return () => window.removeEventListener("keydown", minimizeOnEscape);
+  }, [minimize, open]);
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     start.current = { x: e.clientX, y: e.clientY };
@@ -119,6 +134,14 @@ export function FloatingChat() {
 
   return (
     <>
+      {open && (
+        <button
+          type="button"
+          aria-label="Minimizar assistente"
+          onClick={minimize}
+          className="fixed inset-0 z-[69] cursor-default"
+        />
+      )}
       <button
         ref={buttonRef}
         onPointerDown={onPointerDown}
@@ -142,7 +165,7 @@ export function FloatingChat() {
         className={`fixed ${FLOAT_Z} flex h-[min(600px,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-96 flex-col overflow-hidden rounded-lg border bg-background shadow-2xl`}
         style={panelStyle}
       >
-        <AssistantPanel onClose={() => setOpen(false)} />
+        <AssistantPanel onClose={minimize} />
       </div>
     </>
   );

@@ -343,21 +343,11 @@ export default function LandingPage() {
             contato@tennisos.com.br
           </a>
           <p>
-            © {year} <strong>Tennis OS</strong>. Em desenvolvimento.
+            © {year} <strong>Tennis OS</strong>.
           </p>
         </div>
       </footer>
 
-      <a
-        className="whatsapp-button"
-        href="https://wa.me/5511918796827?text=Ol%C3%A1%2C%20quero%20conhecer%20o%20Tennis%20OS."
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label="Falar com o Tennis OS pelo WhatsApp"
-      >
-        <Image src="/landing/whatsapp.png" alt="" width={62} height={62} />
-        <span className="sr-only">Falar pelo WhatsApp</span>
-      </a>
     </div>
   );
 }

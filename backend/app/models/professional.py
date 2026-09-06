@@ -43,12 +43,21 @@ class Professional(Base):
     timezone: Mapped[str] = mapped_column(String(100), default="America/Sao_Paulo")
     default_service: Mapped[str] = mapped_column(String(100), default="tennis_lesson")
     default_duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    # Customer-facing WhatsApp number the passive observer watches. Also the
+    # key the instructor-facing agent channel resolves the tenant by: a
+    # message to the shared platform agent number is attributed to the tenant
+    # whose assistant_phone sent it.
     assistant_phone: Mapped[str | None] = mapped_column(String(50))
-    # Separate WhatsApp number for the instructor to talk to the AI agent
-    # directly (AI Agent Operations Roadmap v0.1, Phase 0) — distinct from
-    # assistant_phone above, which is the customer-facing number the passive
-    # observer watches.
-    agent_phone: Mapped[str | None] = mapped_column(String(50))
+    # Second factor for the shared agent channel (Shared Platform AI Agent
+    # Number Roadmap v0.1, Phase F). Set when the instructor confirms a
+    # binding challenge code from their own number; cleared on revoke or a
+    # number change. Normal agent-channel handling is gated on this being set.
+    agent_binding_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    agent_binding_confirmed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
     daily_summary_time: Mapped[str] = mapped_column(String(5), default="07:00")
     status: Mapped[str] = mapped_column(String(50), default=TENANT_STATUS_ACTIVE)
     # Lifecycle audit stamped on the row itself so the common "why is this

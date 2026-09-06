@@ -353,15 +353,21 @@ These rules are enforced through the system prompt in `orchestrator.py`:
 ### 8.1 Instructor Agent WhatsApp Channel
 
 Distinct from the passive-observer pipeline above — this is the *active*
-agent (Mode 1) reachable over WhatsApp on a separate number
-(`Professional.agent_phone`), not the customer-facing one
-(`Professional.assistant_phone`).
+agent (Mode 1) reachable over WhatsApp on the **shared platform agent
+number** (`PLATFORM_AGENT_WHATSAPP_NUMBER`), one number for every tenant, not
+the customer-facing `Professional.assistant_phone`.
 
-- **Sender authorization:** Only messages whose sender matches
-  `Professional.assistant_phone` (the instructor's own known number) are
-  processed; anyone else messaging the agent number is silently dropped —
-  no reply, so an unauthorized sender can't even confirm the number is
-  live. Fails closed if `assistant_phone` isn't configured.
+- **Sender-keyed tenant + first factor:** A message to the platform number is
+  attributed to the active tenant whose `assistant_phone` sent it
+  (`get_professional_by_phone`). A sender that is no active tenant's
+  `assistant_phone` is claimed and silently dropped — no reply, so an
+  outsider can't confirm the number is live, and it never reaches the
+  customer-facing pipeline.
+- **Second factor — binding:** Normal handling is gated on
+  `Professional.agent_binding_confirmed_at`. An unbound tenant's only accepted
+  message is a one-time code (issued in the authenticated web session, sent to
+  the platform number from the instructor's own WhatsApp); everything else is
+  dropped. Cleared on revoke or an admin number change.
 - **Deterministic fast path:** `hoje`/`amanha`/`esta semana`/`proxima
   aula` are answered directly against `Appointment`, no LLM call.
 - **Confirmation by reply keyword:** No buttons over WhatsApp — `sim` /

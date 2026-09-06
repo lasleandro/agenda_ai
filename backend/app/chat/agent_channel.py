@@ -24,8 +24,10 @@ conversation.
 
 Entirely separate from the passive observer pipeline in
 ingestion.py/pipeline.py, which watches the instructor's customer-facing
-number (Professional.assistant_phone). This module watches
-Professional.agent_phone instead.
+number (Professional.assistant_phone). This module handles messages a tenant
+sends to the shared platform agent number (PLATFORM_AGENT_WHATSAPP_NUMBER):
+the recipient is always that one number, and the tenant is resolved from the
+sender (from_phone == Professional.assistant_phone).
 """
 
 import logging
@@ -42,13 +44,23 @@ from app.integrations.whatsapp.contracts import (
     WhatsAppProviderError,
     WhatsAppTextRequest,
 )
+from app.integrations.whatsapp.platform_number import (
+    is_platform_number,
+    platform_agent_number,
+)
 from app.integrations.whatsapp.provider import WhatsAppProvider
 from app.integrations.whatsapp.registry import get_whatsapp_provider
 from app.models import AppointmentCandidate, AgentChannelMessage, OperatorActionCandidate, PassiveEscalation, Professional, User
-from app.services import daily_agenda, scheduling
+from app.services import agent_binding, daily_agenda, scheduling
 from app.services.assistant_settings import get_assistant_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _mask_phone(phone: str | None) -> str:
+    if not phone:
+        return "***"
+    return f"***{phone[-4:]}" if len(phone) >= 4 else "***"
 
 NEXT_SESSION_SEARCH_DAYS = 90
 WHATSAPP_CHANNEL = "whatsapp"
@@ -121,18 +133,6 @@ COMMANDS = {
     "esta semana": _handle_esta_semana,
     "proxima aula": _handle_proxima_aula,
 }
-
-
-def get_professional_by_agent_phone(db: Session, agent_phone: str) -> Professional | None:
-    """A suspended/archived tenant is treated as unknown (full lockout)."""
-    return (
-        db.query(Professional)
-        .filter(
-            Professional.agent_phone == agent_phone,
-            Professional.status == "active",
-        )
-        .first()
-    )
 
 
 def _resolve_actor_user(db: Session, professional_id: uuid.UUID) -> User | None:
@@ -301,73 +301,100 @@ def send_text_message(from_phone: str, to_phone: str, body: str) -> None:
     )
 
 
+def _send_reply(
+    provider: WhatsAppProvider | None,
+    from_phone: str,
+    to_phone: str,
+    body: str,
+    professional_id: uuid.UUID,
+) -> None:
+    try:
+        if provider is None:
+            send_text_message(from_phone=from_phone, to_phone=to_phone, body=body)
+        else:
+            provider.send_text(
+                WhatsAppTextRequest(from_phone=from_phone, to_phone=to_phone, body=body)
+            )
+    except WhatsAppProviderError:
+        logger.exception(
+            "Failed to send private-agent WhatsApp reply (professional_id=%s)",
+            professional_id,
+        )
+
+
 def try_handle(
     db: Session,
     normalized: WhatsAppMessageEvent,
     provider: WhatsAppProvider | None = None,
 ) -> bool:
-    """If this message is addressed to a provisioned agent number, answer it
-    and return True. Otherwise return False so the caller can route it
-    through the normal customer-facing pipeline."""
+    """If this inbound message is addressed to the shared platform agent
+    number, answer it and return True. A message to that number from an
+    unrecognized sender is claimed and dropped (still True) so it never
+    reaches the customer-facing pipeline. Anything else returns False."""
     if normalized.direction != "inbound":
         return False
 
-    professional = get_professional_by_agent_phone(db, normalized.to_phone)
-    if professional is None:
+    if not is_platform_number(normalized.to_phone):
         return False
+    platform_number = platform_agent_number()
 
-    # The agent channel is private to the instructor — authorize the sender
-    # against their own known number (the same phone that runs the
-    # customer-facing side) rather than trusting whoever happens to message
-    # this number. Silently drop (no reply) so an unauthorized sender can't
-    # even confirm the number is live.
-    if (
-        not professional.assistant_phone
-        or normalized.from_phone != professional.assistant_phone
-    ):
+    # ingestion.py imports this module at load time, so resolve its tenant
+    # lookup lazily to avoid an import cycle. The sender is the resolution
+    # key: get_professional_by_phone matches from_phone against an active
+    # tenant's assistant_phone, so resolution *is* authorization.
+    from app.chat.ingestion import get_professional_by_phone
+
+    professional = get_professional_by_phone(db, normalized.from_phone)
+    if professional is None:
         logger.warning(
-            "Rejected agent-channel message from unauthorized sender %s (professional_id=%s)",
-            normalized.from_phone,
-            professional.id,
+            "Dropped agent-channel message from unrecognized sender %s",
+            _mask_phone(normalized.from_phone),
         )
         return True
 
     text = normalized.text or ""
     command = normalize_command(text)
+    actor_user = _resolve_actor_user(db, professional.id)
+
+    # Second factor: normal handling is gated on a confirmed binding. Until
+    # then the only message this channel acts on is the binding code the
+    # instructor got in their authenticated web session; everything else from
+    # an unbound tenant is claimed and silently dropped.
+    if professional.agent_binding_confirmed_at is None:
+        if actor_user is not None and agent_binding.confirm_from_message(
+            db, professional, actor_user.id, text
+        ):
+            _send_reply(
+                provider,
+                platform_number,
+                normalized.from_phone,
+                "Assistente ativado neste numero. Pode me enviar comandos por aqui.",
+                professional.id,
+            )
+        else:
+            logger.warning(
+                "Dropped agent-channel message for unbound tenant %s", professional.id
+            )
+        return True
+
+    logger.info(
+        "agent-channel turn resolved to tenant %s (sender %s)",
+        professional.id,
+        _mask_phone(normalized.from_phone),
+    )
 
     if command in COMMANDS:
         reply = COMMANDS[command](db, professional.id)
+    elif actor_user is None:
+        reply = "Nenhum usuario operador configurado para esta conta."
+    elif command in CONFIRM_WORDS or command in REJECT_WORDS:
+        reply = _handle_confirmation_reply(db, professional, actor_user.id, command)
+        _record_turn(db, professional.id, "user", text)
+        _record_turn(db, professional.id, "assistant", reply)
     else:
-        actor_user = _resolve_actor_user(db, professional.id)
-        if actor_user is None:
-            reply = "Nenhum usuario operador configurado para esta conta."
-        elif command in CONFIRM_WORDS or command in REJECT_WORDS:
-            reply = _handle_confirmation_reply(db, professional, actor_user.id, command)
-            _record_turn(db, professional.id, "user", text)
-            _record_turn(db, professional.id, "assistant", reply)
-        else:
-            reply = _handle_agent_turn(db, professional, actor_user.id, text)
-            _record_turn(db, professional.id, "user", text)
-            _record_turn(db, professional.id, "assistant", reply)
+        reply = _handle_agent_turn(db, professional, actor_user.id, text)
+        _record_turn(db, professional.id, "user", text)
+        _record_turn(db, professional.id, "assistant", reply)
 
-    try:
-        if provider is None:
-            send_text_message(
-                from_phone=normalized.to_phone,
-                to_phone=normalized.from_phone,
-                body=reply,
-            )
-        else:
-            provider.send_text(
-                WhatsAppTextRequest(
-                    from_phone=normalized.to_phone,
-                    to_phone=normalized.from_phone,
-                    body=reply,
-                )
-            )
-    except WhatsAppProviderError:
-        logger.exception(
-            "Failed to send private-agent WhatsApp reply (professional_id=%s)",
-            professional.id,
-        )
+    _send_reply(provider, platform_number, normalized.from_phone, reply, professional.id)
     return True

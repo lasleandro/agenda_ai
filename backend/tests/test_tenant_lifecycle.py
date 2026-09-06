@@ -36,7 +36,6 @@ def _make_professional(db, status: str = "active") -> Professional:
     professional = Professional(
         name="Lifecycle Tenant",
         assistant_phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}",
-        agent_phone=f"+55118{uuid.uuid4().hex[:8]}",
         status=status,
     )
     db.add(professional)

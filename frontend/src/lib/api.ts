@@ -28,7 +28,6 @@ import type {
   FinancialScenarioInput,
   FinancialScenarioList,
   FinancialScenarioResult,
-  FinancialSettingsDetail,
   ContactListResponse,
   ContactSummary,
   ContactUpdateInput,
@@ -75,6 +74,9 @@ import type {
   TenantCreateResponse,
   TenantFeatureState,
   TenantStatusState,
+  TenantSummary,
+  AgentBindingChallengeResponse,
+  AgentBindingState,
   WaitlistEntry,
   WaitlistEntryInput,
   WaitlistEntryListResponse,
@@ -160,6 +162,20 @@ export const fetchWhatsappConnectionRequestState = () =>
 export const submitWhatsappConnectionRequest = () =>
   apiRequest<WhatsappConnectionRequestState>("/api/whatsapp/connection-request", {
     method: "POST",
+  });
+
+export const fetchAgentBindingState = () =>
+  apiRequest<AgentBindingState>("/api/whatsapp/agent-binding");
+
+export const requestAgentBindingChallenge = () =>
+  apiRequest<AgentBindingChallengeResponse>(
+    "/api/whatsapp/agent-binding/challenge",
+    { method: "POST" }
+  );
+
+export const revokeAgentBinding = () =>
+  apiRequest<AgentBindingState>("/api/whatsapp/agent-binding", {
+    method: "DELETE",
   });
 
 // ---------------------------------------------------------------------------
@@ -371,6 +387,12 @@ export const updateAssistantSettings = (
         memory_window_messages: memoryWindowMessages,
       },
     }
+  );
+
+export const updateTenantWhatsappNumber = (tenantId: string, whatsapp: string) =>
+  apiRequest<TenantSummary>(
+    `/api/admin/tenants/${tenantId}/whatsapp-number`,
+    { method: "PUT", body: { whatsapp } }
   );
 
 export type ScheduledTaskQuery = {
@@ -627,15 +649,6 @@ export const updateGroupFinancials = (
     body,
   });
 
-export const fetchFinancialSettings = () =>
-  apiRequest<FinancialSettingsDetail>("/api/financial/settings");
-export const updateFinancialSettings = (body: {
-  default_commercial_status?: string;
-}) =>
-  apiRequest<FinancialSettingsDetail>("/api/financial/settings", {
-    method: "PATCH",
-    body,
-  });
 export const fetchFinancialConfiguration = () =>
   apiRequest<FinancialConfigurationDetail>("/api/financial/configuration");
 export const replacePrimeTimeWindows = (windows: PrimeTimeWindowInput[]) =>

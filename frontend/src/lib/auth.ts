@@ -30,10 +30,23 @@ export interface SessionUser {
   professional_name: string | null;
   impersonating: boolean;
   features: string[];
+  /** Absent for admin/unscoped sessions. `false` until the tenant has a
+   * Local and a work journey — see the first-user onboarding roadmap. */
+  operation_configured?: boolean;
 }
 
 export function sessionHasFeature(user: SessionUser | null, featureKey: string): boolean {
   return user?.features.includes(featureKey) ?? false;
+}
+
+/** True for a tenant-scoped session whose operation setup is unfinished —
+ * a professional login, or a platform admin impersonating the tenant (who is
+ * often the person setting it up). `operation_configured` absent (a session
+ * cached before this field existed, or an unscoped admin) means "no
+ * onboarding UI". */
+export function operationNeedsSetup(user: SessionUser | null): boolean {
+  if (!user || user.operation_configured !== false) return false;
+  return user.role === "professional" || user.impersonating;
 }
 
 export async function login(email: string, password: string): Promise<{ email: string; role: string }> {

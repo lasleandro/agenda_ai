@@ -90,6 +90,16 @@ def require_platform_admin(user: dict = Depends(require_authenticated)) -> dict:
     return user
 
 
+def require_platform_admin_professional_id(
+    user: dict = Depends(require_platform_admin),
+) -> uuid.UUID:
+    """Resolve the selected tenant for a platform-admin-only route."""
+    professional_id = user.get("professional_id")
+    if professional_id is None:
+        raise HTTPException(status_code=403, detail="No tenant selected — impersonate a tenant first")
+    return uuid.UUID(professional_id)
+
+
 def require_tenant_feature(feature_key: str):
     """Build a tenant-scoped dependency that rejects disabled optional modules."""
 

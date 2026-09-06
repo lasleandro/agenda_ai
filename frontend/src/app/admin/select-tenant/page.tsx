@@ -9,6 +9,7 @@ import {
   Building2,
   Calendar,
   CalendarClock,
+  Check,
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
@@ -22,6 +23,7 @@ import {
 } from "lucide-react";
 import { AuthRequestError, fetchSession, impersonate } from "@/lib/auth";
 import {
+  ApiError,
   archiveTenant,
   createTenant,
   fetchTenants,
@@ -30,6 +32,7 @@ import {
   suspendTenant,
   updateAssistantSettings,
   updateCommercialFinancials,
+  updateTenantWhatsappNumber,
 } from "@/lib/api";
 import type { TenantCreateInput, TenantListResponse, TenantSummary } from "@/lib/types";
 import {
@@ -58,6 +61,7 @@ export default function SelectTenantPage() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [pendingFeatureIds, setPendingFeatureIds] = useState<Set<string>>(new Set());
   const [pendingAssistantIds, setPendingAssistantIds] = useState<Set<string>>(new Set());
+  const [pendingWhatsappIds, setPendingWhatsappIds] = useState<Set<string>>(new Set());
   const [pendingLifecycleIds, setPendingLifecycleIds] = useState<Set<string>>(new Set());
   const [settingsTenant, setSettingsTenant] = useState<TenantSummary | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("assistant");
@@ -377,6 +381,40 @@ export default function SelectTenantPage() {
       });
   }
 
+  function handleWhatsappNumberSave(tenant: TenantSummary, whatsapp: string) {
+    const trimmed = whatsapp.trim();
+    if (!trimmed || trimmed === tenant.assistant_phone) {
+      return;
+    }
+    setError(null);
+    setPendingWhatsappIds((current) => new Set(current).add(tenant.id));
+
+    void updateTenantWhatsappNumber(tenant.id, trimmed)
+      .then((updated) => {
+        setTenants((current) =>
+          current?.map((item) => (item.id === tenant.id ? updated : item)) ?? null
+        );
+        setSettingsTenant((current) =>
+          current?.id === tenant.id ? updated : current
+        );
+      })
+      .catch((err) => {
+        const code = err instanceof ApiError ? err.code : undefined;
+        setError(
+          code === "WHATSAPP_NUMBER_ALREADY_IN_USE"
+            ? "Este número já está associado a outro tenant."
+            : `Falha ao atualizar o número de ${tenant.name}`
+        );
+      })
+      .finally(() => {
+        setPendingWhatsappIds((current) => {
+          const next = new Set(current);
+          next.delete(tenant.id);
+          return next;
+        });
+      });
+  }
+
   return (
     <div className="min-h-dvh w-full bg-[var(--bg-page)] px-4 py-8 sm:px-6 sm:py-12">
       <div className="mx-auto max-w-5xl">
@@ -490,6 +528,16 @@ export default function SelectTenantPage() {
                 <span className="flex items-center gap-1 text-xs text-muted-foreground">
                   <Building2 className="h-3.5 w-3.5" />
                   {tenant.assistant_phone ?? "sem número configurado"}
+                  {tenant.agent_binding_confirmed_at ? (
+                    <span className="ml-1 inline-flex items-center gap-0.5 text-emerald-600 dark:text-emerald-400">
+                      <Check className="h-3.5 w-3.5" />
+                      assistente ativo
+                    </span>
+                  ) : (
+                    <span className="ml-1 text-muted-foreground/70">
+                      assistente inativo
+                    </span>
+                  )}
                 </span>
               </button>
 
@@ -532,6 +580,7 @@ export default function SelectTenantPage() {
             onClose={() => setSettingsTenant(null)}
             financialSaving={pendingFeatureIds.has(settingsTenant.id)}
             assistantSaving={pendingAssistantIds.has(settingsTenant.id)}
+            whatsappSaving={pendingWhatsappIds.has(settingsTenant.id)}
             lifecycleSaving={pendingLifecycleIds.has(settingsTenant.id)}
             onFeatureToggle={() => handleFeatureToggle(settingsTenant)}
             onAssistantSave={(temperature, memoryWindowMessages) =>
@@ -540,6 +589,9 @@ export default function SelectTenantPage() {
                 temperature,
                 memoryWindowMessages
               )
+            }
+            onWhatsappNumberSave={(whatsapp) =>
+              handleWhatsappNumberSave(settingsTenant, whatsapp)
             }
             onLifecycleAction={(action, reason) =>
               handleLifecycleAction(settingsTenant, action, reason)
@@ -789,6 +841,45 @@ function AssistantSettingsRow({
   );
 }
 
+function WhatsappNumberRow({
+  tenant,
+  saving,
+  onSave,
+}: {
+  tenant: TenantSummary;
+  saving: boolean;
+  onSave: (whatsapp: string) => void;
+}) {
+  const [value, setValue] = useState(tenant.assistant_phone ?? "");
+  const dirty = value.trim() !== "" && value.trim() !== tenant.assistant_phone;
+
+  return (
+    <div className="rounded-lg border border-border p-4">
+      <h3 className="text-sm font-medium text-foreground">Número de WhatsApp</h3>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Número que o instrutor usa com os alunos. Trocar o número desativa o
+        assistente até uma nova ativação.
+      </p>
+      <div className="mt-3 space-y-3">
+        <WhatsappField
+          id={`tenant-whatsapp-${tenant.id}`}
+          value={value}
+          onChange={setValue}
+          label=""
+          hint={null}
+        />
+        <Button
+          size="sm"
+          disabled={saving || !dirty}
+          onClick={() => onSave(value)}
+        >
+          {saving ? "Salvando…" : "Salvar número"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function TenantSettingsDialog({
   tenant,
   tab,
@@ -796,9 +887,11 @@ function TenantSettingsDialog({
   onClose,
   financialSaving,
   assistantSaving,
+  whatsappSaving,
   lifecycleSaving,
   onFeatureToggle,
   onAssistantSave,
+  onWhatsappNumberSave,
   onLifecycleAction,
 }: {
   tenant: TenantSummary;
@@ -807,9 +900,11 @@ function TenantSettingsDialog({
   onClose: () => void;
   financialSaving: boolean;
   assistantSaving: boolean;
+  whatsappSaving: boolean;
   lifecycleSaving: boolean;
   onFeatureToggle: () => void;
   onAssistantSave: (temperature: number, memoryWindowMessages: number) => void;
+  onWhatsappNumberSave: (whatsapp: string) => void;
   onLifecycleAction: (action: LifecycleAction, reason?: string) => void;
 }) {
   const task = tenant.scheduled_task;
@@ -860,15 +955,22 @@ function TenantSettingsDialog({
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {tab === "assistant" && (
-            <div className="rounded-lg border border-border">
-              <AssistantSettingsRow
+            <div className="space-y-4">
+              <div className="rounded-lg border border-border">
+                <AssistantSettingsRow
+                  tenant={tenant}
+                  saving={assistantSaving}
+                  onSave={onAssistantSave}
+                />
+                <p className="px-5 py-3 text-xs text-muted-foreground">
+                  Defina o nível de criatividade e a janela de contexto do assistente deste tenant.
+                </p>
+              </div>
+              <WhatsappNumberRow
                 tenant={tenant}
-                saving={assistantSaving}
-                onSave={onAssistantSave}
+                saving={whatsappSaving}
+                onSave={onWhatsappNumberSave}
               />
-              <p className="px-5 py-3 text-xs text-muted-foreground">
-                Defina o nível de criatividade e a janela de contexto do assistente deste tenant.
-              </p>
             </div>
           )}
 

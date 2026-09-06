@@ -197,6 +197,13 @@ class ParticipantMixItem(BaseModel):
     percentage: float = Field(ge=0, le=100)
 
 
+class FinancialScenarioCustomerEstimate(BaseModel):
+    calendar_weeks: int
+    weekly_participant_hours: float
+    minimum_customers: int
+    maximum_customers: int
+
+
 class CapacityPresetDetail(BaseModel):
     key: Literal["all_individual", "observed_demand", "full_groups"]
     label: str
@@ -204,6 +211,7 @@ class CapacityPresetDetail(BaseModel):
     occupancy_pct: float
     participant_hours: float
     projected_revenue_cents: int
+    customer_estimate: FinancialScenarioCustomerEstimate
 
 
 class CapacitySourceDetail(BaseModel):
@@ -360,13 +368,6 @@ class FinancialScenarioScheduleEvent(BaseModel):
     time_category: Literal["regular", "prime"]
     hourly_rate_cents: int | None = None
     total_revenue_cents: int | None = None
-
-
-class FinancialScenarioCustomerEstimate(BaseModel):
-    calendar_weeks: int
-    weekly_participant_hours: float
-    minimum_customers: int
-    maximum_customers: int
 
 
 class FinancialScenarioResult(BaseModel):

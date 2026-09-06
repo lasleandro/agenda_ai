@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ClipboardCheck, Clock, RefreshCw } from "lucide-react";
 import FullCalendar from "@fullcalendar/react";
 import timeGridPlugin from "@fullcalendar/timegrid";
@@ -62,6 +69,14 @@ function localDateInput(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+const MOBILE_QUERY = "(max-width: 767px)";
+
+function subscribeToViewport(onChange: () => void): () => void {
+  const query = window.matchMedia(MOBILE_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
 // FullCalendar's daysOfWeek uses JS Date.getDay() (Sunday=0..Saturday=6);
 // our day_of_week uses Python's date.weekday() (Monday=0..Sunday=6).
 function toFullCalendarDay(dayOfWeek: number): number {
@@ -74,7 +89,7 @@ function dayAfter(value: string): string {
   return date.toISOString().slice(0, 10);
 }
 
-function slotToEvent(slot: RecurringSlot): EventInput {
+function slotToEvent(slot: RecurringSlot, isMobile = false): EventInput {
   const courtLabel = slot.label ? ` · ${slot.label}` : "";
   const isScheduledClass = slot.slot_kind === "class";
   const levelLabel = slot.level
@@ -103,7 +118,10 @@ function slotToEvent(slot: RecurringSlot): EventInput {
       ? `${slot.label || (slot.class_type === "group" ? "Grupo" : "Aula")} · ${slot.place_name}${groupCapacityLabel}${levelLabel}`
       : `${slot.place_name}${courtLabel}`,
     ...schedule,
-    display: isScheduledClass ? "auto" : "background",
+    // The mobile agenda uses FullCalendar's list view, which never renders
+    // "background" events — so availability slots would silently vanish there.
+    // Render them as list items on mobile, keep the desktop background block.
+    display: isScheduledClass ? "auto" : isMobile ? "list-item" : "background",
     overlap: !isScheduledClass,
     backgroundColor: isScheduledClass ? "#4f46e5" : "#c7d2fe",
     borderColor: isScheduledClass ? "#4338ca" : undefined,
@@ -317,17 +335,17 @@ export function WeekCalendar() {
   const [refreshing, setRefreshing] = useState(false);
   const [financialEnabled, setFinancialEnabled] = useState(false);
   const [activeTab, setActiveTab] = useState<"agenda" | "confirmations">("agenda");
-  const [isMobile, setIsMobile] = useState(
-    () => typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches
+  // Server-safe: renders as desktop on the server, then reconciles to the real
+  // viewport right after hydration (no mismatch, no setState-in-effect).
+  const isMobile = useSyncExternalStore(
+    subscribeToViewport,
+    () => window.matchMedia(MOBILE_QUERY).matches,
+    () => false
   );
   const calendarRef = useRef<FullCalendar | null>(null);
-
-  useEffect(() => {
-    const query = window.matchMedia("(max-width: 767px)");
-    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  }, []);
+  // Sequence guard: a slow calendar fetch must not overwrite a newer one.
+  const loadSeqRef = useRef(0);
+  const lastRangeRef = useRef<string>("");
 
   useEffect(() => {
     let active = true;
@@ -344,7 +362,8 @@ export function WeekCalendar() {
   useEffect(() => {
     const api = calendarRef.current?.getApi();
     if (!api) return;
-    api.changeView(isMobile ? "listWeek" : "timeGridWeek");
+    const target = isMobile ? "listWeek" : "timeGridWeek";
+    if (api.view.type !== target) api.changeView(target);
   }, [isMobile]);
 
   const reloadSlots = useCallback(() => {
@@ -361,11 +380,18 @@ export function WeekCalendar() {
     );
   }, [reloadSlots]);
 
-  const loadRange = useCallback(async (start: Date, end: Date) => {
+  const loadRange = useCallback(async (start: Date, end: Date, force = false) => {
     const startDate = toISODate(start);
     const endDate = toISODate(new Date(end.getTime() - 1));
+    const rangeKey = `${startDate}|${endDate}`;
+    // datesSet fires repeatedly for the same range (mount, view rebuilds);
+    // skip the redundant fetch unless the caller explicitly wants a refresh.
+    if (!force && rangeKey === lastRangeRef.current) return;
+    lastRangeRef.current = rangeKey;
+    const seq = ++loadSeqRef.current;
     try {
       const data = await fetchCalendar(startDate, endDate);
+      if (seq !== loadSeqRef.current) return; // a newer load has superseded this one
       const mapped = [
         ...data.appointments.map(appointmentToEvent),
         ...data.recurring_classes.map(recurringClassOccurrenceToEvent),
@@ -373,7 +399,10 @@ export function WeekCalendar() {
       ];
       setEvents(mapped);
     } catch (err) {
-      console.error("Failed to load calendar range", err);
+      if (seq === loadSeqRef.current) {
+        lastRangeRef.current = "";
+        console.error("Failed to load calendar range", err);
+      }
     }
   }, []);
 
@@ -391,7 +420,7 @@ export function WeekCalendar() {
       await Promise.all([
         reloadSlots(),
         fetchWorkJourney().then(setWorkJourney),
-        api ? loadRange(api.view.activeStart, api.view.activeEnd) : Promise.resolve(),
+        api ? loadRange(api.view.activeStart, api.view.activeEnd, true) : Promise.resolve(),
       ]);
     } finally {
       setRefreshing(false);
@@ -449,6 +478,9 @@ export function WeekCalendar() {
     const kind = arg.event.extendedProps.kind;
     if (kind === "recurring_slot" && arg.event.extendedProps.slot.slot_kind === "class") return;
     if (kind !== "recurring_slot" && kind !== "work_journey_pause") return;
+    // The mobile list view renders each event's title itself; the injected
+    // label span is only needed for the desktop background blocks.
+    if (isMobile) return;
     const label = document.createElement("span");
     label.className = kind === "work_journey_pause"
       ? "agenda-pause-slot-label"
@@ -459,7 +491,7 @@ export function WeekCalendar() {
       "aria-label",
       kind === "work_journey_pause" ? "Pausa na jornada" : `Local reservado: ${arg.event.title}`
     );
-  }, []);
+  }, [isMobile]);
 
   const openBooking = useCallback(
     (start: Date, end: Date) => {
@@ -639,7 +671,7 @@ export function WeekCalendar() {
         ...events,
         ...slots
           .filter((slot) => slot.slot_kind === "availability")
-          .map(slotToEvent),
+          .map((slot) => slotToEvent(slot, isMobile)),
         ...workJourney
           .filter((interval) => interval.interval_type === "break")
           .map(pauseToEvent),
@@ -668,7 +700,7 @@ export function WeekCalendar() {
         );
       });
     },
-    [events, slots, workJourney, showWaitlist, waitlistEntries, showIncompleteGroups]
+    [events, slots, workJourney, showWaitlist, waitlistEntries, showIncompleteGroups, isMobile]
   );
   const now = new Date();
   const confirmationDateFrom = localDateInput(

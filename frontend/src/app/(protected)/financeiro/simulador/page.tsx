@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, FlaskConical } from "lucide-react";
-import {
-  FinancialPeriodControls,
-  type FinancialPeriod,
-} from "@/components/financial/financial-period-controls";
+import { ArrowLeft, FlaskConical, Info } from "lucide-react";
 import { FinancialSimulator } from "@/components/financial/financial-simulator";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   fetchFinancialConfiguration,
   fetchFinancialDashboard,
@@ -30,7 +31,7 @@ function dateInputValue(value: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function initialFilters() {
+function currentMonthRange() {
   const today = new Date();
   return {
     dateFrom: dateInputValue(
@@ -39,7 +40,6 @@ function initialFilters() {
     dateTo: dateInputValue(
       new Date(today.getFullYear(), today.getMonth() + 1, 0)
     ),
-    placeId: "",
   };
 }
 
@@ -51,7 +51,8 @@ export default function FinancialSimulatorPage() {
     useState<FinancialDashboardDetail | null>(null);
   const [scenarios, setScenarios] = useState<FinancialScenarioDetail[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [filters, setFilters] = useState(initialFilters);
+  const [{ dateFrom, dateTo }] = useState(currentMonthRange);
+  const [placeId, setPlaceId] = useState("");
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
@@ -63,13 +64,12 @@ export default function FinancialSimulatorPage() {
         return;
       }
       try {
-        const initial = initialFilters();
         const [configurationResult, dashboardResult, scenariosResult] =
           await Promise.all([
             fetchFinancialConfiguration(),
             fetchFinancialDashboard(
-              initial.dateFrom,
-              initial.dateTo,
+              dateFrom,
+              dateTo,
               [],
               "estimated_when_unconfigured"
             ),
@@ -92,23 +92,19 @@ export default function FinancialSimulatorPage() {
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [router, dateFrom, dateTo]);
 
-  async function applyFilters(nextFilters: {
-    dateFrom: string;
-    dateTo: string;
-    placeId: string;
-  }) {
+  async function applyLocation(nextPlaceId: string) {
     setRefreshing(true);
     setError(null);
     try {
       const result = await fetchFinancialDashboard(
-        nextFilters.dateFrom,
-        nextFilters.dateTo,
-        nextFilters.placeId ? [nextFilters.placeId] : [],
+        dateFrom,
+        dateTo,
+        nextPlaceId ? [nextPlaceId] : [],
         "estimated_when_unconfigured"
       );
-      setFilters(nextFilters);
+      setPlaceId(nextPlaceId);
       setDashboard(result);
     } catch (caught) {
       setError(
@@ -165,46 +161,15 @@ export default function FinancialSimulatorPage() {
       )}
 
       <div className="mx-auto w-full max-w-7xl space-y-5">
-        <FinancialPeriodControls
-          period={{ dateFrom: filters.dateFrom, dateTo: filters.dateTo }}
-          refreshing={refreshing}
-          onApply={(period: FinancialPeriod) =>
-            applyFilters({ ...period, placeId: filters.placeId })
-          }
-        />
-        <div className="flex flex-wrap items-end justify-between gap-3 rounded-xl border bg-muted/20 p-3 sm:p-4">
-          <div>
-            <p className="text-sm font-medium">Local do cenário</p>
-            <p className="text-xs text-muted-foreground">
-              Afeta apenas a simulação; sua agenda não será alterada.
-            </p>
-          </div>
-          <label className="grid gap-1 text-xs font-medium">
-            Local
-            <select
-              className="h-8 min-w-52 rounded-md border bg-background px-3 text-sm"
-              value={filters.placeId}
-              disabled={refreshing}
-              onChange={(event) =>
-                applyFilters({ ...filters, placeId: event.target.value })
-              }
-            >
-              <option value="">Todos os locais</option>
-              {configuration.places.map((place) => (
-                <option key={place.place_id ?? ""} value={place.place_id ?? ""}>
-                  {place.place_name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
         <FinancialSimulator
-          key={`${filters.dateFrom}-${filters.dateTo}-${filters.placeId}`}
+          key={`${dateFrom}-${dateTo}-${placeId}`}
           dashboard={dashboard}
           configuration={configuration}
-          dateFrom={filters.dateFrom}
-          dateTo={filters.dateTo}
-          placeId={filters.placeId}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          placeId={placeId}
+          onLocationChange={applyLocation}
+          locationBusy={refreshing}
           initialScenarios={scenarios}
         />
         <section className="space-y-3" aria-labelledby="simulator-potential">
@@ -226,6 +191,24 @@ export default function FinancialSimulatorPage() {
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {preset.participant_hours.toFixed(1)} horas-aluno
+                  </p>
+                  <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                    {preset.customer_estimate.maximum_customers > 0
+                      ? `${preset.customer_estimate.minimum_customers}–${preset.customer_estimate.maximum_customers} clientes`
+                      : "— clientes"}
+                    <Tooltip>
+                      <TooltipTrigger
+                        className="text-muted-foreground"
+                        aria-label="Como a base de clientes é estimada"
+                      >
+                        <Info className="size-3" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Estimativa por horas-aluno: cada cliente ocupa de 1 a 3
+                        horas por semana. Quem faz duas aulas semanais conta como
+                        um cliente que ocupa mais horas.
+                      </TooltipContent>
+                    </Tooltip>
                   </p>
                 </div>
               ))}

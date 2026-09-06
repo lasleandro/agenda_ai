@@ -37,11 +37,15 @@ export default function MockChatPage() {
         router.replace("/login");
         return;
       }
-      if (user.role === "platform_admin" && !user.professional_id) {
+      if (user.role !== "platform_admin") {
+        router.replace("/agenda");
+        return;
+      }
+      if (!user.professional_id) {
         router.replace("/admin/select-tenant");
         return;
       }
-      setAuthed(!!user);
+      setAuthed(true);
       setAuthChecked(true);
     });
     return () => {

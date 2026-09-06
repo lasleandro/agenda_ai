@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import { Check, Clock, ShieldCheck, Sparkles } from "lucide-react";
+import { Check, Clock, MessageSquare, ShieldCheck, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,9 +13,17 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
+  fetchAgentBindingState,
   fetchWhatsappConnectionRequestState,
+  requestAgentBindingChallenge,
+  revokeAgentBinding,
   submitWhatsappConnectionRequest,
 } from "@/lib/api";
+import type {
+  AgentBindingChallengeResponse,
+  AgentBindingState,
+} from "@/lib/types";
+import whatsappCircular from "../../../../../assets/whatsapp_circular.png";
 
 const WHATSAPP_BUSINESS_HELP_URL = "https://faq.whatsapp.com/1344487902959714";
 
@@ -50,9 +58,17 @@ export default function WhatsAppPage() {
   const [requested, setRequested] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [binding, setBinding] = useState<AgentBindingState | null>(null);
+  const [challenge, setChallenge] =
+    useState<AgentBindingChallengeResponse | null>(null);
+  const [bindingError, setBindingError] = useState<string | null>(null);
+
   useEffect(() => {
     fetchWhatsappConnectionRequestState()
       .then((state) => setRequested(state.requested))
+      .catch(() => {});
+    fetchAgentBindingState()
+      .then(setBinding)
       .catch(() => {});
   }, []);
 
@@ -65,14 +81,55 @@ export default function WhatsAppPage() {
     });
   };
 
+  const handleGenerateCode = () => {
+    setBindingError(null);
+    requestAgentBindingChallenge()
+      .then(setChallenge)
+      .catch(() =>
+        setBindingError(
+          "Não foi possível gerar o código agora. Tente novamente."
+        )
+      );
+  };
+
+  const handleCheckBinding = () => {
+    fetchAgentBindingState()
+      .then((state) => {
+        setBinding(state);
+        if (state.bound) setChallenge(null);
+      })
+      .catch(() => {});
+  };
+
+  const handleRevokeBinding = () => {
+    const previous = binding;
+    setBinding(
+      previous
+        ? { ...previous, bound: false, confirmed_at: null }
+        : previous
+    );
+    setChallenge(null);
+    revokeAgentBinding()
+      .then(setBinding)
+      .catch(() => {
+        setBinding(previous);
+        setBindingError("Não foi possível desativar agora. Tente novamente.");
+      });
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-auto p-4 md:p-6">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
         <header>
           <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/10">
-              <Image src="/landing/whatsapp.png" alt="" width={28} height={28} priority />
-            </div>
+            <Image
+              src={whatsappCircular}
+              alt=""
+              width={40}
+              height={40}
+              priority
+              className="size-10"
+            />
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-semibold tracking-tight">WhatsApp</h1>
@@ -141,6 +198,76 @@ export default function WhatsAppPage() {
             </div>
           </CardContent>
         </Card>
+
+        {binding?.platform_number && (
+          <Card size="sm">
+            <CardContent className="flex items-start gap-3">
+              <MessageSquare className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+              <div className="flex-1">
+                <p className="font-medium">Assistente por WhatsApp</p>
+                {binding.bound ? (
+                  <>
+                    <p className="mt-1 flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-300">
+                      <Check className="size-4 shrink-0" />
+                      Ativado neste número. Fale com o assistente enviando
+                      mensagens para {binding.platform_number}.
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-3"
+                      onClick={handleRevokeBinding}
+                    >
+                      Desativar
+                    </Button>
+                  </>
+                ) : challenge ? (
+                  <>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Do seu WhatsApp, envie o código abaixo para{" "}
+                      <span className="font-medium text-foreground">
+                        {challenge.platform_number}
+                      </span>
+                      . O código vale por alguns minutos.
+                    </p>
+                    <p className="mt-3 select-all rounded-md bg-muted px-3 py-2 text-lg font-semibold tracking-wider">
+                      {challenge.code}
+                    </p>
+                    <div className="mt-3 flex gap-2">
+                      <Button size="sm" onClick={handleCheckBinding}>
+                        Já enviei
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleGenerateCode}
+                      >
+                        Gerar outro código
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Ative o assistente para pedir sua agenda e agendar aulas
+                      conversando pelo WhatsApp.
+                    </p>
+                    <Button
+                      size="sm"
+                      className="mt-3"
+                      onClick={handleGenerateCode}
+                    >
+                      Ativar assistente
+                    </Button>
+                  </>
+                )}
+                {bindingError && (
+                  <p className="mt-2 text-sm text-destructive">{bindingError}</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <p className="text-center text-xs text-muted-foreground">
           Processo de conexão automática do WhatsApp será disponibilizado em breve!

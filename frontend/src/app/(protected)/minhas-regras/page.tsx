@@ -12,21 +12,18 @@ import {
 } from "lucide-react";
 import { CancellationNoticeSection } from "@/components/rules/cancellation-notice-section";
 import { WorkJourneySection } from "@/components/rules/work-journey-section";
-import { GlobalRatesSection } from "@/components/financial/global-rates-section";
 import { DefaultRatesCard } from "@/components/financial/place-rates-section";
 import { PlacesSection } from "@/components/ontology/places-section";
 import { PrimeTimeSection } from "@/components/financial/prime-time-section";
 import {
   fetchCancellationNoticeHours,
   fetchFinancialConfiguration,
-  fetchFinancialSettings,
   fetchWorkJourney,
 } from "@/lib/api";
 import { fetchSession, sessionHasFeature } from "@/lib/auth";
 import type {
   CancellationNoticeHoursDetail,
   FinancialConfigurationDetail,
-  FinancialSettingsDetail,
   PlaceRateMatrixDetail,
   WorkJourneyIntervalDetail,
 } from "@/lib/types";
@@ -56,8 +53,6 @@ export default function MinhasRegrasPage() {
     null
   );
   const [financialEnabled, setFinancialEnabled] = useState<boolean | null>(null);
-  const [financialSettings, setFinancialSettings] =
-    useState<FinancialSettingsDetail | null>(null);
   const [financialConfiguration, setFinancialConfiguration] =
     useState<FinancialConfigurationDetail | null>(null);
   const [activeTab, setActiveTab] = useState<ConfigurationTab>(
@@ -99,12 +94,8 @@ export default function MinhasRegrasPage() {
         setFinancialEnabled(enabled);
         if (!enabled) return;
 
-        const [settingsResult, configurationResult] = await Promise.all([
-          fetchFinancialSettings(),
-          fetchFinancialConfiguration(),
-        ]);
+        const configurationResult = await fetchFinancialConfiguration();
         if (!active) return;
-        setFinancialSettings(settingsResult);
         setFinancialConfiguration(configurationResult);
       } catch (caught) {
         if (active) {
@@ -207,17 +198,11 @@ export default function MinhasRegrasPage() {
         )}
         {activeTab === "global-rates" && (
           <FinancialTabState error={financialError}>
-            {financialSettings && financialConfiguration && (
-              <div className="flex flex-col gap-5">
-                <GlobalRatesSection
-                  settings={financialSettings}
-                  onSaved={setFinancialSettings}
-                />
-                <DefaultRatesCard
-                  matrix={financialConfiguration.default_rates}
-                  onSaved={updateDefaultRates}
-                />
-              </div>
+            {financialConfiguration && (
+              <DefaultRatesCard
+                matrix={financialConfiguration.default_rates}
+                onSaved={updateDefaultRates}
+              />
             )}
           </FinancialTabState>
         )}

@@ -9,13 +9,58 @@ from fastapi import HTTPException
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.api.dev_mock import _create_mock_customer, _get_mock_customer
+from app.api.dependencies import require_platform_admin, require_platform_admin_professional_id
+from app.api.dev_mock import _create_mock_customer, _get_mock_customer, router
 from app.database import SessionLocal
 from app.models import Contact, Conversation, Professional
 
 
 def _random_phone() -> str:
     return f"+55119{uuid.uuid4().int % 100_000_000:08d}"
+
+
+DEV_ENDPOINT_PATHS = {
+    "/api/dev/mock-conversation",
+    "/api/dev/mock-customers",
+    "/api/dev/mock-messages",
+    "/api/dev/mock-conversation/reset",
+    "/api/dev/conversations/{conversation_id}/process-now",
+}
+
+
+def test_dev_mock_endpoints_require_platform_admin_selected_tenant() -> None:
+    route_paths = {route.path for route in router.routes}
+    assert route_paths == DEV_ENDPOINT_PATHS
+    for route in router.routes:
+        dependency_calls = {dependency.call for dependency in route.dependant.dependencies}
+        assert require_platform_admin_professional_id in dependency_calls
+
+
+def test_platform_admin_selected_tenant_guard_professional_returns_forbidden() -> None:
+    professional = {"role": "professional", "professional_id": str(uuid.uuid4())}
+
+    with pytest.raises(HTTPException) as caught:
+        require_platform_admin_professional_id(require_platform_admin(professional))
+
+    assert caught.value.status_code == 403
+
+
+def test_platform_admin_selected_tenant_guard_unscoped_admin_returns_forbidden() -> None:
+    admin = {"role": "platform_admin", "professional_id": None}
+
+    with pytest.raises(HTTPException) as caught:
+        require_platform_admin_professional_id(require_platform_admin(admin))
+
+    assert caught.value.status_code == 403
+
+
+def test_platform_admin_selected_tenant_guard_scoped_admin_returns_tenant_id() -> None:
+    professional_id = uuid.uuid4()
+    admin = {"role": "platform_admin", "professional_id": str(professional_id)}
+
+    result = require_platform_admin_professional_id(require_platform_admin(admin))
+
+    assert result == professional_id
 
 
 def test_create_mock_customer_creates_selectable_tenant_conversation_with_unique_name() -> None:

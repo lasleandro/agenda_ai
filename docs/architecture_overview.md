@@ -134,7 +134,8 @@ agenda_ai/
       chat/              # WhatsApp pipeline
         pipeline.py      # Message processing pipeline (passive observer)
         ingestion.py     # Inbound message parsing + dedup, routes to agent_channel
-                          # first when the receiving number is Professional.agent_phone
+                          # first when addressed to PLATFORM_AGENT_WHATSAPP_NUMBER
+                          # (tenant resolved from the sender)
         agent_channel.py # Active agent over WhatsApp — deterministic fast-path
                           # commands, sim/nao confirmation, full orchestrator for
                           # everything else (AI Agent Operations Roadmap v0.1)

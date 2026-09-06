@@ -58,6 +58,8 @@ EVENT_TYPES = (
     "tenant.archived",
     "tenant.restored",
     "tenant.impersonated_while_inactive",
+    "agent.binding.confirmed",
+    "agent.binding.revoked",
 )
 
 

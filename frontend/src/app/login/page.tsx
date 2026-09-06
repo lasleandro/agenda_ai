@@ -3,13 +3,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Calendar, Eye, EyeOff, Lock, Mail } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { AccountRequestForm } from "@/components/auth/account-request-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BrandLogo } from "@/components/layout/brand-logo";
-import { login, requestPasswordReset } from "@/lib/auth";
+import { fetchSession, login, operationNeedsSetup, requestPasswordReset } from "@/lib/auth";
 
 type AuthView = "login" | "signup" | "forgot";
 
@@ -47,7 +47,8 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await login(email, password);
-      router.replace("/agenda");
+      const user = await fetchSession().catch(() => null);
+      router.replace(operationNeedsSetup(user) ? "/minhas-regras" : "/agenda");
     } catch {
       setError("Email ou senha inválidos");
     } finally {
@@ -91,7 +92,7 @@ export default function LoginPage() {
         />
 
         <Link href="/" className="relative flex items-center gap-2.5">
-          <BrandLogo size={36} priority />
+          <BrandLogo size={72} priority />
           <span className="text-[15px] font-semibold tracking-tight text-white">
             Tennis OS
           </span>
@@ -329,15 +330,11 @@ export default function LoginPage() {
             )}
           </div>
 
-          <div className="mt-6 flex items-center justify-center gap-4 text-xs text-muted-foreground">
+          <div className="mt-6 flex items-center justify-center text-xs text-muted-foreground">
             <Link href="/" className="flex items-center gap-1.5 hover:text-foreground">
               <ArrowLeft className="h-3.5 w-3.5" />
               Voltar ao site
             </Link>
-            <span className="flex items-center gap-1.5">
-              <Calendar className="h-3.5 w-3.5" />
-              Copiloto de agendamento via WhatsApp
-            </span>
           </div>
         </div>
       </div>

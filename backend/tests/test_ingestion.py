@@ -11,10 +11,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.database import SessionLocal
 from app.models import Contact, Conversation, Message, OperationalEvent, PendingProcessing, Professional
-from app.chat.ingestion import ingest_normalized_message
+from app.chat.ingestion import dispatch_whatsapp_event, ingest_normalized_message
 from app.integrations.whatsapp.contracts import WhatsAppPermanentError
 from app.chat.ycloud_provider import NormalizedMessage
 from app.services.contacts import create_contact
+
+PLATFORM_NUMBER = "+5511970000000"
 
 
 def _random_phone() -> str:
@@ -35,6 +37,22 @@ def _inbound(
         sent_at=datetime.now(timezone.utc),
         raw_payload={},
         contact_name=contact_name,
+    )
+
+
+def _outbound(
+    assistant_phone: str,
+    other_phone: str,
+) -> NormalizedMessage:
+    """An instructor-sent echo: from the business number, to some recipient."""
+    return NormalizedMessage(
+        provider_message_id=f"msg_{uuid.uuid4().hex}",
+        direction="outbound",
+        from_phone=assistant_phone,
+        to_phone=other_phone,
+        text="Combinado, quinta 18h",
+        sent_at=datetime.now(timezone.utc),
+        raw_payload={},
     )
 
 
@@ -237,4 +255,59 @@ def test_ingest_normalized_message_rejects_unrecognized_number() -> None:
         )
         assert message is None
     finally:
+        db.close()
+
+
+def test_dispatch_drops_echo_addressed_to_the_platform_agent_number(monkeypatch) -> None:
+    """An instructor->agent echo lands on the tenant number as an outbound
+    event. It must never create a customer Contact/Conversation/Message."""
+    monkeypatch.setenv("PLATFORM_AGENT_WHATSAPP_NUMBER", PLATFORM_NUMBER)
+    db = SessionLocal()
+    professional = Professional(name="Tenant Echo", assistant_phone=_random_phone())
+    db.add(professional)
+    db.commit()
+    try:
+        result = dispatch_whatsapp_event(
+            db, _outbound(professional.assistant_phone, PLATFORM_NUMBER), None
+        )
+        assert result is None
+        assert (
+            db.query(Contact).filter(Contact.phone == PLATFORM_NUMBER).count() == 0
+        )
+        assert (
+            db.query(Message)
+            .filter(Message.professional_id == professional.id)
+            .count()
+            == 0
+        )
+        assert (
+            db.query(Conversation)
+            .filter(Conversation.professional_id == professional.id)
+            .count()
+            == 0
+        )
+    finally:
+        _cleanup(db, [professional.id])
+        db.close()
+
+
+def test_dispatch_still_ingests_a_normal_instructor_echo(monkeypatch) -> None:
+    """The guard must not touch ordinary customer-facing traffic."""
+    monkeypatch.setenv("PLATFORM_AGENT_WHATSAPP_NUMBER", PLATFORM_NUMBER)
+    db = SessionLocal()
+    professional = Professional(name="Tenant NormalEcho", assistant_phone=_random_phone())
+    db.add(professional)
+    db.commit()
+    customer_phone = _random_phone()
+    try:
+        message = dispatch_whatsapp_event(
+            db, _outbound(professional.assistant_phone, customer_phone), None
+        )
+        assert message is not None
+        assert message.professional_id == professional.id
+        assert message.direction == "outbound"
+        contact = db.query(Contact).filter(Contact.phone == customer_phone).one()
+        assert contact.professional_id == professional.id
+    finally:
+        _cleanup(db, [professional.id])
         db.close()

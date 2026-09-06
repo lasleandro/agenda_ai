@@ -32,7 +32,6 @@ def _professional(name: str) -> Professional:
     return Professional(
         name=name,
         timezone="America/Sao_Paulo",
-        agent_phone=f"+55119888{token}",
         assistant_phone=f"+55119777{token}",
     )
 

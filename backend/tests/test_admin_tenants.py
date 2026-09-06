@@ -289,3 +289,91 @@ def test_create_tenant_is_forbidden_for_professional_user() -> None:
     finally:
         _cleanup(db, user_ids=[owner.id], professional_ids=[professional.id])
         db.close()
+
+
+def test_update_whatsapp_number_canonicalizes_and_clears_binding() -> None:
+    from datetime import datetime, timezone
+
+    db = SessionLocal()
+    admin = _admin(db)
+    professional = Professional(
+        name="WA tenant",
+        assistant_phone="+5511900000000",
+        agent_binding_confirmed_at=datetime.now(timezone.utc),
+    )
+    db.add(professional)
+    db.commit()
+    try:
+        response = client.put(
+            f"/api/admin/tenants/{professional.id}/whatsapp-number",
+            json={"whatsapp": "(11) 98765-4321"},
+            cookies=_cookies(admin),
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["assistant_phone"] == "+5511987654321"
+        assert body["agent_binding_confirmed_at"] is None
+
+        db.refresh(professional)
+        assert professional.assistant_phone == "+5511987654321"
+        assert professional.agent_binding_confirmed_at is None
+    finally:
+        _cleanup(db, user_ids=[admin.id], professional_ids=[professional.id])
+        db.close()
+
+
+def test_update_whatsapp_number_rejects_a_number_held_by_another_tenant() -> None:
+    db = SessionLocal()
+    admin = _admin(db)
+    other = Professional(name="Holder", assistant_phone="+5511987654321")
+    target = Professional(name="Target", assistant_phone="+5511900000000")
+    db.add_all([other, target])
+    db.commit()
+    try:
+        response = client.put(
+            f"/api/admin/tenants/{target.id}/whatsapp-number",
+            json={"whatsapp": "+5511987654321"},
+            cookies=_cookies(admin),
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "WHATSAPP_NUMBER_ALREADY_IN_USE"
+    finally:
+        _cleanup(db, user_ids=[admin.id], professional_ids=[other.id, target.id])
+        db.close()
+
+
+def test_update_whatsapp_number_rejects_invalid_input() -> None:
+    db = SessionLocal()
+    admin = _admin(db)
+    professional = Professional(name="WA bad", assistant_phone="+5511900000000")
+    db.add(professional)
+    db.commit()
+    try:
+        response = client.put(
+            f"/api/admin/tenants/{professional.id}/whatsapp-number",
+            json={"whatsapp": "not-a-number"},
+            cookies=_cookies(admin),
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "INVALID_PHONE"
+    finally:
+        _cleanup(db, user_ids=[admin.id], professional_ids=[professional.id])
+        db.close()
+
+
+def test_update_whatsapp_number_is_forbidden_for_professional_user() -> None:
+    db = SessionLocal()
+    professional = Professional(name="WA forbidden", assistant_phone="+5511900000000")
+    db.add(professional)
+    db.commit()
+    owner = _owner(db, professional.id)
+    try:
+        response = client.put(
+            f"/api/admin/tenants/{professional.id}/whatsapp-number",
+            json={"whatsapp": "+5511987654321"},
+            cookies=_cookies(owner),
+        )
+        assert response.status_code == 403
+    finally:
+        _cleanup(db, user_ids=[owner.id], professional_ids=[professional.id])
+        db.close()

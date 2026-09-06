@@ -280,6 +280,7 @@ class TenantSummary(BaseModel):
     name: str
     status: str
     assistant_phone: str | None
+    agent_binding_confirmed_at: datetime | None = None
     contact_count: int
     appointment_count: int
     commercial_financials_enabled: bool
@@ -290,6 +291,12 @@ class TenantSummary(BaseModel):
     scheduled_task: TenantScheduledTaskSummary
 
     model_config = {"from_attributes": True}
+
+
+class TenantWhatsappNumberUpdate(BaseModel):
+    """Platform-admin edit of a tenant's WhatsApp number."""
+
+    whatsapp: str
 
 
 class TenantListResponse(BaseModel):
@@ -365,6 +372,22 @@ class WhatsappConnectionRequestState(BaseModel):
     """Whether the tenant has already asked the admin to connect WhatsApp."""
 
     requested: bool
+
+
+class AgentBindingState(BaseModel):
+    """Whether the tenant's number is bound to the shared agent channel."""
+
+    bound: bool
+    confirmed_at: datetime | None
+    platform_number: str | None
+
+
+class AgentBindingChallengeResponse(BaseModel):
+    """A freshly issued binding code for the instructor to send by WhatsApp."""
+
+    code: str
+    platform_number: str
+    expires_at: datetime
 
 
 class AssistantSettingsUpdate(BaseModel):

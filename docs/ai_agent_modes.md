@@ -14,12 +14,15 @@ Instructor → talks TO the AI assistant → Assistant proposes, instructor conf
 ### Overview
 
 The instructor interacts directly with the AI assistant via the
-**web chat UI** (the floating panel — see `docs/pages/chat.md`) and via a
-**dedicated WhatsApp agent number** (`Professional.agent_phone`, distinct
-from the customer-facing `assistant_phone` — see `app/chat/agent_channel.py`).
-Both channels now share the same tool-calling orchestrator
-(`app/agent/orchestrator.py`) and the same propose → confirm → execute
-safety model — full tool parity, not a restricted subset.
+**web chat UI** (the floating panel — see `docs/pages/chat.md`) and via the
+**shared platform WhatsApp agent number** (`PLATFORM_AGENT_WHATSAPP_NUMBER`,
+one number in the same YCloud account for every tenant — see
+`app/chat/agent_channel.py` and `docs/whatsapp_ycloud_platform_flow.md`). The
+tenant is resolved from the *sender*: an inbound message to that number is
+attributed to the active tenant whose `assistant_phone` sent it. Both channels
+share the same tool-calling orchestrator (`app/agent/orchestrator.py`) and the
+same propose → confirm → execute safety model — full tool parity, not a
+restricted subset.
 
 WhatsApp-specific behavior:
 - Four deterministic commands (`hoje`, `amanha`, `esta semana`, `proxima
@@ -45,13 +48,18 @@ WhatsApp-specific behavior:
 - The actor for WhatsApp-originated mutations is resolved as the
   `professional`-role `User` row owning the tenant (no login session
   exists over WhatsApp) — see `agent_channel._resolve_actor_user`.
-- The agent number is private to the instructor: an inbound message is
-  only processed if its sender (`from_phone`) matches
-  `Professional.assistant_phone` — the instructor's own known number
-  (the same phone that runs the customer-facing side). Messages from any
-  other sender are silently dropped (no reply), so an unauthorized sender
-  can't even confirm the number is live. Fails closed if
-  `assistant_phone` isn't configured.
+- The sender is the tenant key and the first authentication factor:
+  `get_professional_by_phone(from_phone)` matches an **active** tenant's
+  `assistant_phone`. A message to the platform number from any number that is
+  no active tenant's `assistant_phone` is claimed and silently dropped (no
+  reply), so it can never reach the customer-facing pipeline and an outsider
+  can't confirm the number is live.
+- Second factor — binding (Shared Platform AI Agent Number Roadmap v0.1,
+  Phase F): normal handling is gated on `Professional.agent_binding_confirmed_at`.
+  Until the instructor confirms a one-time code (shown in their authenticated
+  web session, sent to the platform number from their own WhatsApp), the only
+  message the channel acts on is that code; everything else from an unbound
+  tenant is dropped. Binding is cleared on revoke or an admin number change.
 
 Don't confuse either of these with the *passive observer* (Mode 2 below),
 which runs over the customer-facing number and never talks back or

@@ -6,12 +6,14 @@ import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.agent import candidates
 from app.agent.orchestrator import AgentResponse, PendingCandidate
 from app.chat import agent_channel
-from app.chat.ingestion import ingest_normalized_message
+from app.chat.ingestion import dispatch_whatsapp_event
 from app.chat.ycloud_provider import NormalizedMessage
 from app.core.security import hash_password
 from app.database import SessionLocal
@@ -31,6 +33,14 @@ from app.models import (
 )
 from app.services.scheduling import TIMEZONE
 
+PLATFORM_NUMBER = "+5511970000000"
+
+
+@pytest.fixture(autouse=True)
+def _platform_agent_number(monkeypatch):
+    """Every agent-channel test runs with the shared platform number set."""
+    monkeypatch.setenv("PLATFORM_AGENT_WHATSAPP_NUMBER", PLATFORM_NUMBER)
+
 
 def _random_phone() -> str:
     return f"+55119{uuid.uuid4().int % 100_000_000:08d}"
@@ -44,7 +54,9 @@ def _make_professional(db, **overrides) -> Professional:
     fields = {
         "name": "Tenant Agent Channel",
         "assistant_phone": _random_phone(),
-        "agent_phone": _random_phone(),
+        # Most agent-channel tests assume an already-bound channel; the
+        # binding-gate tests pass agent_binding_confirmed_at=None explicitly.
+        "agent_binding_confirmed_at": datetime.now(timezone.utc),
         **overrides,
     }
     professional = Professional(**fields)
@@ -77,16 +89,21 @@ def _make_contact(db, professional_id, name: str = "Aluno") -> Contact:
     return contact
 
 
-def _inbound_to_agent(agent_phone: str, instructor_phone: str, text: str) -> NormalizedMessage:
+def _inbound_msg(to_phone: str, from_phone: str, text: str) -> NormalizedMessage:
     return NormalizedMessage(
         provider_message_id=f"msg_{uuid.uuid4().hex}",
         direction="inbound",
-        from_phone=instructor_phone,
-        to_phone=agent_phone,
+        from_phone=from_phone,
+        to_phone=to_phone,
         text=text,
         sent_at=datetime.now(timezone.utc),
         raw_payload={},
     )
+
+
+def _inbound_to_agent(instructor_phone: str, text: str) -> NormalizedMessage:
+    """A message the instructor sends to the shared platform agent number."""
+    return _inbound_msg(PLATFORM_NUMBER, instructor_phone, text)
 
 
 def _cleanup(db, *, professionals: list[Professional]) -> None:
@@ -145,7 +162,7 @@ def test_normalize_command_strips_accents_case_and_padding() -> None:
 
 
 def test_try_handle_sends_reply_and_does_not_touch_customer_pipeline(monkeypatch) -> None:
-    """A message addressed to the agent number must never create a Contact/
+    """A message to the platform agent number must never create a Contact/
     Conversation/Message row — that's the customer-facing pipeline's job."""
     db = SessionLocal()
     professional = _make_professional(db)
@@ -162,11 +179,11 @@ def test_try_handle_sends_reply_and_does_not_touch_customer_pipeline(monkeypatch
     try:
         instructor_phone = professional.assistant_phone
         handled = agent_channel.try_handle(
-            db, _inbound_to_agent(professional.agent_phone, instructor_phone, "hoje")
+            db, _inbound_to_agent(instructor_phone, "hoje")
         )
 
         assert handled is True
-        assert sent["from_phone"] == professional.agent_phone
+        assert sent["from_phone"] == PLATFORM_NUMBER
         assert sent["to_phone"] == instructor_phone
         assert "Aulas de hoje" in sent["body"]
 
@@ -180,10 +197,10 @@ def test_try_handle_sends_reply_and_does_not_touch_customer_pipeline(monkeypatch
         db.close()
 
 
-def test_try_handle_drops_messages_from_unauthorized_senders(monkeypatch) -> None:
-    """Only the instructor's own number (assistant_phone) may talk to the
-    agent channel — anyone else messaging the agent number must be silently
-    dropped, not treated as the instructor."""
+def test_try_handle_drops_messages_from_unrecognized_senders(monkeypatch) -> None:
+    """The tenant is resolved from the sender. A message to the platform
+    number from a phone that is no active tenant's assistant_phone is claimed
+    (return True) and silently dropped — never treated as some instructor."""
     db = SessionLocal()
     professional = _make_professional(db)
 
@@ -194,7 +211,7 @@ def test_try_handle_drops_messages_from_unauthorized_senders(monkeypatch) -> Non
 
     try:
         handled = agent_channel.try_handle(
-            db, _inbound_to_agent(professional.agent_phone, _random_phone(), "hoje")
+            db, _inbound_to_agent(_random_phone(), "hoje")
         )
         assert handled is True
         assert sent == {}
@@ -203,9 +220,9 @@ def test_try_handle_drops_messages_from_unauthorized_senders(monkeypatch) -> Non
         db.close()
 
 
-def test_try_handle_drops_messages_when_no_assistant_phone_configured(monkeypatch) -> None:
-    """Fail closed: an agent number with no known instructor phone on file
-    must reject every sender, not accept by default."""
+def test_try_handle_does_not_match_a_tenant_with_null_assistant_phone(monkeypatch) -> None:
+    """Fail closed: a tenant with no assistant_phone on file cannot be
+    resolved as the sender, so it can never reach the agent channel."""
     db = SessionLocal()
     professional = _make_professional(db, assistant_phone=None)
 
@@ -215,38 +232,98 @@ def test_try_handle_drops_messages_when_no_assistant_phone_configured(monkeypatc
     )
 
     try:
-        agent_channel.try_handle(
-            db, _inbound_to_agent(professional.agent_phone, _random_phone(), "hoje")
+        handled = agent_channel.try_handle(
+            db, _inbound_to_agent(_random_phone(), "hoje")
         )
+        assert handled is True
         assert sent == {}
     finally:
         _cleanup(db, professionals=[professional])
         db.close()
 
 
-def test_try_handle_returns_false_for_unrecognized_number() -> None:
-    """A number with no provisioned agent_phone must fall through to the
-    caller's normal (customer-facing) routing, not be silently swallowed."""
+def test_try_handle_returns_false_when_not_addressed_to_the_platform_number() -> None:
+    """A message to any number other than the platform agent number must fall
+    through to the caller's normal (customer-facing) routing."""
     db = SessionLocal()
     try:
         handled = agent_channel.try_handle(
-            db, _inbound_to_agent(_random_phone(), _random_phone(), "hoje")
+            db, _inbound_msg(_random_phone(), _random_phone(), "hoje")
         )
         assert handled is False
     finally:
         db.close()
 
 
-def test_ingest_event_routes_agent_number_away_from_passive_pipeline(monkeypatch) -> None:
+def test_dispatch_claims_agent_number_away_from_passive_pipeline(monkeypatch) -> None:
+    """An inbound message to the platform number from a known instructor is
+    claimed by the agent channel: dispatch returns None and nothing is
+    persisted to the customer-facing tables."""
     db = SessionLocal()
     professional = _make_professional(db)
     monkeypatch.setattr(agent_channel, "send_text_message", lambda **kwargs: None)
 
     try:
-        message = ingest_normalized_message(
-            db, _inbound_to_agent(professional.agent_phone, _random_phone(), "hoje")
+        result = dispatch_whatsapp_event(
+            db, _inbound_to_agent(professional.assistant_phone, "hoje"), None
         )
-        assert message is None
+        assert result is None
+        assert (
+            db.query(Contact).filter(Contact.professional_id == professional.id).count()
+            == 0
+        )
+        assert (
+            db.query(Conversation)
+            .filter(Conversation.professional_id == professional.id)
+            .count()
+            == 0
+        )
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_unbound_tenant_message_is_claimed_and_dropped_without_reply(monkeypatch) -> None:
+    """Until the channel is bound, the only message it acts on is the code."""
+    db = SessionLocal()
+    professional = _make_professional(db, agent_binding_confirmed_at=None)
+    _make_operator_user(db, professional.id)
+    sent: dict = {}
+    monkeypatch.setattr(
+        agent_channel, "send_text_message", lambda **kwargs: sent.update(kwargs)
+    )
+    try:
+        handled = agent_channel.try_handle(
+            db, _inbound_to_agent(professional.assistant_phone, "hoje")
+        )
+        assert handled is True
+        assert sent == {}
+    finally:
+        _cleanup(db, professionals=[professional])
+        db.close()
+
+
+def test_unbound_tenant_binds_when_it_sends_the_challenge_code(monkeypatch) -> None:
+    from app.services import agent_binding
+
+    db = SessionLocal()
+    professional = _make_professional(db, agent_binding_confirmed_at=None)
+    _make_operator_user(db, professional.id)
+    sent: dict = {}
+    monkeypatch.setattr(
+        agent_channel,
+        "send_text_message",
+        lambda from_phone, to_phone, body: sent.update(body=body),
+    )
+    try:
+        issued = agent_binding.issue_challenge(db, professional.id)
+        handled = agent_channel.try_handle(
+            db, _inbound_to_agent(professional.assistant_phone, issued.code)
+        )
+        assert handled is True
+        assert "ativado" in sent["body"].lower()
+        db.refresh(professional)
+        assert professional.agent_binding_confirmed_at is not None
     finally:
         _cleanup(db, professionals=[professional])
         db.close()
@@ -277,7 +354,7 @@ def test_handle_hoje_lists_todays_appointments(monkeypatch) -> None:
 
     try:
         handled = agent_channel.try_handle(
-            db, _inbound_to_agent(professional.agent_phone, professional.assistant_phone, "hoje")
+            db, _inbound_to_agent(professional.assistant_phone, "hoje")
         )
         assert handled is True
         assert "09:00" in sent["body"]
@@ -314,7 +391,7 @@ def test_unrecognized_text_falls_through_to_the_orchestrator(monkeypatch) -> Non
         handled = agent_channel.try_handle(
             db,
             _inbound_to_agent(
-                professional.agent_phone, professional.assistant_phone, "quantas aulas tenho amanha?"
+                professional.assistant_phone, "quantas aulas tenho amanha?"
             ),
         )
         assert handled is True
@@ -356,7 +433,7 @@ def test_pending_candidate_appends_confirmation_prompt(monkeypatch) -> None:
         agent_channel.try_handle(
             db,
             _inbound_to_agent(
-                professional.agent_phone, professional.assistant_phone, "cancela a aula do Joao amanha"
+                professional.assistant_phone, "cancela a aula do Joao amanha"
             ),
         )
         assert "Vou cancelar essa aula." in sent["body"]
@@ -425,7 +502,7 @@ def test_pending_candidate_prompt_lists_every_proposal_from_the_same_turn(monkey
         agent_channel.try_handle(
             db,
             _inbound_to_agent(
-                professional.agent_phone, professional.assistant_phone, "cancela as duas aulas de hoje"
+                professional.assistant_phone, "cancela as duas aulas de hoje"
             ),
         )
         assert "Cancelar aula das 9h de Joao." in sent["body"]
@@ -594,7 +671,7 @@ def test_sim_confirms_the_latest_pending_whatsapp_candidate(monkeypatch) -> None
 
     try:
         agent_channel.try_handle(
-            db, _inbound_to_agent(professional.agent_phone, professional.assistant_phone, "sim")
+            db, _inbound_to_agent(professional.assistant_phone, "sim")
         )
         assert executed["candidate_id"] == candidate.id
         assert sent["body"] == "Aula cancelada."
@@ -626,7 +703,7 @@ def test_nao_rejects_the_latest_pending_whatsapp_candidate(monkeypatch) -> None:
 
     try:
         agent_channel.try_handle(
-            db, _inbound_to_agent(professional.agent_phone, professional.assistant_phone, "nao")
+            db, _inbound_to_agent(professional.assistant_phone, "nao")
         )
         db.refresh(candidate)
         assert candidate.status == "rejected"
@@ -669,10 +746,10 @@ def test_agent_turn_persists_and_replays_conversation_history(monkeypatch) -> No
 
     try:
         agent_channel.try_handle(
-            db, _inbound_to_agent(professional.agent_phone, instructor_phone, "quem tenho amanha?")
+            db, _inbound_to_agent(instructor_phone, "quem tenho amanha?")
         )
         agent_channel.try_handle(
-            db, _inbound_to_agent(professional.agent_phone, instructor_phone, "e depois de amanha?")
+            db, _inbound_to_agent(instructor_phone, "e depois de amanha?")
         )
 
         assert captured_messages[0] == [
@@ -744,7 +821,7 @@ def test_deterministic_command_does_not_pollute_agent_history(monkeypatch) -> No
 
     try:
         agent_channel.try_handle(
-            db, _inbound_to_agent(professional.agent_phone, professional.assistant_phone, "hoje")
+            db, _inbound_to_agent(professional.assistant_phone, "hoje")
         )
         assert (
             db.query(AgentChannelMessage)

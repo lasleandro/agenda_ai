@@ -26,6 +26,7 @@ from app.models.auth_action_token import ACCOUNT_ACTIVATION, PASSWORD_RESET
 from app.models.professional import TENANT_STATUS_ACTIVE, TENANT_STATUS_ARCHIVED
 from app.services.auth_emails import enqueue_auth_email
 from app.services.auth_security import rate_limit_exceeded, record_auth_event
+from app.services.operation_setup import operation_is_configured
 from app.services.operational_events import record_event
 from app.services.auth_tokens import ActionTokenError, consume_action_token
 from app.services.email_identity import InvalidEmailError, normalize_email
@@ -317,13 +318,20 @@ def me(
         issue_csrf_cookie(response)
     professional_name = None
     features: list[str] = []
+    extra: dict = {}
     if user["professional_id"] is not None:
         professional_id = uuid.UUID(user["professional_id"])
         professional = db.query(Professional).filter(Professional.id == professional_id).first()
         professional_name = professional.name if professional else None
         if is_tenant_feature_enabled(db, professional_id, COMMERCIAL_FINANCIALS):
             features.append(COMMERCIAL_FINANCIALS)
-    return {**user, "professional_name": professional_name, "features": features}
+        extra["operation_configured"] = operation_is_configured(db, professional_id)
+    return {
+        **user,
+        "professional_name": professional_name,
+        "features": features,
+        **extra,
+    }
 
 
 @router.post("/impersonate")

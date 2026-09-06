@@ -6,7 +6,7 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import type { EventClickArg, EventInput } from "@fullcalendar/core";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, ChevronDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +20,8 @@ import {
 import { formatBrlFromCents } from "@/lib/financial-utils";
 import { fetchCalendar, fetchRecurringSlots } from "@/lib/api";
 import { STATUS_COLORS } from "@/lib/calendar-utils";
+import { cn } from "@/lib/utils";
+import { useIsMobile } from "@/lib/use-is-mobile";
 import type {
   FinancialScenarioScheduleEvent,
   RecurringSlot,
@@ -98,6 +100,11 @@ export function SimulatedAgenda({
   const [realEvents, setRealEvents] = useState<EventInput[]>([]);
   const [realLoading, setRealLoading] = useState(false);
   const [realError, setRealError] = useState<string | null>(null);
+  const isMobile = useIsMobile();
+  const [collapsedOverride, setCollapsedOverride] = useState<boolean | null>(
+    null
+  );
+  const collapsed = collapsedOverride ?? isMobile;
   const calendarEvents: EventInput[] = events.map((event) => ({
     id: event.id,
     title: `Simulado · ${formatClassLabel(event.participant_count)} · ${event.place_name}`,
@@ -173,18 +180,33 @@ export function SimulatedAgenda({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <CalendarDays className="size-4 text-primary" />
-          Agenda
-        </CardTitle>
-        <CardDescription>
-          {agendaView === "simulated"
-            ? estimated
-              ? "A estimativa usa apenas os horários e locais que você já configurou."
-              : "Alocação ilustrativa da capacidade do cenário. Não altera a agenda real."
-            : "Agenda atual do período selecionado, em modo somente leitura."}
-        </CardDescription>
+        <button
+          type="button"
+          onClick={() => setCollapsedOverride(!collapsed)}
+          className="flex w-full items-start justify-between gap-2 text-left sm:pointer-events-none"
+        >
+          <div className="space-y-1.5">
+            <CardTitle className="flex items-center gap-2">
+              <CalendarDays className="size-4 text-primary" />
+              Agenda
+            </CardTitle>
+            <CardDescription>
+              {agendaView === "simulated"
+                ? estimated
+                  ? "A estimativa usa apenas os horários e locais que você já configurou."
+                  : "Alocação ilustrativa da capacidade do cenário. Não altera a agenda real."
+                : "Agenda atual do período selecionado, em modo somente leitura."}
+            </CardDescription>
+          </div>
+          <ChevronDown
+            className={cn(
+              "mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform sm:hidden",
+              !collapsed && "rotate-180"
+            )}
+          />
+        </button>
       </CardHeader>
+      {!collapsed && (
       <CardContent className="space-y-4">
         <div className="flex w-fit gap-1 rounded-lg border bg-muted/30 p-1">
           <Button
@@ -240,6 +262,7 @@ export function SimulatedAgenda({
           />
         )}
       </CardContent>
+      )}
 
       <Dialog
         open={selectedEvent !== null}

@@ -418,6 +418,8 @@ def _potential_metric(
 def _capacity_presets(
     context: AnalyticsContext,
     observed_mix: list[ParticipantMixItem],
+    date_from: date,
+    date_to: date,
 ) -> list[CapacityPresetDetail]:
     presets = (
         (
@@ -440,6 +442,11 @@ def _capacity_presets(
             occupancy_pct=100,
             participant_hours=metric.participant_hours,
             projected_revenue_cents=metric.projected_revenue_cents,
+            customer_estimate=estimate_customer_range(
+                metric.participant_hours,
+                date_from,
+                date_to,
+            ),
         )
         for key, label, mix in presets
         for metric in [
@@ -663,7 +670,9 @@ def build_financial_dashboard(
             _finalize_bucket(key, CATEGORY_LABELS[key], bucket)
             for key, bucket in by_category.items()
         ],
-        capacity_presets=_capacity_presets(context, observed_mix),
+        capacity_presets=_capacity_presets(
+            context, observed_mix, date_from, date_to
+        ),
         capacity_sources=_capacity_sources(context, observed_mix),
     )
 

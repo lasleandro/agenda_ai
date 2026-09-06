@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
+  ChevronDown,
   CircleDollarSign,
   Copy,
   Pencil,
@@ -54,6 +55,7 @@ export default function PlaceDetailPage() {
   const [editingSlot, setEditingSlot] = useState<RecurringSlot | null>(null);
   const [duplicateSlot, setDuplicateSlot] = useState<RecurringSlot | null>(null);
   const [financialEnabled, setFinancialEnabled] = useState(false);
+  const [ratesOpen, setRatesOpen] = useState(false);
   const [placeRates, setPlaceRates] =
     useState<PlaceRateMatrixDetail | null>(null);
   const [financialError, setFinancialError] = useState<string | null>(null);
@@ -70,6 +72,7 @@ export default function PlaceDetailPage() {
     fetchSession().then(async (user) => {
       if (!active || !sessionHasFeature(user, "commercial_financials")) return;
       setFinancialEnabled(true);
+      setRatesOpen(window.innerWidth >= 640);
       try {
         const configuration = await fetchFinancialConfiguration();
         if (!active) return;
@@ -80,6 +83,7 @@ export default function PlaceDetailPage() {
         );
       } catch (caught) {
         if (!active) return;
+        setRatesOpen(true);
         setFinancialError(
           caught instanceof Error
             ? caught.message
@@ -107,7 +111,7 @@ export default function PlaceDetailPage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 p-4 md:p-6 gap-4 overflow-auto">
+    <div className="flex-1 min-h-0 space-y-4 overflow-y-auto p-4 md:p-6">
       <button
         onClick={() => router.push("/minhas-regras?tab=places")}
         className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground w-fit"
@@ -142,38 +146,54 @@ export default function PlaceDetailPage() {
       {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
 
       {financialEnabled && (
-        <Card className="mt-2">
+        <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CircleDollarSign className="size-4 text-primary" />
-              Valores R$/hora
-            </CardTitle>
-            <CardDescription>
-              Defina valores por participante para horários regulares e nobres.
-              Campos vazios herdam os valores padrão definidos em Minha Operação.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {financialError && (
-              <p className="text-sm text-destructive">{financialError}</p>
-            )}
-            {!financialError && !placeRates && (
-              <p className="text-sm text-muted-foreground">
-                Carregando valores do local...
-              </p>
-            )}
-            {placeRates && (
-              <PlaceRateEditor
-                key={placeRates.place_id}
-                matrix={placeRates}
-                onSaved={setPlaceRates}
+            <button
+              type="button"
+              onClick={() => setRatesOpen((open) => !open)}
+              aria-expanded={ratesOpen}
+              className="flex w-full items-center justify-between gap-2 text-left"
+            >
+              <CardTitle className="flex items-center gap-2">
+                <CircleDollarSign className="size-4 text-primary" />
+                Valores R$/hora
+              </CardTitle>
+              <ChevronDown
+                className={`size-4 shrink-0 text-muted-foreground transition-transform ${
+                  ratesOpen ? "rotate-180" : ""
+                }`}
               />
+            </button>
+            {ratesOpen && (
+              <CardDescription>
+                Defina valores por participante para horários regulares e nobres.
+                Campos vazios herdam os valores padrão definidos em Minha Operação.
+              </CardDescription>
             )}
-          </CardContent>
+          </CardHeader>
+          {ratesOpen && (
+            <CardContent className="space-y-4">
+              {financialError && (
+                <p className="text-sm text-destructive">{financialError}</p>
+              )}
+              {!financialError && !placeRates && (
+                <p className="text-sm text-muted-foreground">
+                  Carregando valores do local...
+                </p>
+              )}
+              {placeRates && (
+                <PlaceRateEditor
+                  key={placeRates.place_id}
+                  matrix={placeRates}
+                  onSaved={setPlaceRates}
+                />
+              )}
+            </CardContent>
+          )}
         </Card>
       )}
 
-      <div className="flex items-center justify-between mt-2">
+      <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-foreground">Permanência neste local</h2>
         <Button
           size="sm"

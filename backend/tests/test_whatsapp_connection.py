@@ -4,6 +4,8 @@ from pathlib import Path
 import sys
 import uuid
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
@@ -12,9 +14,24 @@ from app.core.security import hash_password
 from app.database import SessionLocal
 from app.integrations.email.contracts import EmailRetryableError
 from app.main import app
-from app.models import Professional, TenantFeature, TenantFeatureAuditLog, User
+from app.models import (
+    AgentBindingChallenge,
+    OperationalEvent,
+    Professional,
+    TenantFeature,
+    TenantFeatureAuditLog,
+    User,
+)
+from app.services import agent_binding
 
 client = TestClient(app)
+
+PLATFORM_NUMBER = "+5511970000000"
+
+
+@pytest.fixture(autouse=True)
+def _platform_agent_number(monkeypatch):
+    monkeypatch.setenv("PLATFORM_AGENT_WHATSAPP_NUMBER", PLATFORM_NUMBER)
 
 
 def _random_email() -> str:
@@ -49,6 +66,13 @@ def _login(user: User, password: str = "correct-password"):
 def _cleanup(db, *, users=(), professionals=()):
     user_ids = [u.id for u in users]
     professional_ids = [p.id for p in professionals]
+    if professional_ids:
+        db.query(AgentBindingChallenge).filter(
+            AgentBindingChallenge.professional_id.in_(professional_ids)
+        ).delete(synchronize_session=False)
+        db.query(OperationalEvent).filter(
+            OperationalEvent.professional_id.in_(professional_ids)
+        ).delete(synchronize_session=False)
     if user_ids:
         db.query(TenantFeatureAuditLog).filter(
             TenantFeatureAuditLog.admin_user_id.in_(user_ids)
@@ -139,6 +163,62 @@ def test_repeated_request_is_idempotent() -> None:
     finally:
         _cleanup(db, users=[user], professionals=[professional])
         db.close()
+
+
+def test_agent_binding_challenge_and_state_roundtrip() -> None:
+    db = SessionLocal()
+    professional = _create_professional(db)
+    user = _create_user(db, professional.id)
+    try:
+        cookies = _login(user)
+
+        state = client.get("/api/whatsapp/agent-binding", cookies=cookies)
+        assert state.status_code == 200
+        assert state.json()["bound"] is False
+        assert state.json()["platform_number"] == PLATFORM_NUMBER
+
+        issued = client.post(
+            "/api/whatsapp/agent-binding/challenge", cookies=cookies
+        )
+        assert issued.status_code == 200
+        code = issued.json()["code"]
+        assert code.startswith("ATIVAR-")
+
+        # simulate the instructor sending the code from WhatsApp
+        db.refresh(professional)
+        assert agent_binding.confirm_from_message(db, professional, user.id, code)
+
+        state = client.get("/api/whatsapp/agent-binding", cookies=cookies)
+        assert state.json()["bound"] is True
+        assert state.json()["confirmed_at"] is not None
+
+        revoked = client.delete("/api/whatsapp/agent-binding", cookies=cookies)
+        assert revoked.status_code == 200
+        assert revoked.json()["bound"] is False
+    finally:
+        _cleanup(db, users=[user], professionals=[professional])
+        db.close()
+
+
+def test_agent_binding_challenge_503_when_platform_number_unset(monkeypatch) -> None:
+    monkeypatch.delenv("PLATFORM_AGENT_WHATSAPP_NUMBER", raising=False)
+    db = SessionLocal()
+    professional = _create_professional(db)
+    user = _create_user(db, professional.id)
+    try:
+        cookies = _login(user)
+        res = client.post("/api/whatsapp/agent-binding/challenge", cookies=cookies)
+        assert res.status_code == 503
+        assert res.json()["error"]["code"] == "AGENT_BINDING_UNAVAILABLE"
+    finally:
+        _cleanup(db, users=[user], professionals=[professional])
+        db.close()
+
+
+def test_agent_binding_requires_authentication() -> None:
+    assert client.get("/api/whatsapp/agent-binding").status_code == 401
+    assert client.post("/api/whatsapp/agent-binding/challenge").status_code == 401
+    assert client.delete("/api/whatsapp/agent-binding").status_code == 401
 
 
 def test_failed_notification_does_not_persist_flag(monkeypatch) -> None:

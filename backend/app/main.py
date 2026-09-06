@@ -145,7 +145,7 @@ app.include_router(waitlist_router)
 app.include_router(whatsapp_router)
 app.include_router(whatsapp_connection_router)
 
-if os.getenv("DEBUG", "").lower() == "true":
+if os.getenv("DEBUG", "").lower() == "true" or os.getenv("ENABLE_MOCK_CHAT", "").lower() == "true":
     from app.api.dev_mock import router as dev_mock_router
 
     app.include_router(dev_mock_router)

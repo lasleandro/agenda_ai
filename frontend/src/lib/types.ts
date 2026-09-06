@@ -253,6 +253,7 @@ export interface TenantSummary {
   name: string;
   status: string;
   assistant_phone: string | null;
+  agent_binding_confirmed_at: string | null;
   contact_count: number;
   appointment_count: number;
   commercial_financials_enabled: boolean;
@@ -373,6 +374,20 @@ export interface TenantFeatureState {
 /** Mirror of the FastAPI WhatsappConnectionRequestState schema. */
 export interface WhatsappConnectionRequestState {
   requested: boolean;
+}
+
+/** Mirror of the FastAPI AgentBindingState schema. */
+export interface AgentBindingState {
+  bound: boolean;
+  confirmed_at: string | null;
+  platform_number: string | null;
+}
+
+/** Mirror of the FastAPI AgentBindingChallengeResponse schema. */
+export interface AgentBindingChallengeResponse {
+  code: string;
+  platform_number: string;
+  expires_at: string;
 }
 
 /** Mirror of the FastAPI AssistantSettingsState schema. */
@@ -500,11 +515,6 @@ export interface GroupFinancialDetail extends EffectiveCommercialValues {
   participants: GroupParticipantFinancialDetail[];
 }
 
-export interface FinancialSettingsDetail {
-  default_commercial_status: CommercialStatus;
-  currency: string;
-}
-
 export interface PrimeTimeWindowInput {
   days_of_week: number[];
   start_time: string;
@@ -613,6 +623,7 @@ export interface CapacityPresetDetail {
   occupancy_pct: number;
   participant_hours: number;
   projected_revenue_cents: number;
+  customer_estimate: FinancialScenarioCustomerEstimate;
 }
 
 export interface CapacitySourceDetail {

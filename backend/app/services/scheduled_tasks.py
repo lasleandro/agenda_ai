@@ -14,6 +14,7 @@ from app.integrations.whatsapp.contracts import (
     WhatsAppRetryableError,
     WhatsAppTemplateRequest,
 )
+from app.integrations.whatsapp.platform_number import platform_agent_number
 from app.integrations.whatsapp.provider import WhatsAppProvider
 from app.models import Professional, ScheduledTask, ScheduledTaskRun
 from app.models.scheduled_task import DAILY_AGENDA_SUMMARY
@@ -34,8 +35,8 @@ def task_readiness(professional: Professional) -> list[str]:
     issues = []
     if professional.status != "active":
         issues.append("Tenant is inactive")
-    if not professional.agent_phone:
-        issues.append("Agent WhatsApp number is not configured")
+    if platform_agent_number() is None:
+        issues.append("Platform agent WhatsApp number is not configured")
     if not professional.assistant_phone:
         issues.append("Instructor WhatsApp number is not configured")
     try:
@@ -265,7 +266,7 @@ def _deliver_run(
 
         result = provider.send_template(
             WhatsAppTemplateRequest(
-                from_phone=professional.agent_phone or "",
+                from_phone=platform_agent_number() or "",
                 to_phone=professional.assistant_phone or "",
                 template_key="daily_agenda",
                 language=os.getenv("YCLOUD_DAILY_AGENDA_TEMPLATE_LANGUAGE", "pt_BR"),

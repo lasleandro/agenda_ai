@@ -99,3 +99,23 @@ financial-definition tabs. Each tab retains its own save button. Work-journey
 days allow adding and removing pause rows; client-side validation prevents a
 pause outside the daily journey or overlapping pauses before the backend
 repeats the same enforcement.
+
+---
+
+## First-session setup
+
+`GET /api/auth/me` returns `operation_configured` for a tenant-scoped session.
+It is `true` once the tenant has at least one Local and at least one `work`
+interval in the weekly journey, and absent for platform-admin sessions with no
+tenant selected. While it is `false`:
+
+- **Minha Operação** is hoisted to the first position in the sidebar and
+  carries a **"Comece aqui"** badge.
+- Logging in lands on `/minhas-regras` instead of `/agenda`, and an `/agenda`
+  landing (bookmark, reload, direct URL) is redirected once to `/minhas-regras`.
+- `/agenda` shows a setup prompt instead of the week grid; navigation is never
+  blocked.
+
+All three affordances clear automatically once `operation_configured` turns
+`true` — there is no persistent "done" state. See
+[the roadmap](../ROADMAPS/first_user_onboarding_operation_setup_roadmap_v0.1_2026-09-06.md).

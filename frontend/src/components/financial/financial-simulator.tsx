@@ -2,7 +2,13 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Calculator, Info, Pencil, Save, SlidersHorizontal } from "lucide-react";
+import {
+  Calculator,
+  History,
+  Info,
+  Save,
+  SlidersHorizontal,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -13,6 +19,11 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -21,11 +32,7 @@ import {
   evaluateFinancialScenario,
   saveFinancialScenario,
 } from "@/lib/api";
-import {
-  centsToRateInput,
-  formatBrlFromCents,
-  parseRateToCents,
-} from "@/lib/financial-utils";
+import { centsToRateInput } from "@/lib/financial-utils";
 import type {
   FinancialConfigurationDetail,
   FinancialDashboardDetail,
@@ -77,16 +84,14 @@ const MODE_OPTIONS: {
   },
 ];
 
-function rateKey(category: FinancialTimeCategory, participantCount: number) {
-  return `${category}-${participantCount}`;
-}
-
 export function FinancialSimulator({
   dashboard,
   configuration,
   dateFrom,
   dateTo,
   placeId,
+  onLocationChange,
+  locationBusy,
   initialScenarios,
 }: {
   dashboard: FinancialDashboardDetail;
@@ -94,6 +99,8 @@ export function FinancialSimulator({
   dateFrom: string;
   dateTo: string;
   placeId: string;
+  onLocationChange: (placeId: string) => void;
+  locationBusy: boolean;
   initialScenarios: FinancialScenarioDetail[];
 }) {
   const observedMix = Object.fromEntries(
@@ -112,14 +119,13 @@ export function FinancialSimulator({
     3: observedMix[3] ?? 0,
     4: observedMix[4] ?? 0,
   });
-  const [rateInputs, setRateInputs] = useState<Record<string, string>>({});
-  const [editingRates, setEditingRates] = useState(false);
   const [result, setResult] = useState<FinancialScenarioResult | null>(null);
   const [scenarios, setScenarios] =
     useState<FinancialScenarioDetail[]>(initialScenarios);
   const [error, setError] = useState<string | null>(null);
   const [evaluating, setEvaluating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [scenariosOpen, setScenariosOpen] = useState(false);
 
   function configuredRate(
     category: FinancialTimeCategory,
@@ -157,25 +163,6 @@ export function FinancialSimulator({
     ) {
       throw new Error("No mix personalizado, os percentuais devem somar 100%");
     }
-    const rateOverrides = editingRates
-      ? (
-      ["regular", "prime"] as FinancialTimeCategory[]
-    ).flatMap((category) =>
-      [1, 2, 3, 4].flatMap((participantCount) => {
-        const raw = rateInputs[rateKey(category, participantCount)] ?? "";
-        const parsed = parseRateToCents(raw);
-        return parsed === null
-          ? []
-          : [
-              {
-                time_category: category,
-                participant_count: participantCount,
-                hourly_rate_cents: parsed,
-              },
-            ];
-      })
-    )
-      : [];
     return {
       name: name.trim() || "Cenário sem nome",
       date_from: dateFrom,
@@ -185,7 +172,7 @@ export function FinancialSimulator({
       mode,
       occupancy_pct: occupancy,
       participant_mix: mode === "custom" ? customMix : null,
-      rate_overrides: rateOverrides,
+      rate_overrides: [],
     };
   }
 
@@ -246,23 +233,24 @@ export function FinancialSimulator({
     0
   );
 
-  function enableRateEditing() {
-    setRateInputs(
-      Object.fromEntries(
-        (["regular", "prime"] as FinancialTimeCategory[]).flatMap((category) =>
-          [1, 2, 3, 4].map((participantCount) => [
-            rateKey(category, participantCount),
-            centsToRateInput(configuredRate(category, participantCount)),
-          ])
-        )
-      )
-    );
-    setEditingRates(true);
-  }
-
-  function resetRateEditing() {
-    setRateInputs({});
-    setEditingRates(false);
+  function loadScenario(scenario: FinancialScenarioDetail) {
+    const input = scenario.input_snapshot;
+    setName(input.name);
+    setMode(input.mode);
+    setOccupancy(input.occupancy_pct);
+    setMix({
+      1: input.participant_mix?.find((item) => item.participant_count === 1)
+        ?.percentage ?? 0,
+      2: input.participant_mix?.find((item) => item.participant_count === 2)
+        ?.percentage ?? 0,
+      3: input.participant_mix?.find((item) => item.participant_count === 3)
+        ?.percentage ?? 0,
+      4: input.participant_mix?.find((item) => item.participant_count === 4)
+        ?.percentage ?? 0,
+    });
+    setResult(scenario.result_snapshot);
+    setError(null);
+    setScenariosOpen(false);
   }
 
   return (
@@ -309,6 +297,37 @@ export function FinancialSimulator({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-1.5 text-xs font-medium">
+              Período
+              <p className="flex h-9 items-center rounded-md border bg-muted/50 px-3 text-sm font-normal text-muted-foreground">
+                {dateFrom.split("-").reverse().join("/")} –{" "}
+                {dateTo.split("-").reverse().join("/")}
+              </p>
+              <span className="font-normal text-muted-foreground">
+                O simulador projeta sempre um mês.
+              </span>
+            </div>
+            <label className="grid gap-1.5 text-xs font-medium">
+              Local do cenário
+              <select
+                className="h-9 rounded-md border bg-background px-3 text-sm"
+                value={placeId}
+                disabled={locationBusy}
+                onChange={(event) => onLocationChange(event.target.value)}
+              >
+                <option value="">Todos os locais</option>
+                {configuration.places.map((place) => (
+                  <option key={place.place_id ?? ""} value={place.place_id ?? ""}>
+                    {place.place_name}
+                  </option>
+                ))}
+              </select>
+              <span className="font-normal text-muted-foreground">
+                Afeta apenas a simulação; sua agenda não será alterada.
+              </span>
+            </label>
+          </div>
           <div className="grid gap-5 xl:grid-cols-[0.9fr_1.4fr]">
             <div className="space-y-5">
             <label className="grid gap-1.5 text-xs font-medium">
@@ -394,104 +413,81 @@ export function FinancialSimulator({
               />
             </label>
 
-            <div className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
-              Período: {dateFrom.split("-").reverse().join("/")} a{" "}
-              {dateTo.split("-").reverse().join("/")}
-              <br />
-              Local:{" "}
-              {placeId
-                ? configuration.places.find(
-                    (place) => place.place_id === placeId
-                  )?.place_name
-                : "todos os locais"}
-            </div>
             </div>
 
             <section className="border-t pt-5 xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h3 className="flex items-center gap-1.5 font-medium">
-              Preços usados na simulação
-              <Tooltip>
-                <TooltipTrigger
-                  className="text-muted-foreground"
-                  aria-label="Como o valor por participante é cobrado"
-                >
-                  <Info className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  O valor é por participante, não o total da aula. Uma aula
-                  de 2 pessoas a R$ 180/h cobra R$ 180 de cada uma — R$ 360/h
-                  no total.
-                </TooltipContent>
-              </Tooltip>
-                  </h3>
+              <h3 className="flex items-center gap-1.5 font-medium">
+                Preços usados na simulação
+                <Tooltip>
+                  <TooltipTrigger
+                    className="text-muted-foreground"
+                    aria-label="Como o valor por participante é cobrado"
+                  >
+                    <Info className="size-3.5" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    O valor é por participante, não o total da aula. Uma aula
+                    de 2 pessoas a R$ 180/h cobra R$ 180 de cada uma — R$ 360/h
+                    no total.
+                  </TooltipContent>
+                </Tooltip>
+              </h3>
+              {placeId ? (
+                <>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Valores configurados para o período. Altere somente para testar outra regra.
+                    Preços configurados para este local. Para alterá-los, use{" "}
+                    <Link
+                      href="/minhas-regras"
+                      className="font-medium underline underline-offset-2"
+                    >
+                      Minhas Regras
+                    </Link>
+                    .
                   </p>
-                </div>
-                {editingRates ? (
-                  <Button variant="ghost" size="sm" onClick={resetRateEditing}>
-                    Usar valores configurados
-                  </Button>
-                ) : (
-                  <Button variant="outline" size="sm" onClick={enableRateEditing}>
-                    <Pencil className="size-3.5" />
-                    Editar preços
-                  </Button>
-                )}
-              </div>
-              <div className="mt-4">
-            <table className="w-full table-fixed text-sm">
-              <thead>
-                <tr className="border-b text-left text-xs text-muted-foreground">
-                  <th className="pb-2 font-medium">Formato</th>
-                  <th className="pb-2 font-medium">Regular</th>
-                  <th className="pb-2 font-medium">Nobre</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[1, 2, 3, 4].map((participantCount) => (
-                  <tr key={participantCount} className="border-b last:border-0">
-                    <td className="py-3 font-medium">
-                      {participantCount === 1
-                        ? "Individual"
-                        : `${participantCount} pessoas`}
-                    </td>
-                    {(["regular", "prime"] as FinancialTimeCategory[]).map(
-                      (category) => {
-                        const key = rateKey(category, participantCount);
-                        const configured = centsToRateInput(
-                          configuredRate(category, participantCount)
-                        );
-                        return (
-                          <td key={category} className="py-3 pr-2 last:pr-0">
-                            {editingRates ? (
-                              <Input
-                                inputMode="decimal"
-                                value={rateInputs[key] ?? configured}
-                                onChange={(event) =>
-                                  setRateInputs((current) => ({
-                                    ...current,
-                                    [key]: event.target.value,
-                                  }))
-                                }
-                                aria-label={`Preço ${category}, ${participantCount} pessoas`}
-                              />
-                            ) : (
-                              <span className="text-muted-foreground">
-                                R$ {configured || "não definido"}
-                              </span>
-                            )}
+                  <table className="mt-4 w-full table-fixed text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-xs text-muted-foreground">
+                        <th className="pb-2 font-medium">Formato</th>
+                        <th className="pb-2 font-medium">Regular</th>
+                        <th className="pb-2 font-medium">Nobre</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[1, 2, 3, 4].map((participantCount) => (
+                        <tr
+                          key={participantCount}
+                          className="border-b last:border-0"
+                        >
+                          <td className="py-3 font-medium">
+                            {participantCount === 1
+                              ? "Individual"
+                              : `${participantCount} pessoas`}
                           </td>
-                        );
-                      }
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-              </div>
+                          {(["regular", "prime"] as FinancialTimeCategory[]).map(
+                            (category) => {
+                              const configured = centsToRateInput(
+                                configuredRate(category, participantCount)
+                              );
+                              return (
+                                <td
+                                  key={category}
+                                  className="py-3 pr-2 text-muted-foreground last:pr-0"
+                                >
+                                  R$ {configured || "não definido"}
+                                </td>
+                              );
+                            }
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              ) : (
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Usando os preços configurados de cada local.
+                </p>
+              )}
             </section>
           </div>
             <div className="mt-5 flex flex-wrap gap-2 border-t pt-4">
@@ -507,6 +503,56 @@ export function FinancialSimulator({
                 <Save className="size-4" />
                 {saving ? "Salvando..." : "Salvar cenário"}
               </Button>
+              <Popover open={scenariosOpen} onOpenChange={setScenariosOpen}>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      variant="outline"
+                      className="sm:ml-auto"
+                      disabled={scenarios.length === 0}
+                    >
+                      <History className="size-4" />
+                      Cenários salvos
+                      {scenarios.length > 0 && (
+                        <span className="rounded-full bg-muted px-1.5 text-xs font-medium">
+                          {scenarios.length}
+                        </span>
+                      )}
+                    </Button>
+                  }
+                />
+                <PopoverContent align="end" className="w-80 p-1.5">
+                  <p className="px-1.5 py-1 text-xs text-muted-foreground">
+                    Carregar um cenário restaura as premissas e o resultado
+                    salvos. Alterar as premissas depois não muda o que já foi
+                    salvo.
+                  </p>
+                  <div className="mt-1 max-h-72 overflow-y-auto">
+                    {scenarios.map((scenario) => (
+                      <button
+                        key={scenario.id}
+                        type="button"
+                        onClick={() => loadScenario(scenario)}
+                        className="flex w-full flex-col items-start gap-0.5 rounded-md px-1.5 py-2 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
+                      >
+                        <span className="flex items-center gap-2 text-sm font-medium">
+                          {scenario.name}
+                          {scenario.result_snapshot.capacity_source?.mode ===
+                            "estimated_default" && (
+                            <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-200">
+                              Estimativa
+                            </span>
+                          )}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(scenario.created_at).toLocaleString("pt-BR")}{" "}
+                          · {scenario.input_snapshot.occupancy_pct}% de ocupação
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
             {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
         </CardContent>
@@ -529,59 +575,6 @@ export function FinancialSimulator({
           </CardContent>
         </Card>
       )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Cenários salvos</CardTitle>
-          <CardDescription>
-            Cada cenário guarda os valores usados e o resultado daquele momento —
-            alterar as premissas depois não muda o que já foi salvo.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {scenarios.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">
-              Nenhum cenário salvo.
-            </p>
-          ) : (
-            <div className="divide-y">
-              {scenarios.map((scenario) => (
-                <div
-                  key={scenario.id}
-                  className="flex flex-wrap items-center justify-between gap-3 py-3"
-                >
-                  <div>
-                    <p className="flex items-center gap-2 font-medium">
-                      {scenario.name}
-                      {scenario.result_snapshot.capacity_source?.mode ===
-                        "estimated_default" && (
-                        <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-200">
-                          Estimativa
-                        </span>
-                      )}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(scenario.created_at).toLocaleString("pt-BR")} ·{" "}
-                      {scenario.input_snapshot.occupancy_pct}% de ocupação
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-semibold">
-                      {formatBrlFromCents(
-                        scenario.result_snapshot.scenario
-                          .projected_revenue_cents
-                      )}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      projeção do cenário
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }

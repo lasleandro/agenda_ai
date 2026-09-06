@@ -21,12 +21,19 @@ from app.integrations.whatsapp.contracts import (
     WhatsAppMessageEvent,
     WhatsAppPermanentError,
 )
+from app.integrations.whatsapp.platform_number import is_platform_number
 from app.integrations.whatsapp.provider import WhatsAppProvider
 from app.services.contacts import get_or_create_contact_by_phone
 from app.services.operational_events import record_event
 from app.services.phone_numbers import PhoneNumberValidationError
 
 logger = logging.getLogger(__name__)
+
+
+def _mask_phone(phone: str | None) -> str:
+    if not phone:
+        return "***"
+    return f"***{phone[-4:]}" if len(phone) >= 4 else "***"
 
 
 def get_professional_by_phone(db: Session, assistant_phone: str) -> Professional | None:
@@ -158,6 +165,19 @@ def dispatch_whatsapp_event(
         apply_delivery_update(db, event)
         return None
     if agent_channel.try_handle(db, event, provider):
+        return None
+    if is_platform_number(event.from_phone) or is_platform_number(event.to_phone):
+        # A platform-owned number appearing here means the agent channel did
+        # not claim the event (e.g. an instructor->agent echo on the tenant
+        # number, or an agent reply arriving as inbound). It must not become a
+        # customer conversation.
+        logger.warning(
+            "Dropped platform-owned WhatsApp event from the observer lane "
+            "(direction=%s, from=%s, to=%s)",
+            event.direction,
+            _mask_phone(event.from_phone),
+            _mask_phone(event.to_phone),
+        )
         return None
     return ingest_normalized_message(db, event)
 

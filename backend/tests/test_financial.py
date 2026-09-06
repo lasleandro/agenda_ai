@@ -867,6 +867,20 @@ def test_financial_dashboard_capacity_scenarios_and_tenant_scope() -> None:
         }
         assert presets["all_individual"]["projected_revenue_cents"] == 4000
         assert presets["full_groups"]["projected_revenue_cents"] == 9600
+        # Each preset carries an explainable active-customer range built from
+        # its participant-hours (1–3 h per customer per calendar week).
+        assert presets["all_individual"]["customer_estimate"] == {
+            "calendar_weeks": 1,
+            "weekly_participant_hours": 4.0,
+            "minimum_customers": 2,
+            "maximum_customers": 4,
+        }
+        assert presets["full_groups"]["customer_estimate"] == {
+            "calendar_weeks": 1,
+            "weekly_participant_hours": 16.0,
+            "minimum_customers": 6,
+            "maximum_customers": 16,
+        }
 
         group_preview = client.get(
             "/api/financial/revenue/preview",

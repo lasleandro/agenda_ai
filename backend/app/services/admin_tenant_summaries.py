@@ -113,6 +113,7 @@ def build_tenant_summaries(
             name=professional.name,
             status=professional.status,
             assistant_phone=professional.assistant_phone,
+            agent_binding_confirmed_at=professional.agent_binding_confirmed_at,
             contact_count=contact_counts.get(professional.id, 0),
             appointment_count=appointment_counts.get(professional.id, 0),
             commercial_financials_enabled=(

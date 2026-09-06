@@ -13,7 +13,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, or_
+from sqlalchemy import false, func, or_, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,7 @@ from app.core import error_codes
 from app.core.error_responses import error_response
 from app.core.settings import get_int
 from app.database import SessionLocal
+from app.integrations.whatsapp.platform_number import platform_agent_number
 from app.models import (
     AssistantSettings,
     Professional,
@@ -47,6 +48,8 @@ from app.schemas.api import (
     TenantListResponse,
     TenantStatusChangeRequest,
     TenantStatusState,
+    TenantSummary,
+    TenantWhatsappNumberUpdate,
 )
 from app.models.professional import (
     TENANT_STATUS_ACTIVE,
@@ -54,7 +57,11 @@ from app.models.professional import (
     TENANT_STATUS_SUSPENDED,
 )
 from app.services import assistant_settings as assistant_settings_service
-from app.services.admin_tenants import TenantCreationError, create_tenant_with_owner
+from app.services.admin_tenants import (
+    TenantCreationError,
+    create_tenant_with_owner,
+    update_tenant_whatsapp_number,
+)
 from app.services.admin_tenant_summaries import build_tenant_summaries
 from app.services.auth_security import rate_limit_exceeded, record_auth_event
 from app.services import daily_agenda
@@ -99,7 +106,7 @@ def _task_summary(
         local_time=task.local_time,
         timezone=professional.timezone,
         consent_confirmed=task.consent_confirmed_at is not None,
-        sender_phone_masked=_mask_phone(professional.agent_phone),
+        sender_phone_masked=_mask_phone(platform_agent_number()),
         recipient_phone_masked=_mask_phone(professional.assistant_phone),
         readiness_issues=scheduled_tasks_service.task_readiness(professional),
         next_run_at=scheduled_tasks_service.next_run_at(task, professional, now),
@@ -297,6 +304,41 @@ def restore_tenant(
     )
 
 
+@router.put(
+    "/tenants/{professional_id}/whatsapp-number",
+    response_model=TenantSummary,
+)
+def update_whatsapp_number(
+    professional_id: uuid.UUID,
+    body: TenantWhatsappNumberUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(require_platform_admin),
+):
+    try:
+        update_tenant_whatsapp_number(
+            db,
+            professional_id=professional_id,
+            whatsapp=body.whatsapp,
+            admin_user_id=uuid.UUID(admin["user_id"]),
+            source_ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+    except TenantCreationError as exc:
+        db.rollback()
+        if exc.code == error_codes.TENANT_NOT_FOUND:
+            status = 404
+        elif exc.code == error_codes.WHATSAPP_NUMBER_ALREADY_IN_USE:
+            status = 409
+        else:
+            status = 422
+        return error_response(status, exc.code, exc.message)
+
+    db.commit()
+    professional = db.get(Professional, professional_id)
+    return build_tenant_summaries(db, [professional])[0]
+
+
 @router.get("/scheduled-tasks", response_model=ScheduledTaskAdminListResponse)
 def list_scheduled_tasks(
     q: str = Query(default="", max_length=100),
@@ -324,20 +366,23 @@ def list_scheduled_tasks(
         query = query.filter(ScheduledTask.enabled.is_(enabled))
     if tenant_status:
         query = query.filter(Professional.status == tenant_status)
+    platform_ready = platform_agent_number() is not None
     if readiness == "ready":
-        query = query.filter(
-            Professional.status == "active",
-            Professional.agent_phone.is_not(None),
-            Professional.assistant_phone.is_not(None),
-        )
-    elif readiness == "blocked":
-        query = query.filter(
-            or_(
-                Professional.status != "active",
-                Professional.agent_phone.is_(None),
-                Professional.assistant_phone.is_(None),
+        if not platform_ready:
+            query = query.filter(false())
+        else:
+            query = query.filter(
+                Professional.status == "active",
+                Professional.assistant_phone.is_not(None),
             )
-        )
+    elif readiness == "blocked":
+        blocked_clauses = [
+            Professional.status != "active",
+            Professional.assistant_phone.is_(None),
+        ]
+        if not platform_ready:
+            blocked_clauses.append(true())
+        query = query.filter(or_(*blocked_clauses))
     if latest_run_status:
         latest_status = (
             db.query(ScheduledTaskRun.status)
@@ -457,7 +502,7 @@ def update_daily_agenda_task(
         local_time=task.local_time,
         timezone=professional.timezone,
         consent_confirmed=task.consent_confirmed_at is not None,
-        sender_phone_masked=_mask_phone(professional.agent_phone),
+        sender_phone_masked=_mask_phone(platform_agent_number()),
         recipient_phone_masked=_mask_phone(professional.assistant_phone),
         readiness_issues=scheduled_tasks_service.task_readiness(professional),
         next_run_at=scheduled_tasks_service.next_run_at(

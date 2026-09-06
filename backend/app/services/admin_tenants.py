@@ -150,3 +150,65 @@ def create_tenant_with_owner(
         after_state={"status": TENANT_STATUS_ACTIVE, "timezone": timezone_name},
     )
     return CreatedTenant(professional=professional, owner=owner)
+
+
+def update_tenant_whatsapp_number(
+    db: Session,
+    *,
+    professional_id: uuid.UUID,
+    whatsapp: str,
+    admin_user_id: uuid.UUID,
+    source_ip: str | None = None,
+    user_agent: str | None = None,
+) -> Professional:
+    """Set a tenant's WhatsApp number after canonicalizing it. Rejects a
+    number already held by another tenant, and clears any agent-channel
+    binding so a new number must be re-confirmed."""
+    professional = db.get(Professional, professional_id)
+    if professional is None:
+        raise TenantCreationError(error_codes.TENANT_NOT_FOUND, "Tenant não encontrado.")
+
+    try:
+        canonical = normalize_mobile_phone(whatsapp)
+    except PhoneNumberValidationError as exc:
+        raise TenantCreationError(
+            error_codes.INVALID_PHONE, "Informe um número de WhatsApp válido."
+        ) from exc
+
+    clash = (
+        db.query(Professional.id)
+        .filter(
+            Professional.assistant_phone == canonical,
+            Professional.id != professional_id,
+        )
+        .first()
+    )
+    if clash is not None:
+        raise TenantCreationError(
+            error_codes.WHATSAPP_NUMBER_ALREADY_IN_USE,
+            "Este número já está associado a outro tenant.",
+        )
+
+    before = professional.assistant_phone
+    if canonical == before:
+        return professional
+
+    professional.assistant_phone = canonical
+    professional.agent_binding_confirmed_at = None
+    professional.agent_binding_confirmed_by = None
+
+    # Audited via auth_security_events, the same ledger tenant creation uses;
+    # the operational_events whitelist has no tenant-field-update type.
+    record_auth_event(
+        db,
+        event_type="tenant_whatsapp_number_updated",
+        user_id=admin_user_id,
+        source_ip=source_ip,
+        metadata={
+            "professional_id": str(professional_id),
+            "before_last4": before[-4:] if before else None,
+            "after_last4": canonical[-4:],
+            "user_agent": user_agent[:512] if user_agent else None,
+        },
+    )
+    return professional

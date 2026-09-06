@@ -14,6 +14,7 @@ from app.models.pending_processing import PendingProcessing  # noqa: F401
 from app.models.user import User  # noqa: F401
 from app.models.account_access_request import AccountAccessRequest  # noqa: F401
 from app.models.auth_action_token import AuthActionToken  # noqa: F401
+from app.models.agent_binding_challenge import AgentBindingChallenge  # noqa: F401
 from app.models.auth_security_event import AuthSecurityEvent  # noqa: F401
 from app.models.email_delivery import EmailDelivery  # noqa: F401
 from app.models.impersonation_log import ImpersonationLog  # noqa: F401

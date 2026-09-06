@@ -41,10 +41,13 @@ customer-facing WhatsApp
     OR leave it for Detectados/place review
 ```
 
-The receiving WhatsApp number is the routing boundary: `Professional.agent_phone`
-goes to the active channel first; messages for `Professional.assistant_phone`
-continue into passive ingestion. The active number also rejects senders other
-than the tenant's configured assistant phone.
+The number pairing is the routing boundary. A message **to** the shared
+platform agent number (`PLATFORM_AGENT_WHATSAPP_NUMBER`) goes to the active
+channel first, and its tenant is resolved from the **sender** (an active
+tenant's `assistant_phone`); an unrecognized sender is claimed and dropped.
+Messages to a tenant's `assistant_phone` continue into passive ingestion. The
+active channel additionally requires a confirmed binding
+(`Professional.agent_binding_confirmed_at`).
 
 ## 2. Ontology: records agents can navigate
 
@@ -94,7 +97,7 @@ record.
 | Channel | Entry point | Context and confirmation |
 |---|---|---|
 | Web chat | `POST /api/assistant/messages` in `api/assistant.py` | Client supplies the message history. A preview card invokes the confirm/reject endpoints. |
-| Active WhatsApp | `chat/ingestion.dispatch_whatsapp_event()` → `chat/agent_channel.try_handle()` | Uses the private `agent_phone`, persists recent `AgentChannelMessage` history for up to 12 hours, and accepts reply keywords such as `sim` / `nao`. |
+| Active WhatsApp | `chat/ingestion.dispatch_whatsapp_event()` → `chat/agent_channel.try_handle()` | Claims messages to the shared platform agent number, resolves the tenant from the sender, requires a confirmed binding, persists recent `AgentChannelMessage` history for up to 12 hours, and accepts reply keywords such as `sim` / `nao`. |
 | Fast WhatsApp lane | `agent_channel.COMMANDS` | `hoje`, `amanha`, `esta semana`, and `proxima aula` are deterministic schedule queries; no LLM or history write. |
 
 All non-fast-path active requests converge in
@@ -152,7 +155,8 @@ dispatch entry, and executor registration together.
 provider webhook (`api/whatsapp.py`)
   → provider normalizes into WhatsAppEvent
   → ingestion.dispatch_whatsapp_event()
-      ├── active agent phone: agent_channel.try_handle() owns it
+      ├── to the platform agent number: agent_channel.try_handle() owns it
+      │   (tenant resolved from sender; drops platform-owned numbers)
       └── customer-facing phone: ingest_normalized_message()
           → tenant/contact/conversation lookup or creation
           → idempotent Message insert (provider_message_id)
@@ -201,8 +205,8 @@ sends a message. Its worker:
    `propose_reschedule_occurrence` code as the active agent, using a stable
    idempotency key;
 4. links the resulting `OperatorActionCandidate` back to the
-   `AppointmentCandidate` and sends its deterministic preview to the private
-   agent number;
+   `AppointmentCandidate` and sends its deterministic preview from the
+   platform agent number to the tenant's `assistant_phone`;
 5. lets the ordinary WhatsApp `sim` / `nao` confirmation flow execute or
    reject it.
 
@@ -219,6 +223,7 @@ the execution boundary for unclear cases.
 | Passive debounce | `PIPELINE_DEBOUNCE_SECONDS` in `chat/pipeline.py` | Worker must be running for queued conversations to process. |
 | Passive delivery TTL/retry | `PASSIVE_ESCALATION_TTL_MINUTES`, `PASSIVE_ESCALATION_RETRY_SECONDS` in `services/passive_escalation.py` | A proposal can expire; failed deliveries remain durable for retry. |
 | WhatsApp provider boundary | `integrations/whatsapp/contracts.py`, `registry.py`, `ycloud.py` | Keep provider payload parsing outside agent and domain code. |
+| Shared agent number + binding | `integrations/whatsapp/platform_number.py` (`PLATFORM_AGENT_WHATSAPP_NUMBER`), `services/agent_binding.py`, `Professional.agent_binding_confirmed_at` | One number for every tenant; tenant resolved from the sender; normal handling gated on a confirmed binding. |
 | Audit | `services/operational_events.py`, `OperationalEvent` | Every confirmed active mutation should record the proposal and final outcome chain. |
 | Tests | `backend/tests/test_agent.py`, `test_agent_channel.py`, `test_action_candidates.py`, `test_ingestion.py`, `test_pipeline.py`, `test_passive_escalation.py` | Run targeted tests first, then the backend suite under the `agenda` conda environment. |
 

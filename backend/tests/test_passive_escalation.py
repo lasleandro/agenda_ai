@@ -8,6 +8,7 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.database import SessionLocal
+from app.integrations.whatsapp.contracts import WhatsAppPermanentError
 from app.models import AppointmentCandidate, Contact, OperationalEvent, OperatorActionCandidate, PassiveEscalation, Place, Professional, RecurringSlot, User
 from app.services.scheduling import TIMEZONE
 from app.services import passive_escalation
@@ -15,7 +16,7 @@ from app.services import passive_escalation
 
 def _setup(status: str = "unclear"):
     db = SessionLocal()
-    professional = Professional(name="Escalation", assistant_phone=f"+55119{uuid.uuid4().hex[:8]}", agent_phone=f"+55118{uuid.uuid4().hex[:8]}")
+    professional = Professional(name="Escalation", assistant_phone=f"+55119{uuid.uuid4().hex[:8]}")
     db.add(professional)
     db.flush()
     contact = Contact(professional_id=professional.id, phone=f"+55119{uuid.uuid4().int % 100_000_000:08d}", display_name="Aluno", normalized_name="aluno")
@@ -87,6 +88,27 @@ def test_due_escalation_sends_one_linked_idempotent_proposal(monkeypatch):
         assert "Responda *sim*" in sent["body"]
         assert passive_escalation.process_due_escalations(db) == 0
         assert db.query(OperatorActionCandidate).filter_by(professional_id=professional.id).count() == 1
+    finally:
+        _cleanup(db, professional)
+
+
+def test_permanent_send_failure_expires_escalation_without_retrying(monkeypatch):
+    """A free-form escalation rejected outside the 24h window must stop
+    retrying and record the reason, not churn every poll."""
+    db, professional, candidate = _setup()
+
+    def _raise_permanent(**kwargs):
+        raise WhatsAppPermanentError("outside 24h customer service window")
+
+    monkeypatch.setattr(
+        passive_escalation, "send_text_message_or_raise", _raise_permanent
+    )
+    try:
+        escalation = passive_escalation.queue_if_eligible(db, candidate)
+        db.commit()
+        assert not passive_escalation.deliver(escalation, db)
+        assert escalation.status == "expired"
+        assert escalation.last_error.startswith("permanent:")
     finally:
         _cleanup(db, professional)
 

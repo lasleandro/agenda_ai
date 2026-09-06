@@ -122,6 +122,11 @@ Calendar re-fetches data, new time appears
 A development tool for testing the WhatsApp extraction pipeline without
 a real WhatsApp integration:
 
+**Access:** available only when the backend runs with `DEBUG=true`, and only
+to a platform admin who has selected a tenant. A professional cannot see or
+load the workspace, and the development API rejects direct requests from a
+non-admin or an admin with no selected tenant.
+
 ### Modes
 
 - **Mock mode:** Simulated two-way conversation. Type as either
@@ -148,6 +153,10 @@ a real WhatsApp integration:
   `AppShell` (no `React Portal`) — `z-[70]` alone is what keeps it above
   every `Dialog`/`Popover`/`Select`/`DropdownMenu` in the app, all of
   which render at `z-50`
+- When the panel is open, a transparent boundary beneath it minimizes Lob on
+  an outside click/tap or Escape. That first click does not reach the
+  background action, and the hidden panel retains its conversation and draft
+  when reopened.
 - The chat button is draggable (custom pointer-event drag implementation);
   while the panel is open, dragging also live-updates the panel's anchor
   side so it never renders off-screen
